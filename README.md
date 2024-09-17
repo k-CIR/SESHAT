@@ -37,3 +37,5 @@ Execute the script by running:
   ```                                
   ./bidsify.py
   ```
+### Adapting the script
+If you need to modify this script, do not make changes directly on the main branch. Instead, create a new branch or fork the repository in your GitHub account to work on your version.
