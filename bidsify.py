@@ -402,7 +402,9 @@ def move_rename_MEG(path_MEG, path_BIDS, path_OPM, crosstalk, calibration, overw
                                 task = raw_file.split('.')[0].split('-')[0]
                                 # check if its EEG, if not MEG
                                 modality = "meg"
-                                if contains_proc(task, "EEG"):
+                                file_info = mne.io.read_info(raw_fname)
+                                channel37 = mne.channel_type(file_info, 37) # might be different number the one to always differentiate EEG form MEG
+                                if channel37 != 'mag':
                                     modality = "eeg"
 
                                 # get split
