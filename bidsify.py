@@ -555,16 +555,17 @@ def move_rename_MEG(path_MEG, path_BIDS, path_OPM, crosstalk, calibration, overw
 
 
 def ask_directories_MEG_OPM_BIDS():
+    default_path_projects = '/neuro/sinuhe/'
     # Ask directories of MEG and OPM data
     print("Select Folder for MEG data")
-    path_MEG = askdirectory(title='Select Folder for MEG data')  # shows dialog box and return the MEG path
+    path_MEG = askdirectory(title='Select Folder for MEG data', initialdir= default_path_projects)  # shows dialog box and return the MEG path
     if str(path_MEG) == '()' or path_MEG == '':
         print("You need to select a folder with MEG/EEG data.")
         sys.exit()
     else:
         print("The folder selected for MEG data is %s." % str(path_MEG))
     print("Select Folder for OPM data. If you don't have OPM, just cancel the selection")
-    path_OPM = askdirectory(title='Select Folder for OPM data')  # shows dialog box and return the OPM path
+    path_OPM = askdirectory(title='Select Folder for OPM data', initialdir= default_path_projects)  # shows dialog box and return the OPM path
     if str(path_OPM) == '()' or path_OPM == '':
         print("You did not select a folder for OPM data. We assume you only have MEG/EEG data.")
         path_OPM = ''
@@ -572,7 +573,7 @@ def ask_directories_MEG_OPM_BIDS():
         print("The folder selected for OPM data is %s." % str(path_OPM))
     print("Select Folder where to create your output BIDS folder data. "
           "It should be different directory than MEG and OPM folder")
-    path_BIDS = askdirectory(title='Select Folder for output data')   # shows dialog box and return the BIDS path
+    path_BIDS = askdirectory(title='Select Folder for output data', initialdir= default_path_projects)   # shows dialog box and return the BIDS path
     if str(path_BIDS) == '()' or path_BIDS == '':
         print("You need to select a folder for the output data.")
         sys.exit()
