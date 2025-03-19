@@ -114,16 +114,17 @@ def create_dataset_description(
     # Create empty dataset description if not exists
     else:
         desc_data_bids = {
-            'name': '',
-            'dataset_type': 'raw',
-            'data_license': '',
-            'authors': '',
-            'acknowledgements': '',
-            'how_to_acknowledge': '',
-            'funding': '',
-            'ethics_approvals': '',
-            'references_and_links': '',
-            'doi': ''
+            'Name': '',
+            'BIDSVersion': '1.7.0',
+            'DatasetType': 'raw',
+            'License': '',
+            'Authors': '',
+            'Acknowledgements': '',
+            'HowToAcknowledge': '',
+            'Funding': '',
+            'EthicsApprovals': '',
+            'ReferencesAndLinks': '',
+            'DatasetDOI': ''
         }
 
     # Open UI to fill the dataset description if not exists or overwrite is True
@@ -149,7 +150,7 @@ def create_dataset_description(
         for i, key in enumerate(desc_data_bids):
             val = desc_data_bids[key]
             # Add doi: if not present, MNE-BIDS requires it
-            if 'doi' in key:
+            if 'DatasetDOI' in key:
                 if 'doi:' not in val:
                     val = 'doi:' + val
             label = tk.Label(frame, text=key).grid(row=i, column=0, sticky='e')
@@ -169,16 +170,16 @@ def create_dataset_description(
                          in zip(keys, entries)}
             make_dataset_description(
             path=path_BIDS,
-            name=desc_data['name'],
-            dataset_type=desc_data['dataset_type'],
-            data_license=desc_data['data_license'],
-            authors=desc_data['authors'],
-            acknowledgements=desc_data['acknowledgements'],
-            how_to_acknowledge=desc_data['how_to_acknowledge'],
-            funding=desc_data['funding'],
-            ethics_approvals=desc_data['ethics_approvals'],
-            references_and_links=desc_data['references_and_links'],
-            doi=desc_data['doi'],
+            name=desc_data['Name'],
+            dataset_type=desc_data['DatasetType'],
+            data_license=desc_data['License'],
+            authors=desc_data['Authors'],
+            acknowledgements=desc_data['Acknowledgements'],
+            how_to_acknowledge=desc_data['HowToAcknowledge'],
+            funding=desc_data['Funding'],
+            ethics_approvals=desc_data['EthicsApprovals'],
+            references_and_links=desc_data['ReferencesAndLinks'],
+            doi=desc_data['DatasetDOI'],
             overwrite=True
             )
             print(f'Saving BIDS parameters to {file_bids}')
@@ -455,7 +456,7 @@ def add_channel_parameters(
         if not np.array_equal(
             orig_df, bids_df):
             
-            bids_df.merge(orig_df[add_cols], on='name', how='outer')
+            bids_df = bids_df.merge(orig_df[add_cols], on='name', how='outer')
 
             bids_df.to_csv(bids_tsv, sep='\t', index=False)
     print(f'Adding channel parameters to {basename(bids_tsv)}')
@@ -529,6 +530,13 @@ def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
        json_to = bids_json.copy().update(datatype='meg').fpath
        
        copy2(json_from, json_to)
+       
+       # Copy CapTrak files
+       CapTrak = find_matching_paths(bids_eeg.root, spaces='CapTrak')
+       for old_cap in CapTrak:
+           new_cap = old_cap.copy().update(datatype='meg')
+           if not exists(new_cap):
+               copy2(old_cap, new_cap)
 
 def get_desc_from_raw(file_name):
     info = mne.io.read_info(file_name, verbose='error')
@@ -976,9 +984,6 @@ def bidsify_opm_meg(
                         logpath=path_BIDS
                         )
 
-
-
-
 def main():
     parser = argparse.ArgumentParser(description='BIDSify Configuration')
     parser.add_argument('--config', type=str, help='Path to the configuration file')
@@ -1002,13 +1007,13 @@ def main():
             overwrite_bids = False
         
         # create dataset description file if the file does not exist or overwrite_bids is True
-        create_dataset_description(config_dict['BIDS'], False)
+        create_dataset_description(config_dict['BIDS'], overwrite_bids)
 
         # create participant files if files don't exist at MEG directory or overwrite_bids is True
-        create_participants_files(config_dict['BIDS'], False)
+        create_participants_files(config_dict['BIDS'], overwrite_bids)
         bidsify_sqid_meg(
             config_dict,
-            False
+            overwrite_bids
         )
         bidsify_opm_meg(
             config_dict,
