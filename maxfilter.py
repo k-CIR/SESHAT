@@ -23,6 +23,19 @@ sys.path.append(os.getcwd())
 
 from headpos import HeadPos
 
+
+###############################################################################
+# Global variables
+###############################################################################
+default_raw_path = 'neuro/data/sinuhe'
+default_output_path = 'neuro/data/cerberos'
+
+proc_patterns = ['proc', 'tsss', 'sss', 'corr', 'ds', 'mc', 'avgHead']
+exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
+
+debug = True
+###############################################################################
+
 # TODO:
 # - Read data from sinuhe, write to cerberos
 # - Review and check if maxfilter configurations work
@@ -32,6 +45,9 @@ from headpos import HeadPos
 # DONE:
 # - Maxfilter version selectable in advance settings
 
+
+def file_contains(file: str, pattern: list):
+    return bool(re.compile('|'.join(pattern)).search(file))
 
 class set_parameter:
     def __init__(self, mxf, mne_mxf, string):
@@ -89,9 +105,13 @@ class MaxFilter:
         
         """
 
-        self.data_path = askdirectory(title='Select project for MEG data', initialdir='/data')  # shows dialog box and return the MEG path
+        self.data_path = askdirectory(title='Select project for MEG data', initialdir=default_raw_path)  # shows dialog box and return the MEG path
         print("The folder selected for MEG data is %s." % str(self.data_path))
         data_root = dirname(self.data_path)
+        
+        if not self.data_path:
+            print('No data folder selected. Exiting...')
+            sys.exit(1)
 
         self.json_name = askopenfilename(title='Select Maxfilter settings', initialdir=self.data_path, filetypes=[('Json File', '*.json')])  # shows dialog box and return the MEG path
 
@@ -623,18 +643,8 @@ class MaxFilter:
         # List all files in directory
         all_fifs = sorted(glob('*.fif'))
         
-        # Define exclude patterns
-        patterns = [
-            '-\\d+',
-            'proc',
-            'tsss',
-            'sss',
-            'mc',
-            'corr',
-            'opm',
-            'eeg',
-            'avg.fif'
-        ]     
+        
+        file_contains()
         pattern = re.compile(r'|'.join(patterns))
 
         naming_convs = [
@@ -757,7 +767,10 @@ class MaxFilter:
                     self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
                     print(self.command_mxf)
                     
-                    subprocess.call(self.command_mxf, shell=True, cwd=subj_path)
+                    if not debug:
+                        subprocess.call(self.command_mxf, shell=True, cwd=subj_path)
+                    else:
+                        print(self.command_mxf)
 
                 else:
                     print('''

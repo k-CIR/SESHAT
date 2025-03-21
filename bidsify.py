@@ -31,7 +31,7 @@ import mne
 # Global variables
 ###############################################################################
 noise_patterns = ['empty', 'noise', 'Empty']
-proc_patterns = ['tsss', 'sss', 'corr98', 'ds', 'mc', 'avgHead']
+proc_patterns = ['tsss', 'sss', 'corr', 'ds', 'mc', 'avgHead']
 exclude_patterns = [r'-\d\.fif', '_trans', 'avg.fif']
 
 InstitutionName = 'Karolinska Institutet'
