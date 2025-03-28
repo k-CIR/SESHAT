@@ -1022,14 +1022,14 @@ def main():
             overwrite_bids = False
         
         # create dataset description file if the file does not exist or overwrite_bids is True
-        # create_dataset_description(config_dict['BIDS'], overwrite_bids)
+        create_dataset_description(config_dict['BIDS'], overwrite_bids)
 
         # # create participant files if files don't exist at MEG directory or overwrite_bids is True
-        # create_participants_files(config_dict['BIDS'], overwrite_bids)
+        create_participants_files(config_dict['BIDS'], overwrite_bids)
         
-        # bidsify_sqid_meg(config_dict,overwrite_bids)
+        bidsify_sqid_meg(config_dict,overwrite_bids)
         
-        # bidsify_opm_meg(config_dict, overwrite_bids)
+        bidsify_opm_meg(config_dict, overwrite_bids)
         
         print_dir_tree(config_dict['BIDS'])
     else:
