@@ -37,7 +37,7 @@ exclude_patterns = [r'-\d\.fif', '_trans', 'avg.fif']
 InstitutionName = 'Karolinska Institutet'
 InstitutionAddress = 'Nobels vag 9, 171 77, Stockholm, Sweden'
 InstitutionDepartmentName = 'Department of Clinical Neuroscience (CNS)'
-
+global data
 ###############################################################################
 # Functions: Create or fill templates: dataset description, participants info
 ###############################################################################
@@ -188,7 +188,7 @@ def create_dataset_description(
 
         save_button = tk.Button(
             button_frame,
-            text="Save", command=save)
+            text="Save and run", command=save)
         save_button.grid(row=0, column=0)
 
         cancel_button = tk.Button(
@@ -248,22 +248,8 @@ def create_participants_files(
 # Help functions
 ###############################################################################
 
-def load_config_file(
-    json_name: str = 'default_config.json'):
-    
-    """_summary_
-    
-    
-    """
-
-    # Check if the configuration file exists and if so load
-    if exists(json_name):
-        with open(json_name, 'r') as f:
-            config_dict = json.load(f)
-    
-    # Create default configuration file
-    else:
-        config_dict = {
+def defaultBidsConfig():
+    data = {
             'squidMEG': '/neuro/sinuhe/',
             'opmMEG': '',
             'BIDS': '',
@@ -278,6 +264,32 @@ def load_config_file(
             'New sessionID': '',
             'Overwrite': 'off'  
         }
+    return data
+
+
+def openBidsConfigUI(json_name: str = None):
+    """_summary_
+    Creates or opens a JSON file with MaxFilter parameters using a GUI.
+
+    Parameters
+    ----------
+    default_data : dict, optional
+        Default data to populate the GUI fields.
+
+    Returns
+    -------
+    None
+    
+    """
+
+    # Check if the configuration file exists and if so load
+    if not(json_name):
+        data = defaultBidsConfig()
+    else:
+        with open(json_name, 'r') as f:
+            data = json.load(f)
+    
+    # Create default configuration file
 
     # Create a new Tkinter window
     root = tk.Tk()
@@ -297,8 +309,8 @@ def load_config_file(
     chb = {}
     keys = []
     entries = []
-    for i, key in enumerate(config_dict):
-        val = config_dict[key]
+    for i, key in enumerate(data):
+        val = data[key]
         
         label = tk.Label(frame, text=key).grid(row=i, column=0, sticky='e')
 
@@ -325,17 +337,17 @@ def load_config_file(
             print('Closed')
 
     def save():
-        config_dict = {}
+        data = {}
 
         for key, entry in zip(keys, entries):
             if ', ' in entry.get():
-                config_dict[key] = [x.strip() for x in entry.get().split(', ') if x.strip()]
+                data[key] = [x.strip() for x in entry.get().split(', ') if x.strip()]
             else:
-                config_dict[key] = entry.get()
+                data[key] = entry.get()
             
         # Replace with save data
         with open(json_name, 'w') as output_file:
-            json.dump(config_dict, output_file, indent=4, default=list)
+            json.dump(data, output_file, indent=4, default=list)
 
         root.destroy()
         print(f'Saving BIDS parameters to {json_name}')
@@ -350,10 +362,9 @@ def load_config_file(
 
     # Start GUI loop
     root.mainloop()
+    return data
 
-
-
-def select_config_file(file_config: str=None):
+def askForBidsConfig():
     """_summary_
 
     Args:
@@ -363,27 +374,23 @@ def select_config_file(file_config: str=None):
     Returns:
         dict: dictionary with the configuration parameters
     """
-
+    option = input("Do you want to open an existing BIDS config file or create a new? ([open]/new/cancel): ").strip().lower()
     # Check if the file is defined or ask for it
-    if not file_config:
-        file_config = askopenfilename(title='Select config file or press Cancel to create new one', filetypes=[('JSON files', '*.json')])
-        
-        # If Cancel, open dialog to create a new one
-        if file_config:
-            load_config_file(file_config)
-        else:
-            load_config_file()
-    
-    # Load the configuration file if defined
-    else:
-        try:
-            with open(file_config, 'r') as f:
-                data = json.load(f)
-
-            return data
-        except Exception as e:
-            print(f'Error loading configuration file: {e}')
+    if option not in ['o', 'open']:
+        if option in ['n', 'new']:
+            return 'new'
+        elif option in ['c', 'cancel']:
+            print('User cancelled')
             sys.exit(1)
+
+    else:
+        file_config = askopenfilename(title='Select config file', filetypes=[('JSON files', '*.json')])
+        if not file_config:
+            print('No BIDS settings file selected. Exiting opening dialog')
+            sys.exit(1)
+        
+        print(f'{file_config} selected')
+        return file_config
 
 def update_sidecar(bids_path: BIDSPath):
     """_summary_
@@ -986,16 +993,24 @@ def bidsify_opm_meg(
 
 def main():
     parser = argparse.ArgumentParser(description='BIDSify Configuration')
-    parser.add_argument('--config', type=str, help='Path to the configuration file')
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
+    parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     args = parser.parse_args()
 
     if args.config:
         file_config = args.config
     else:
-        file_config = None
+        file_config = askForBidsConfig()
     # Select BIDS configuration file dialog
+    
+    if file_config == 'new':
+        config_dict = openBidsConfigUI()
+    elif file_config != 'new' and args.edit:
+        config_dict = openBidsConfigUI(file_config)
+    else:
+        with open(file_config, 'r') as f:
+            config_dict = json.load(f)
 
-    config_dict = select_config_file(file_config)
     
     if config_dict:
         for key, value in config_dict.items():
@@ -1007,17 +1022,14 @@ def main():
             overwrite_bids = False
         
         # create dataset description file if the file does not exist or overwrite_bids is True
-        create_dataset_description(config_dict['BIDS'], overwrite_bids)
+        # create_dataset_description(config_dict['BIDS'], overwrite_bids)
 
-        # create participant files if files don't exist at MEG directory or overwrite_bids is True
-        create_participants_files(config_dict['BIDS'], overwrite_bids)
-        bidsify_sqid_meg(
-            config_dict,
-            overwrite_bids
-        )
-        bidsify_opm_meg(
-            config_dict,
-            overwrite_bids)
+        # # create participant files if files don't exist at MEG directory or overwrite_bids is True
+        # create_participants_files(config_dict['BIDS'], overwrite_bids)
+        
+        # bidsify_sqid_meg(config_dict,overwrite_bids)
+        
+        # bidsify_opm_meg(config_dict, overwrite_bids)
         
         print_dir_tree(config_dict['BIDS'])
     else:

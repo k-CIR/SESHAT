@@ -97,32 +97,27 @@ def askForMaxfilterConfig():
 
 def defaultMaxfilterConfig():
     data = {
-        'standard_settings': {
-    ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
-    'project_name': '',
-    'trans_conditions': ['task1', 'task2'],
-    'trans_option': 'mne_continous',
-    'trans_type': 'mean',
-    'merge_runs': 'on',
+    'standard_settings': {
+        ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
+        'project_name': '',
+        'trans_conditions': ['task1', 'task2'],
+        'trans_option': 'continous',
+        'merge_runs': 'on',
 
-    ## STEP 2: Put the names of your empty room files (files in this array won't have "movecomp" applied) (no commas between files and leave spaces between first and last brackets)
-    'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
-    'sss_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+        ## STEP 2: Put the names of your empty room files (files in this array won't have "movecomp" applied) (no commas between files and leave spaces between first and last brackets)
+        'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+        'sss_files': [],
 
-    ## STEP 3: Select MaxFilter options (advanced options)
-    'autobad': 'on',
-    'badlimit': 7,
-    'bad_channels':[''],
-    'tsss_default': 'on',
-    'correlation': 0.98,
-    'movecomp_default': 'on',
-    'data_path': '.'
-    },
-
+        ## STEP 3: Select MaxFilter options (advanced options)
+        'autobad': 'on',
+        'badlimit': 7,
+        'bad_channels':[''],
+        'tsss_default': 'on',
+        'correlation': 0.98,
+        'movecomp_default': 'on',
+        'data_path': '.'
+        },
     'advanced_settings': {
-        # 'trans': 'off',
-        # 'transformation_to': 'default',
-        # 'headpos': 'off',
         'force': 'off',
         'downsample': 'off',
         'downsample_factor': 4,
@@ -131,13 +126,13 @@ def defaultMaxfilterConfig():
         'scripts_path': '/home/natmeg/Scripts',
         'cal': '/neuro/databases/sss/sss_cal.dat',
         'ctc': '/neuro/databases/ctc/ct_sparse.fif',
-        'dst_path': 'neuro/data/local',
+        'dst_path': '',
         'trans_folder': 'headtrans',
         'log_folder': 'log',
         'maxfilter_version': '/neuro/bin/util/mfilter',
         'MaxFilter_commands': '',
         }
-        }
+    }
     return data
 
 def OpenMaxFilterSettingsUI(json_name: str = None):
@@ -184,10 +179,9 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         if key == 'trans_option':
             print(i, key, value)
             selected_option = tk.StringVar()
-            # options = ['mne_continous', 'continous', 'initial']
 
             options = [value] + list(
-                {'mne_continous', 'continous', 'initial'} - {value})
+                {'continous', 'initial'} - {value})
             entry = tk.OptionMenu(std_frame, selected_option, *options)
             entry.grid(row=i, column=1, padx=2, pady=2, sticky='w')
             selected_option.set(options[0])
@@ -782,7 +776,7 @@ def main():
     
     parser = argparse.ArgumentParser(description='Maxfilter Configuration')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
-    parser.add_argument('-f', '--force', action='store_true', help='Launch the UI for Maxfilter configuration')
+    parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for Maxfilter configuration')
     args = parser.parse_args()
 
     if args.config:
@@ -792,7 +786,7 @@ def main():
     
     if file_config == 'new':
         config_dict = OpenMaxFilterSettingsUI()
-    elif file_config != 'new' and args.force:
+    elif file_config != 'new' and args.edit:
         config_dict = OpenMaxFilterSettingsUI(file_config)
     else:
         with open(file_config, 'r') as f:
