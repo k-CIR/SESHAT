@@ -15,23 +15,38 @@ import re
 import tkinter as tk
 from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfile
 import json
-import mne
 import subprocess
-
+import argparse
+from datetime import datetime
+from shutil import copy2
+import mne
+from mne.transforms import (invert_transform,
+                            read_trans, write_trans)
+from mne.preprocessing import compute_average_dev_head_t
+from mne.chpi import (compute_chpi_amplitudes, compute_chpi_locs,
+                      head_pos_to_trans_rot_t, compute_head_pos,
+                      write_head_pos,
+                      read_head_pos)
+import matplotlib.patches as mpatches
 
 sys.path.append(os.getcwd())
 
-from headpos import HeadPos
+# from headpos import HeadPos
 
 
 ###############################################################################
 # Global variables
 ###############################################################################
 default_raw_path = 'neuro/data/sinuhe'
-default_output_path = 'neuro/data/cerberos'
+default_output_path = 'neuro/data/local'
+default_base_path = os.getcwd()
 
-proc_patterns = ['proc', 'tsss', 'sss', 'corr', 'ds', 'mc', 'avgHead']
+proc_patterns = ['proc', 'tsss', 'sss', 'corr', 'mc', 'avgHead']
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
+global data
+
+
+
 
 debug = True
 ###############################################################################
@@ -49,6 +64,265 @@ debug = True
 def file_contains(file: str, pattern: list):
     return bool(re.compile('|'.join(pattern)).search(file))
 
+def match_task_files(files, task: str):
+    matched_files = [f for f in files if not file_contains(basename(f).lower(), exclude_patterns + proc_patterns) and task in f]
+    return matched_files
+
+def askForProjectDir():
+    data_path = askdirectory(title='Select project for MEG data', initialdir=default_raw_path)  # shows dialog box and return the MEG path
+    print("The folder selected for MEG data is %s." % str(data_path))
+
+    if not data_path:
+        if not debug:
+            print('No data folder selected. Exiting...')
+            sys.exit(1)
+        else:
+            data_path = None
+    else:
+        return data_path
+
+def askForMaxfilterConfig():
+    
+    option = input("Do you want to open an existing maxfilter config file or create a new? ([open]/new/cancel): ").strip().lower()
+    if option not in ['o', 'open']:
+        if option in ['n', 'new']:
+            return 'new'
+        elif option in ['c', 'cancel']:
+            print('No MaxFilter settings file selected. Exiting opening dialog')
+            sys.exit(1)
+    else:
+        json_name = askopenfilename(title='Select Maxfilter settings', initialdir=default_output_path, filetypes=[('Json File', '*.json')])  # shows dialog box and return the MEG path
+        print(f'{json_name} selected')
+        return json_name
+
+def defaultMaxfilterConfig():
+    data = {
+        'standard_settings': {
+    ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
+    'project_name': '',
+    'trans_conditions': ['task1', 'task2'],
+    'trans_option': 'mne_continous',
+    'trans_type': 'mean',
+    'merge_runs': 'on',
+
+    ## STEP 2: Put the names of your empty room files (files in this array won't have "movecomp" applied) (no commas between files and leave spaces between first and last brackets)
+    'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+    'sss_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+
+    ## STEP 3: Select MaxFilter options (advanced options)
+    'autobad': 'on',
+    'badlimit': 7,
+    'bad_channels':[''],
+    'tsss_default': 'on',
+    'correlation': 0.98,
+    'movecomp_default': 'on',
+    'data_path': '.'
+    },
+
+    'advanced_settings': {
+        # 'trans': 'off',
+        # 'transformation_to': 'default',
+        # 'headpos': 'off',
+        'force': 'off',
+        'downsample': 'off',
+        'downsample_factor': 4,
+        'apply_linefreq': 'off',
+        'linefreq_Hz': 50,
+        'scripts_path': '/home/natmeg/Scripts',
+        'cal': '/neuro/databases/sss/sss_cal.dat',
+        'ctc': '/neuro/databases/ctc/ct_sparse.fif',
+        'dst_path': 'neuro/data/local',
+        'trans_folder': 'headtrans',
+        'log_folder': 'log',
+        'maxfilter_version': '/neuro/bin/util/mfilter',
+        'MaxFilter_commands': '',
+        }
+        }
+    return data
+
+def OpenMaxFilterSettingsUI(json_name: str = None):
+    """
+    Creates or opens a JSON file with MaxFilter parameters using a GUI.
+
+    Parameters
+    ----------
+    default_data : dict, optional
+        Default data to populate the GUI fields.
+
+    Returns
+    -------
+    None
+    """
+    if not json_name:
+        data = defaultMaxfilterConfig()
+    else:
+        with open(json_name, 'r') as f:
+            data = json.load(f)
+
+    if not data['standard_settings']['data_path']:
+        data['standard_settings']['data_path'] = askForProjectDir()
+
+    standard_settings = data['standard_settings']
+    advanced_settings = data['advanced_settings']
+
+    # Create main window
+    root = tk.Tk()
+    root.eval('tk::PlaceWindow . center')
+    root.title("MaxFilter Settings")
+
+    # Create standard settings section
+    std_frame = tk.LabelFrame(root, text="Standard Settings", padx=20, pady=20, border=2)
+    std_frame.grid(row=0, column=0, ipadx=5, ipady=5, sticky='ns')
+    
+    std_chb = {}
+    std_entries = {}
+    for i, (key, value) in enumerate(standard_settings.items()):
+        
+        label = tk.Label(std_frame, text=key)
+        label.grid(row=i, column=0, sticky="e", padx=2, pady=2)
+        
+        if key == 'trans_option':
+            print(i, key, value)
+            selected_option = tk.StringVar()
+            # options = ['mne_continous', 'continous', 'initial']
+
+            options = [value] + list(
+                {'mne_continous', 'continous', 'initial'} - {value})
+            entry = tk.OptionMenu(std_frame, selected_option, *options)
+            entry.grid(row=i, column=1, padx=2, pady=2, sticky='w')
+            selected_option.set(options[0])
+            std_entries[key] = selected_option
+        
+        elif value in ['on', 'off']:
+            std_chb[key] = tk.StringVar()
+            std_chb[key].set(value)
+            check_box = tk.Checkbutton(std_frame,
+                                    variable=std_chb[key], onvalue='on', offvalue='off',
+                                    text='')
+
+            check_box.grid(row=i, column=1, padx=2, pady=2, sticky='w')
+            std_entries[key] = std_chb[key]
+        
+        else:
+            if isinstance(value, list):
+                value = ', '.join(value)
+            entry = tk.Entry(std_frame, width=40)
+            entry.insert(0, value)
+            entry.grid(row=i, column=1, padx=2, pady=2)
+            std_entries[key] = entry
+
+    # Create advanced settings section
+    adv_frame = tk.LabelFrame(root, text="Advanced Settings", padx=20, pady=20, border=2)
+
+    adv_chb = {}
+    adv_entries = {}
+    for i, (key, value) in enumerate(advanced_settings.items()):
+        label = tk.Label(adv_frame, text=key)
+        label.grid(row=i, column=0, sticky="e", padx=2, pady=2)
+        
+        if key == 'maxfilter_version':
+            selected_option = tk.StringVar()
+            # options = ['/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter']
+            options = options = [value] + list(
+                {'/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter'} - {value})
+            entry = tk.OptionMenu(adv_frame, selected_option, *options)
+            entry.grid(row=i, column=1, padx=2, pady=2, sticky='w')
+            selected_option.set(options[0])
+            adv_entries[key] = selected_option
+        
+        elif value in ['on', 'off']:
+            adv_chb[key] = tk.StringVar()
+            adv_chb[key].set(value)
+            check_box = tk.Checkbutton(adv_frame,
+                                    variable=adv_chb[key], onvalue='on', offvalue='off',
+                                    text='')
+            check_box.grid(row=i, column=1, padx=2, pady=2, sticky='w')
+            adv_entries[key] = adv_chb[key]
+            
+        else:
+            if isinstance(value, list):
+                value = ', '.join(value)
+
+            entry = tk.Entry(adv_frame, width=40)
+            entry.insert(0, value)
+            entry.grid(row=i, column=1, padx=2, pady=2)
+            adv_entries[key] = entry
+
+    # Buttons frame
+    button_frame = tk.Frame(root, padx=10, pady=10)
+    button_frame.grid(row=1, column=0, columnspan=2, sticky='nsew', padx=5, pady=5)
+
+    def toggle_advanced():
+        if adv_frame.winfo_ismapped():
+            adv_frame.grid_forget()
+            toggle_button.config(text="Show Advanced Settings")
+        else:
+            adv_frame.grid(row=0, column=1, ipadx=5, ipady=5, sticky='ns')
+            toggle_button.config(text="Hide Advanced Settings")
+
+    def save():
+        for key, entry in std_entries.items():
+            value = entry.get()
+            std_entries[key] = value.split(', ') if ', ' in value else value
+        for key, entry in adv_entries.items():
+            value = entry.get()
+            adv_entries[key] = value.split(', ') if ', ' in value else value
+        
+        data['standard_settings'] = std_entries
+        data['advanced_settings'] = adv_entries
+
+        save_path = asksaveasfile(defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        if save_path:
+            with open(save_path.name, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"Settings saved to {save_path.name}")
+        root.destroy()
+
+    def cancel():
+        root.destroy()
+        print("Operation canceled.")
+
+    save_button = tk.Button(button_frame, text="Save", command=save)
+    save_button.grid(row=0, column=0, padx=5, pady=5)
+
+    toggle_button = tk.Button(button_frame, text="Show Advanced Settings", command=toggle_advanced)
+    toggle_button.grid(row=0, column=1, padx=5, pady=5)
+
+    cancel_button = tk.Button(button_frame, text="Cancel", command=cancel)
+    cancel_button.grid(row=0, column=2, padx=5, pady=5)
+
+    # Start GUI loop
+    root.mainloop()
+    return data
+
+def plot_movement(raw, head_pos, mean_trans, overwrite=False):
+
+    # Read info from, if multiple sort by recording time
+
+    if isinstance(head_pos, str):
+        head_pos = read_head_pos(head_pos)
+    if isinstance(mean_trans, str):
+        mean_trans = read_trans(mean_trans)
+        
+    original_head_dev_t = invert_transform(raw.info["dev_head_t"])
+    
+    """
+    Plot trances of movement for insepction. Uses mne.viz.plot_head_positions
+    """
+    fig = mne.viz.plot_head_positions(head_pos, mode='traces', show=False)
+    red_patch = mpatches.Patch(color='r', label='Original')
+    green_patch = mpatches.Patch(color='g', label='Average')
+
+    for ax, ori, av in zip(fig.axes[::2],
+                            original_head_dev_t['trans'][:3, 3],
+                            mean_trans['trans'][:3, 3]):
+        ax.axhline(1000*ori, color="r")
+        ax.axhline(1000*av, color="g")
+        
+    fig.legend(handles=[red_patch, green_patch], loc='upper left')
+    fig.tight_layout()
+    return fig
+
 class set_parameter:
     def __init__(self, mxf, mne_mxf, string):
         self.mxf = mxf
@@ -57,417 +331,150 @@ class set_parameter:
 
 class MaxFilter:
     
-    def __init__(self, **kwargs):
+    def __init__(self, config_dict: dict, **kwargs):
+        
+        parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
 
-        self.set_maxfilter_parameters()
-
-        try:
-
-            with open(self.json_name, 'r') as f:
-                maxfilter_parameters_dict = json.load(f)
-            std = maxfilter_parameters_dict['standard_settings']
-            adv = maxfilter_parameters_dict['advanced_settings']
-            
-            # self.parameters = std | adv
-            parameters = std.copy()
-            parameters.update(adv)
-            
-            self.parameters = parameters
-
-            self.data_root = f"{self.parameters['data_path']}/{self.parameters['project_name']}"
-            self.scripts_path = os.getcwd()
-
-            # self.maxfilter_path = '/neuro/bin/util/maxfilter'
-            self.maxfilter_path = self.parameters.get('maxfilter_version')
-            print(self.maxfilter_path)
-
-        except FileNotFoundError:
-            print('No MaxFilter settings file selected')
-
+        self.parameters = parameters
     
-    def set_maxfilter_parameters(self):
+    def create_task_headpos(self, 
+                            subj_path: str,
+                            task: str,
+                            files: list | str,
+                            overwrite=False,
+                            **kwargs):
 
-        """
-        Behind the scenes:
-            Creates a json-file, or open an existing one with maxfilter parameters
-        In the GUI:
-            Make your changes and save to create or update the json-file
-        
-        Parameters
-        ----------
-        
-        json_name : string
-            Define the name of the file to use
-        
-        Returns
-        -------
-            A json-file to use with run_maxfilter.py
-        
-        """
+        parameters = self.parameters
 
-        self.data_path = askdirectory(title='Select project for MEG data', initialdir=default_raw_path)  # shows dialog box and return the MEG path
-        print("The folder selected for MEG data is %s." % str(self.data_path))
-        data_root = dirname(self.data_path)
-        
-        if not self.data_path:
-            print('No data folder selected. Exiting...')
-            sys.exit(1)
+        trans_path = parameters.get('trans_folder')
+        merge_headpos = parameters.get('merge_runs')
+        os.makedirs(f"{subj_path}/{trans_path}", exist_ok=True)
 
-        self.json_name = askopenfilename(title='Select Maxfilter settings', initialdir=self.data_path, filetypes=[('Json File', '*.json')])  # shows dialog box and return the MEG path
+        headpos_name = f"{subj_path}/{trans_path}/{task}_headpos.pos"
+        trans_name = f"{subj_path}/{trans_path}/{task}_trans.fif"
+        fig_name = f"{subj_path}/{trans_path}/{task}_movement.png"
 
-        if not self.json_name:
-            self.json_name='maxfilter_parameter.json'
+        if not exists(headpos_name) or overwrite:
+            
+            if isinstance(files, str):
+                files = [files]
+            print(f"Creating average head position for files: {' | '.join(files)}")
+            raws = [mne.io.read_raw_fif(
+                    f'{subj_path}/{file}',
+                    allow_maxshield=True,
+                    verbose='error')
+                        for file in files]
+            
+            if merge_headpos == 'on' and len(files) > 1:
+                raws[0].info['dev_head_t'] = raws[1].info['dev_head_t']
+                raw = mne.concatenate_raws(raws)
+            else:
+                raw = raws[0]
 
-            data = {
-                'standard_settings': {
-                    ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
-                    'project_name': basename(self.data_path),
-                    'trans_conditions': ['task1', 'task2'],
-                    'trans_option': 'mne_continous', # mne_continous, continous or initial
-                    'trans_type': 'mean',
-                    'merge_runs': 'on',
+            chpi_amplitudes = compute_chpi_amplitudes(raw)
+            chpi_locs = compute_chpi_locs(raw.info, chpi_amplitudes)
+            head_pos = compute_head_pos(raw.info, chpi_locs, verbose='error')
 
-                    ## STEP 2: Put the names of your empty room files (files in this array won't have "movecomp" applied) (no commas between files and leave spaces between first and last brackets)
-                    'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
-                    'sss_files': ['empty_room_before.fif', 'empty_room_after.fif'],
-
-                    ## STEP 3: Select MaxFilter options (advanced options)
-                    'autobad': 'on',
-                    'badlimit': 7,
-                    'bad_channels':[''],
-                    'tsss_default': 'on',
-                    'correlation': 0.98,
-                    'movecomp_default': 'on',
-                    'data_path': data_root
-                },
-
-                'advanced_settings': {
-                    # 'trans': 'off',
-                    # 'transformation_to': 'default',
-                    # 'headpos': 'off',
-                    'force': 'off',
-                    'downsample': 'off',
-                    'downsample_factor': 4,
-                    'apply_linefreq': 'off',
-                    'linefreq_Hz': 50,
-                    'scripts_path': '/home/natmeg/Scripts',
-                    'cal': '/neuro/databases/sss/sss_cal.dat',
-                    'ctc': '/neuro/databases/ctc/ct_sparse.fif',
-                    'dst_path': 'NatMEG',
-                    'trans_folder': 'headtrans',
-                    'log_folder': 'log',
-                    'maxfilter_version': ['/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter'],
-                    'MaxFilter_commands': '',
-            }
-                }
-
-        # if not exists(json_name):
-        #     with open(json_name, 'w') as output_file:
-        #             json.dump(data, output_file, indent=4, default=list)
+            os.makedirs(f'{subj_path}/{trans_path}', exist_ok=True)
+            
+            write_head_pos(headpos_name, head_pos)
+            print(f"Wrote headposition file to: {basename(headpos_name)}")
         else:
-            print(f'{self.json_name} exists, loading dict...')
+            print(f'{basename(headpos_name)} already exists. Skipping...')
+        
+        if not exists(trans_name) or overwrite:
+
+            head_pos = read_head_pos(headpos_name)
+            # trans, rot, t = head_pos_to_trans_rot_t(head_pos) 
+
+            mean_trans = invert_transform(
+                compute_average_dev_head_t(raw, head_pos))
             
-            with open(self.json_name, 'r') as f:
-                data = json.load(f)
-
-        standard_settings = data['standard_settings']
-        advanced_settings = data['advanced_settings']
-
-        # %% 
-        # # Create main window
-        root = tk.Tk()
-        root.eval('tk::PlaceWindow . center')
-
-        # Set window title
-        root.title("MaxFilter settings")
-
-        # Create standard settings section
-        std_frame = tk.LabelFrame(root, text="Standard Settings", padx=20, pady=20, border=2)
-        std_frame.grid(row=0, column=0,
-                    ipadx=5, ipady=5, sticky='ns')
-
-        std_new = {k: v for k, v in standard_settings.items()}
-        std_chb = {}
+            write_trans(trans_name, mean_trans, overwrite=True)
+            print(f'Wrote trans file to {basename(trans_name)}')
         
-        std_labels = []
-        std_entries = []
-        # Add labels and entries for standard settings
-        for i, key in enumerate(standard_settings):
-            value = standard_settings[key]
-            std_labels.append(key)
-
-            if key == 'trans_option':
-                label = tk.Label(std_frame, text=key)
-                label.grid(row=i, column=0, sticky="e",
-                        padx=2, pady=2)
-                
-                selected_option = tk.StringVar()
-                options = ['mne_continous', 'continous', 'initial']
-                entry = tk.OptionMenu(std_frame, selected_option, *options)
-                entry.grid(row=i, column=1, padx=2, pady=2, sticky="w")
-                selected_option.set(options[0])
-                
-                std_entries.append(selected_option)
-
-            elif value in ['on', 'off']:
-                label = tk.Label(std_frame, text=key)
-                label.grid(row=i, column=0, sticky="e",
-                        padx=2, pady=2)
-
-                std_chb[key] = tk.StringVar()
-                std_chb[key].set(value)
-
-                check_box = tk.Checkbutton(std_frame,
-                                        variable=std_chb[key],
-                                        onvalue='on', offvalue='off', 
-                                        text='')
-
-                check_box.grid(row=i, column=1,
-                            padx=2, pady=2, sticky='w')
-                std_entries.append(std_chb[key])
-                
-            else:
-                label = tk.Label(std_frame, text=key)
-                label.grid(row=i, column=0, sticky="e",
-                        padx=2, pady=2)
-                entry = tk.Entry(std_frame, width=40)
-            
-                if isinstance(value, list):
-                    value = ', '.join(value)
-                entry.insert(0, value)
-                entry.grid(row=i, column=1, padx=2, pady=2)
-                std_entries.append(entry)
-
+        else:
+            print(f'{basename(trans_name)} already exists. Skipping...')
         
-        
-        # Create advanced settings section
-        adv_frame = tk.LabelFrame(root, text="Advanced Settings", padx=20, pady=20, border=2)
-
-        adv_new = {k: v for k, v in advanced_settings.items()}
-        adv_chb = {}
-
-        adv_labels = []
-        adv_entries = []
-        # Add labels and entries for advanced settings
-        for i, key in enumerate(advanced_settings):
-            value = advanced_settings[key]
-            adv_labels.append(key)
-
-            if key == 'maxfilter_version':
-                label = tk.Label(adv_frame, text=key)
-                label.grid(row=i, column=0, sticky="e",
-                        padx=2, pady=2)
-                
-                selected_option = tk.StringVar()
-                # options = ['mfilter (3.0)', 'maxfilter (2.2)']
-                # TODO: FIx this!
-                # options = [adv_new['maxfilter_version'].values()]
-                options = ['/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter']
-                entry = tk.OptionMenu(adv_frame, selected_option, *options)
-                entry.grid(row=i, column=1, padx=2, pady=2, sticky="w")
-
-                # option_select = '/neuro/bin/util/' + options[0].split(' (')[0]
-                option_select = options[0]
-
-                selected_option.set(option_select)
-                
-                adv_entries.append(selected_option)
-
-            elif value in ['on', 'off']:
-                label = tk.Label(adv_frame, text=key)
-                label.grid(row=i, column=0, sticky="e", padx=2, pady=2)
-                
-                adv_chb[key] = tk.StringVar()
-                adv_chb[key].set(value)
-                check_box = tk.Checkbutton(adv_frame,
-                                        variable=adv_chb[key], onvalue='on', offvalue='off',
-                                        text='')
-
-                check_box.grid(row=i, column=1, padx=2, pady=2, sticky='w')
-                adv_entries.append(adv_chb[key])
-                
-            else:
-                label = tk.Label(adv_frame, text=key)
-                label.grid(row=i, column=0, sticky="e", padx=2, pady=2)
-                entry = tk.Entry(adv_frame, width=40)
-            
-                if isinstance(value, list):
-                    value = ', '.join(value)
-                entry.insert(0, value)
-                entry.grid(row=i, column=1, padx=2, pady=2)
-                adv_entries.append(entry)
-
-        # Buttons frame
-        button_frame = tk.LabelFrame(root, text="", padx=10, pady=10, border=0)
-
-        button_frame.grid(row=1, column=0, columnspan=3, sticky='nsew', padx=5, pady=5)
-        
-        # def update_name(*args):
-        #     standard_settings['']
-        #     first_name = first_name_var.get()
-        #     last_name = last_name_var.get()
-        #     f"proc-{}.fif"
-            
-        #     full_name.set(f"{first_name}{last_name}")
-        
-        # # Create a variable to store the full name
-        # full_name = tk.StringVar()
-
-        # # Create and position the name label
-        # name_label = tk.Label(root, textvariable=full_name)
-        # name_label.grid(row=len(standard_settings) + 1,
-        #                 columnspan=2)
-        
-        # first_name_var.trace("w", update_name)
-        # last_name_var.trace("w", update_name)
-
-        def toggle_advanced():
-            if adv_frame.winfo_ismapped():
-                adv_frame.grid_forget()
-                toggle_button.config(text="Show Advanced Settings")
-            else:
-                # button_frame.pack(fill="both", expand=True)
-                adv_frame.grid(row=0, column=1,
-                            ipadx=5, ipady=5, sticky='ns')
-                toggle_button.config(text="Hide Advanced Settings")
-
-        def cancel():
-            root.destroy()
-            print('Closed')
-
-        def save():
-            data = {'standard_settings': {},
-                    'advanced_settings': {}}
-
-            for key, entry in zip(std_labels, std_entries):
-                if ', ' in entry.get():
-                    data['standard_settings'][key] = [x.strip() for x in entry.get().split(', ') if x.strip()]
-                else:
-                    data['standard_settings'][key] = entry.get()
-
-            for key, entry in zip(adv_labels, adv_entries):
-                
-                if ', ' in entry.get():
-                    data['advanced_settings'][key] = [x.strip() for x in entry.get().split(', ') if x.strip()]
-                else:
-                    data['advanced_settings'][key] = entry.get()
-                
-            # Replace with save data and store in project folder
-            json_path = f'{self.data_path}/{self.json_name}'
-
-            save_json_name = asksaveasfile(initialdir=self.data_path, filetypes=[('Json File', '*.json')], defaultextension='.json')
-            json.dump(data, save_json_name, indent=4, default=list)
-
-            # with open(save_json_name, 'w') as output_file:
-            #     json.dump(data, output_file, indent=4, default=list)
-            root.destroy()
-            print(f'Saving maxfilter parameters to {self.json_name}')
-            # print('Run MaxFilter') 
-            # run_maxfilter(data)
-
-        save_button = tk.Button(button_frame,
-                                text="Save", command=save)
-        # toggle_button.pack(side='right', pady=10)
-        save_button.grid(row=0, column=0)
-
-        # Create button to toggle advanced settings visibility
-        toggle_button = tk.Button(button_frame,
-                                text="Show Advanced Settings", command=toggle_advanced)
-
-        # toggle_button.pack(side='left', pady=10)
-        toggle_button.grid(row=0, column=1)
-
-        cancel_button = tk.Button(button_frame,
-                                text="Cancel", command=cancel)
-        # toggle_button.pack(side='right', pady=10)
-        cancel_button.grid(row=0, column=2)
-
-
-        # Start GUI loop
-        root.mainloop()
-        # return(data)
+        if not exists(fig_name) or overwrite:
+            plot_movement(raw, headpos_name, trans_name).savefig(fig_name)
 
     def set_params(self, subject, session, task):
+        
+        parameters = self.parameters
         """_summary_
 
         Args:
             subject (str): _description_
             task (str): _description_
         """
-        for k, v in self.parameters.items():
-            setattr(self, k, v)
+            
+        data_root = parameters.get('data_path')
+        subj_path = f'{data_root}/{subject}/{session}/meg'
+        trans_process_file=True
+        trans_folder = parameters.get('trans_folder')
+        trans_file = f'{subj_path}/{trans_folder}/{task}_trans.fif'
+        trans_conditions = parameters.get('trans_conditions')
+        trans_option = parameters.get('trans_option')
 
-        self.subject = subject
-        self.session = session
-        self.task = task
-        self.path = f'{self.data_root}/{self.subject}/{self.session}/meg'
-        trans_file = f'{self.path}/{self.trans_folder}/{self.task}_trans.fif'
-        self.trans_name = trans_file
-        self.trans_process_file=True
-
-        def set_trans(trans_name):
-            if 'continous' in self.trans_option and self.task in self.trans_conditions:
-                if trans_name:
-                    mxf = '-trans %s' % trans_name
-                    mne_mxf = '--trans=%s' % trans_name
+        def set_trans(param=None):
+            if 'continous' in trans_option and task in trans_conditions:
+                trans_process_file=True
+                if param:
+                    mxf = '-trans %s' % param
+                    mne_mxf = '--trans=%s' % param
                     string = 'trans'
-            # elif 'initial' in self.trans_option or \
-            #         any([p in mf.task for p in mf.empty_room_files]):
-            #     self.trans_process_file=False
-            #     mxf=''
-            #     mne_mxf = ''
-            #     string = ''
             else:
-                self.trans_process_file=False
+                trans_process_file=False
                 mxf=''
                 mne_mxf = ''
                 string = ''
                 print('No information about trans')
                 #sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.trans_ = set_trans(self.trans_name)
-
+        _trans = set_trans(trans_file)
+        
         # create set_force function
-        def set_force():
-            if self.force == 'on':
+        def set_force(param=None):
+            if param == 'on':
                 mxf = '-force'
-            elif self.force == 'off':
+            elif param == 'off':
                 mxf = ''
             else:
                 print('faulty "force" setting (must be on or off)')
                 sys.exit(1)
             return(mxf)
-        self.force_ = set_force()
+        _force = set_force(parameters.get('force'))
         
-        def set_cal():
-            if self.cal:
-                mxf = '-cal %s' % self.cal
-                mne_mxf = '--calibration=%s' % self.cal
+        def set_cal(param=None):
+            if param:
+                mxf = '-cal %s' % param
+                mne_mxf = '--calibration=%s' % param
                 string = 'cal_'
             else:
                 print('no "cal" file found')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.cal_ = set_cal()
+        _cal = set_cal(parameters.get('cal'))
         
-        def set_ctc():
-            if self.ctc:
-                mxf = '-ctc %s' % self.ctc
-                mne_mxf = '--cross_talk=%s' % self.ctc
+        def set_ctc(param=None):
+            if param:
+                mxf = '-ctc %s' % param
+                mne_mxf = '--cross_talk=%s' % param
                 string = 'ctc_'
             else:
                 print('no "ctc" file found')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.ctc_ = set_ctc()
+        _ctc = set_ctc(parameters.get('ctc'))
         
         # create set_mc function (sets movecomp according to wishes above and abort if set incorrectly, this is a function such that it can be changed throughout the script if empty_room files are found) 
-        def set_mc():
-            if self.movecomp_default == 'on':
+        def set_mc(param=None):
+            if param == 'on':
                 mxf = '-movecomp'
                 mne_mxf = '--movecomp'
                 string='mc'
-            elif self.movecomp_default == 'off':
+            elif param == 'off':
                 mxf = ''
                 mne_mxf = ''
                 string = ''
@@ -475,15 +482,15 @@ class MaxFilter:
                 print('faulty "movecomp" setting (must be on or off)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.mc_ = set_mc()
-        
+        _mc = set_mc(parameters.get('movecomp_default'))
+
         # create set_tsss function
-        def set_tsss():
-            if self.tsss_default == 'on':
+        def set_tsss(param=None):
+            if param == 'on':
                 mxf = '-st'
                 mne_mxf='--st'
                 string='tsss'
-            elif self.tsss_default == 'off':
+            elif param == 'off':
                 mxf = ''
                 mne_mxf=''
                 string=''
@@ -491,19 +498,19 @@ class MaxFilter:
                 print('faulty "tsss" setting (must be on or off)')
                 sys.exit(1)
             return(set_parameter(mxf,mne_mxf, string))
-        self.tsss_ = set_tsss()
+        _tsss = set_tsss(parameters.get('tsss_default'))
         
         # create set_ds function
-        def set_ds():
-            if self.downsample == 'on':
-                if int(self.downsample_factor) > 1:
-                    mxf = '-ds %s' % self.downsample_factor
+        def set_ds(param=None):
+            if param == 'on':
+                if int(parameters.get('downsample_factor')) > 1:
+                    mxf = '-ds %s' % parameters.get('downsample_factor')
                     mne_mxf = ''
                     string = 'dsfactor-%s_' % \
-                        self.downsample_factor
+                        parameters.get('downsample_factor')
                 else:
                     print('downsampling factor must be an INTEGER greater than 1')
-            elif self.downsample == 'off':
+            elif param == 'off':
                 mxf = ''
                 mne_mxf = ''
                 string=''
@@ -511,15 +518,15 @@ class MaxFilter:
                 print('faulty "downsampling" setting (must be on or off)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.ds_ = set_ds()
-    
-        def set_corr():
-            if self.correlation:
-                mxf = '-corr %s' % self.correlation
-                mne_mxf = '--corr=%s' % self.correlation
+        _ds = set_ds(parameters.get('downsample'))
+
+        def set_corr(param=None):
+            if param:
+                mxf = '-corr %s' % param
+                mne_mxf = '--corr=%s' % param
                 string = 'corr %s_' % \
-                    round(float(self.correlation)*100)
-            elif not self.correlation:
+                    round(float(param)*100)
+            elif not param:
                 mxf = ''
                 mne_mxf= ''
                 string=''
@@ -527,14 +534,15 @@ class MaxFilter:
                 print('faulty "correlation" setting (must be between 0 and 1)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.corr_ = set_corr()
+        _corr = set_corr(parameters.get('correlation'))
+
         # set linefreq according to wishes above and abort if set incorrectly
-        def set_linefreq():
-            if self.apply_linefreq == 'on':
-                mxf = '-linefreq %s' % self.linefreq_Hz
-                mne_mxf = '--linefreq %s' % self.linefreq_Hz
-                string = 'linefreq-%s_' % self.linefreq_Hz
-            elif self.apply_linefreq == 'off':
+        def set_linefreq(param=None):
+            if param == 'on':
+                mxf = '-linefreq %s' % parameters.get('linefreq_Hz')
+                mne_mxf = '--linefreq %s' % parameters.get('linefreq_Hz')
+                string = 'linefreq-%s_' % parameters.get('linefreq_Hz')
+            elif param == 'off':
                 mxf = ''
                 mne_mxf = ''
                 string = ''
@@ -542,49 +550,34 @@ class MaxFilter:
                 print('faulty "apply_linefreq" setting (must be on or off)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.linefreq_ = set_linefreq()
-        
+        _linefreq = set_linefreq(parameters.get('apply_linefreq'))
+
         # Set autobad parameters
-        def set_autobad():
-            if self.autobad == 'on':
-                mxf = '-autobad %s' % self.autobad
-                mne_mxf = '--autobad=%s' % self.badlimit
-                string = 'autobad_%s' % self.autobad
-            elif self.autobad == 'off':
-                mxf = '-autobad %s' % self.autobad
-                mxf = '--autobad %s' % self.autobad
+        def set_autobad(param=None):
+            if param == 'on':
+                mxf = '-autobad %s -badlimit %s' % (param, parameters.get('badlimit'))
+                mne_mxf = '--autobad=%s' % parameters.get('badlimit')
+                string = 'autobad_%s' % param
+            elif param == 'off':
+                mxf = '-autobad %s' % param
+                mxf = '--autobad %s' % param
                 string = ''
             else:
                 print('faulty "autobad" setting (must be on or off)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.autobad_ = set_autobad()
-        
-        def set_bad_limit():
-            if self.autobad == 'on':
-                mxf = '-badlimit %s' % self.badlimit
-                mne_mxf = ''
-                string=''
-            elif self.autobad == 'off':
-                mxf = ''
-                mne_mxf= ''
-                string=''
-            else:
-                print('faulty "badlimit" setting (must be on)')
-                sys.exit(1)
-            return(set_parameter(mxf, mne_mxf, string))
-        self.badlimit_ = set_bad_limit()
-        
-        def set_bad_channels():
-            if self.bad_channels:
-                if isinstance(self.bad_channels, list):
-                    bad_ch = ' '.join(self.bad_channels)
+        _autobad = set_autobad(parameters.get('autobad'))
+
+        def set_bad_channels(param=None):
+            if param:
+                if isinstance(param, list):
+                    bad_ch = ' '.join(param)
                 else:
-                    bad_ch = self.bad_channels
+                    bad_ch = param
                 mxf = '-bad %s' % bad_ch
                 mne_mxf = '--bad %s' % bad_ch
                 string = '_bad_%s' % bad_ch
-            elif not self.bad_channels:
+            elif not param:
                 mxf = ''
                 mne_mxf= ''
                 string=''
@@ -592,193 +585,176 @@ class MaxFilter:
                 print('faulty "bad_channels" setting (must be comma separated list)')
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
-        self.bad_channels_ = set_bad_channels()
-        
+        _bad_channels = set_bad_channels(parameters.get('bad_channels'))
+
+        tsss_default = parameters.get('tsss_default')
         # If empty room file set tsss off and remove trans and headpos
-        if 'noise' in self.task or 'empty' in self.task:
-            self.tsss_default = 'off'
-            self.movecomp_default = 'off'
-            self.tsss_.mxf = ''
-            self.tsss_.mne_mxf = ''
-            self.tsss_.string = ''
-            self.mc_.mxf = ''
-            self.mc_.mne_mxf = ''
-            self.mc_.string = ''
-            self.corr_.mxf = ''
-            self.corr_.mne_mxf = ''
-            self.corr_.string = ''
-        if self.task in self.sss_files:
-            self.tsss_default = 'off'
+        if 'noise' in task.lower() or 'empty' in task.lower():
+            movecomp_default = 'off'
+            _mc.mxf = ''
+            _mc.mne_mxf = ''
+            _mc.string = ''
+            _corr.mxf = ''
+            _corr.mne_mxf = ''
+            _corr.string = ''
+        if task in parameters.get('sss_files'):
+            tsss_default = 'off'
 
         def set_bids_proc():
             proc = []
-            if self.tsss_default == 'on':
-                proc.append(self.tsss_.string)
-                if self.correlation:
-                    proc.append(f'corr{round(float(self.correlation)*100)}')
+            if tsss_default == 'on':
+                proc.append(_tsss.string)
+                if parameters.get('correlation'):
+                    proc.append(f'corr{round(float(parameters.get('correlation'))*100)}')
             else:
                 proc.append('sss')
 
-            if self.movecomp_default == 'on':
-                proc.append(self.mc_.string)
+            if parameters.get('movecomp_default') == 'on':
+                proc.append(_mc.string)
             
-            if self.trans_process_file:
+            if trans_process_file:
                 proc.append('avgHead')
 
-            
-        
             return('+'.join(proc))
+        _proc = set_bids_proc()
+        
+        _merge_runs = parameters.get('merge_runs')
+        _additional_cmd = parameters.get('MaxFilter_commands')
 
-        self.proc = set_bids_proc()
-    
+        self._trans = _trans
+        self._force = _force
+        self._cal = _cal
+        self._ctc = _ctc
+        self._ds = _ds
+        self._tsss = _tsss
+        self._corr = _corr
+        self._mc = _mc
+        self._autobad = _autobad
+        self._bad_channels = _bad_channels
+        self._linefreq = _linefreq
+        self._proc = _proc
+        self._merge_runs = _merge_runs
+        self._additional_cmd = _additional_cmd
+
     def run_command(self, subject, session):
 
-        subj_path = f'{self.data_root}/{subject}/{session}/meg'
-        # Change directory to subj_path
-        os.chdir(subj_path)
+        parameters = self.parameters
 
+        data_root = parameters.get('data_path')
+        subj_path = f'{data_root}/{subject}/{session}/meg'
         # Create log directory if it doesn't exist
-        os.makedirs(self.parameters['log_folder'], exist_ok=True)
+        log_path = f'{data_root}/{subject}/{session}/meg/{parameters['log_folder']}'
+        os.makedirs(log_path, exist_ok=True)
+        
+        maxfilter_path = parameters.get('maxfilter_version')
 
         # List all files in directory
-        all_fifs = sorted(glob('*.fif'))
-        
-        
-        file_contains()
-        pattern = re.compile(r'|'.join(patterns))
+        all_fifs = sorted(glob('*.fif', root_dir=subj_path))
 
+        # Create patterns to exclude files
+        
         naming_convs = [
             'raw',
             'meg'
         ]
         naming_conv = re.compile(r'|'.join(naming_convs))
 
-        trans_condition = self.parameters['trans_conditions']
-        sss_files = self.parameters['sss_files']
-        empty_room_files = self.parameters['empty_room_files']
+        # trans_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('trans_conditions') if cond)]
+        # sss_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('sss_files') if cond)]
+        # empty_room_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('empty_room_files') if cond)]
+        
+        trans_files = parameters.get('trans_conditions')
+        sss_files = parameters.get('sss_files')
+        empty_room_files = parameters.get('empty_room_files')
 
-        if isinstance(trans_condition, str):
-            trans_condition = [trans_condition]
+        if isinstance(trans_files, str):
+            trans_files = [trans_files]
         if isinstance(sss_files, str):
             sss_files = [sss_files]
         if isinstance(empty_room_files, str):
             empty_room_files = [empty_room_files]
 
         tasks_to_run = sorted(list(set(
-            trans_condition +
+            trans_files +
             sss_files +
             empty_room_files)))
-        
-        self.additional_cmd = self.parameters['MaxFilter_commands']
-
-        merge_runs = self.parameters['merge_runs']
-
-        # TODO: Nice print of all files to run
-        # files = [f for f in all_fifs if task in f and not pattern.search(f.lower())]
-
-        # print_files = '\n'.join(files)
-        
-        # print(f'Running Maxfilter on:
-        #           {print_files}')
 
         for task in tasks_to_run:
+
+            files = match_task_files(all_fifs, task)
             
+            if not files:
+                print(f'No files found for task: {task}')
+                continue
+            
+            print(f'''
+                Processing task: {task}
+                Using files: {' | '.join(files)}
+                ''')
+
+            # Average head position
+            # TODO: make transname absolute path, or try relative path?
+            if task in trans_files:
+                self.create_task_headpos(subj_path, task, files, overwrite=False)
+
             self.set_params(subject, session, task)
-
-            files = [f for f in all_fifs if task in f and not pattern.search(f.lower())]
-
-            # TODO: Fix file merge. Need to create temp raw names or separate maxfilter folder
-            if merge_runs == 'on' and len(files) > 1:
-                print('Merging files...')
-
-                os.makedirs('bkp', exist_ok=True)
-                
-                raws_sorted = sorted([mne.io.read_raw_fif(
-                f,
-                preload=False,
-                allow_maxshield=True, verbose='error') for f in files],
-                        key=lambda x: x.info['meas_date'])
-                try:
-                    raw = mne.concatenate_raws(raws_sorted)
-                except ValueError:
-                    raws_sorted[0].info['dev_head_t'] = raws_sorted[1].info['dev_head_t']
-                    raw = mne.concatenate_raws(raws_sorted)
-                
-                raw.load_data()
-                # Move files to bkp
-                for rfname in raw._filenames:
-                    os.rename(rfname, rfname.replace('/meg', '/meg/bkp'))
-
-                raw.save(raw._filenames[0])
             
-            all_fifs = sorted(glob('*.fif'))
-
+            _proc = self._proc
             
             for file in files:
 
-
-                clean = file.replace('.fif', f'_proc-{self.proc}.fif')
+                clean = file.replace('.fif', f'_proc-{_proc}.fif')
                 ncov = naming_conv.search(clean)
                 
                 if not ncov:
                     clean = clean.replace('.fif', '_meg.fif')
 
-                # TODO: Check if bids-naming can be implemented here
-                
                 if not exists(clean):
                     print('''
                           Running Maxfilter on
                           Subject: %s
                           Session: %s
                           Task: %s
-                          ''' % (self.subject, 
-                                 self.session,
+                          ''' % (subject, 
+                                 session,
                                  file))
+                
+                log = f'{log_path}/{clean.replace(".fif",".log")}'
+                
+                command_list = []
+                command_list.extend([
+                    maxfilter_path,
+                    '-f %s' % file,
+                    '-o %s' % clean,
+                    self._cal.mxf,
+                    self._ctc.mxf,
+                    self._trans.mxf,
+                    self._tsss.mxf,
+                    self._ds.mxf,
+                    self._corr.mxf,
+                    self._mc.mxf,
+                    self._autobad.mxf,
+                    self._bad_channels.mxf,
+                    self._linefreq.mxf,
+                    self._force,
+                    self._additional_cmd,
+                    '-v',
+                    '| tee -a %s' % log
+                    ])
+                self.command_mxf = ' '.join(command_list)
+                self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
+                print(self.command_mxf)
+                
+                if not debug:
+                    subprocess.run(self.command_mxf, shell=True, cwd=subj_path)
 
-                    if self.trans_process_file:
-                        os.makedirs(self.trans_folder, exist_ok=True)
-                        hp = HeadPos(self.data_root)
-                        hp.create_avg_transfile(subj_path, file)
+            else:
+                print('''
+                        Existing file: %s
+                        Delete to rerun MaxFilter process
+                        ''' % clean)
 
-                    log = f'{self.log_folder}/{clean.replace(".fif",".log")}'
-
-                    command_list = []
-                    command_list.extend([
-                        self.maxfilter_path,
-                        '-f %s' % file,
-                        '-o %s' % clean,
-                        self.cal_.mxf,
-                        self.ctc_.mxf,
-                        self.trans_.mxf,
-                        self.tsss_.mxf,
-                        self.ds_.mxf,
-                        self.corr_.mxf,
-                        self.mc_.mxf,
-                        self.autobad_.mxf,
-                        self.badlimit_.mxf,
-                        self.bad_channels_.mxf,
-                        self.linefreq_.mxf,
-                        self.force_,
-                        self.additional_cmd,
-                        '-v',
-                        '| tee -a %s' % log
-                        ])
-                    self.command_mxf = ' '.join(command_list)
-                    self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
-                    print(self.command_mxf)
-                    
-                    if not debug:
-                        subprocess.call(self.command_mxf, shell=True, cwd=subj_path)
-                    else:
-                        print(self.command_mxf)
-
-                else:
-                    print('''
-                          Existing file: %s
-                          Delete to rerun MaxFilter process
-                          ''' % clean)
-        os.chdir(self.scripts_path)
-        #subprocess.run(f'cd {self.scripts_path}')
+        # os.chdir(default_base_path)
 
     def loop_dirs(self):
         """Iterates over the subject and session directories and maxfilter.
@@ -789,24 +765,40 @@ class MaxFilter:
         Returns:
             None
         """
+        parameters = self.parameters
+        data_root = parameters.get('data_path')
+        
         subjects = sorted(glob('NatMEG*',
-                               root_dir=self.data_root))
-        # TODO: List dir to only include folders
-        for subject in subjects:
-
-            # sessions = sorted([f for f in glob('*', root_dir=f'{self.data_root}/{subject}') if isdir(f)])
-            sessions = sorted(glob('*', root_dir=f'{self.data_root}/{subject}'))
-            print(sessions)
-
-            sessions = [s for s in sessions if isdir(f'{self.data_root}/{subject}/{s}')]
-
+                               root_dir=data_root))
+        
+        # TODO: include only folders
+        for subject in [s for s in subjects if isdir(f'{data_root}/{s}')]:
+            sessions = [s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')]
             for session in sessions:
                 self.run_command(subject, session)
 
 # %%
 def main():
     
-    mf = MaxFilter()
+    parser = argparse.ArgumentParser(description='Maxfilter Configuration')
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
+    parser.add_argument('-f', '--force', action='store_true', help='Launch the UI for Maxfilter configuration')
+    args = parser.parse_args()
+
+    if args.config:
+        file_config = args.config
+    else:
+        file_config = askForMaxfilterConfig()
+    
+    if file_config == 'new':
+        config_dict = OpenMaxFilterSettingsUI()
+    elif file_config != 'new' and args.force:
+        config_dict = OpenMaxFilterSettingsUI(file_config)
+    else:
+        with open(file_config, 'r') as f:
+            config_dict = json.load(f)
+
+    mf = MaxFilter(config_dict)
     mf.loop_dirs()
 
 
