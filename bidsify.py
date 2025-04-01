@@ -10,7 +10,7 @@ import sys
 from glob import glob
 import numpy as np
 import tkinter as tk
-from tkinter.filedialog import askopenfilename
+from tkinter.filedialog import askopenfilename, asksaveasfile
 import argparse
 from datetime import datetime
 
@@ -250,7 +250,7 @@ def create_participants_files(
 
 def defaultBidsConfig():
     data = {
-            'squidMEG': '/neuro/sinuhe/',
+            'squidMEG': '/neuro/data/sinuhe/',
             'opmMEG': '',
             'BIDS': '',
             'Calibration': '/neuro/databases/sss/sss_cal.dat',
@@ -258,10 +258,10 @@ def defaultBidsConfig():
             'Dataset_description': '',
             'Participants': '',
             'Participants mapping file': '',
-            'Original subjID': '',
-            'New subjID': '',
-            'Original sessionID': '',
-            'New sessionID': '',
+            'Original subjID name': '',
+            'New subjID name': '',
+            'Original session name': '',
+            'New session name': '',
             'Overwrite': 'off'  
         }
     return data
@@ -346,8 +346,12 @@ def openBidsConfigUI(json_name: str = None):
                 data[key] = entry.get()
             
         # Replace with save data
-        with open(json_name, 'w') as output_file:
-            json.dump(data, output_file, indent=4, default=list)
+        save_path = asksaveasfile(defaultextension=".json", filetypes=[("JSON files", "*.json")],
+                                  initialdir='/neuro/data/local')
+        if save_path:
+            with open(save_path.name, 'w') as f:
+                json.dump(data, f, indent=4, default=list)
+            print(f"Settings saved to {save_path.name}")
 
         root.destroy()
         print(f'Saving BIDS parameters to {json_name}')
@@ -384,7 +388,8 @@ def askForBidsConfig():
             sys.exit(1)
 
     else:
-        file_config = askopenfilename(title='Select config file', filetypes=[('JSON files', '*.json')])
+        file_config = askopenfilename(title='Select config file', filetypes=[('JSON files', '*.json')],
+                                      initialdir='/neuro/data/local')
         if not file_config:
             print('No BIDS settings file selected. Exiting opening dialog')
             sys.exit(1)
@@ -414,7 +419,7 @@ def update_sidecar(bids_path: BIDSPath):
             }
     
     # Add Dewar position and associated empty room
-    if bids_path.datatype == 'meg' and bids_path.acquisition == 'squid':
+    if bids_path.datatype == 'meg' and bids_path.acquisition == 'triux':
         info = mne.io.read_info(bids_path.fpath)
         if info['gantry_angle'] > 0:
             dewar_pos = f'upright ({int(info["gantry_angle"])} degrees)'
@@ -434,7 +439,7 @@ def update_sidecar(bids_path: BIDSPath):
             sidecar_updates['AssociatedEmptyRoom'] = [basename(er) for er in er_bids_paths]
     
     # Update Manufacturer FieldLine for OPM data
-    if bids_path.datatype == 'meg' and bids_path.acquisition == 'opm':
+    if bids_path.datatype == 'meg' and bids_path.acquisition == 'hedscan':
         sidecar_updates["Manufacturer"] = "FieldLine"
         
     update_sidecar_json(bids_path=sidecar_path, 
@@ -564,7 +569,7 @@ def bidsify_sqid_meg(
     path_BIDS = config_dict['BIDS']
     calibration = config_dict['Calibration']
     crosstalk = config_dict['Crosstalk']
-    participant_mapping = config_dict['Participants mapping (csv)']
+    participant_mapping = config_dict['Participants mapping file']
     old_subj_id = config_dict['Original subjID name']
     new_subj_id = config_dict['New subjID name']
     old_session = config_dict['Original session name']
@@ -572,24 +577,42 @@ def bidsify_sqid_meg(
     
     error_files_list = []
     if participant_mapping:
-        pmap = pd.read_csv(participant_mapping, dtype=str)
+        mapping_found=True
+        try:
+            pmap = pd.read_csv(participant_mapping, dtype=str)
+            pmap[old_session] = pd.to_datetime(pmap[old_session]).dt.strftime("%y%m%d")
+        except FileExistsError as e:
+            mapping_found=False
+            print('Participant file not found, skipping')
     if path_MEG != '' and str(path_MEG) != '()':
         print('Processing:')
+        print(f'|{path_MEG}/')
         for participant in glob('NatMEG*', root_dir=path_MEG):
-            subject = participant.strip('NatMEG_')
+            subject = participant.strip('NatMEG_').zfill(4)
             participant_path = os.path.join(path_MEG, participant)
-            print(f'|{path_MEG}/')
+            
+            if participant_mapping and mapping_found:
+                try:
+                    subject = pmap.loc[
+                        pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
+                except IndexError as e:
+                    print(f'Ignoring {subject}')
+                    continue
+            
             print(f'|--- {participant}/')
-            if participant_mapping:
-                subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0]
             
             for session in glob('*', root_dir=participant_path):
                 session_path = os.path.join(participant_path, session)
                 print(f'|------ {session}/')
                 all_fifs_files = glob(f'*.fif', root_dir=f'{session_path}/meg')
                 
-                if participant_mapping:
-                    session = pmap.loc[pmap[old_session] == session, new_session].values[0]
+                if participant_mapping and mapping_found:
+                    try:
+                        session = pmap.loc[
+                            pmap[old_session] == session, new_session].values[0].zfill(2)
+                    except IndexError as e:
+                        print('Ignoring session')
+                        continue
 
                 # Add calibration and cross talk
                 bids_path = BIDSPath(
@@ -612,7 +635,7 @@ def bidsify_sqid_meg(
                         empty_fname.append(raw_file)
                     if not file_contains(raw_file, exclude_patterns + noise_patterns + proc_patterns):
                         raw_start_fnames.append(raw_file)
-                    if file_contains(raw_file, proc_patterns) and not       file_contains(raw_file, noise_patterns + exclude_patterns):
+                    if file_contains(raw_file, proc_patterns) and not file_contains(raw_file, noise_patterns + exclude_patterns):
                         mxf_start_fnames.append(raw_file)
                 
                 # Empty rooms files
@@ -627,7 +650,7 @@ def bidsify_sqid_meg(
                                 er_task = 'noise'
                             
                             er_file_name = f'{session_path}/meg/{er_file}'
-                            
+
                             er_raw = mne.io.read_raw_fif(
                                 er_file_name,
                                 allow_maxshield=True,
@@ -646,7 +669,7 @@ def bidsify_sqid_meg(
                                 datatype='meg',
                                 session = session,
                                 task=er_task,
-                                acquisition='squid',
+                                acquisition='triux',
                                 suffix='meg',
                                 root=path_BIDS
                             )
@@ -705,7 +728,7 @@ def bidsify_sqid_meg(
                             session=session,
                             datatype=datatype,
                             task=task,
-                            acquisition='squid',
+                            acquisition='triux',
                             root=f'{path_BIDS}',
                             suffix=datatype
                         )
@@ -767,7 +790,7 @@ def bidsify_sqid_meg(
                             session=session,
                             datatype=datatype,
                             task=task,
-                            acquisition='squid',
+                            acquisition='triux',
                             root=f'{path_BIDS}',
                             processing=proc,
                             suffix=datatype
@@ -817,7 +840,7 @@ def bidsify_opm_meg(
     """
     path_OPM = config_dict['opmMEG']
     path_BIDS = config_dict['BIDS']
-    participant_mapping = config_dict['Participants mapping (csv)']
+    participant_mapping = config_dict['Participants mapping file']
     old_subj_id = config_dict['Original subjID name']
     new_subj_id = config_dict['New subjID name']
     old_session = config_dict['Original session name']
@@ -825,16 +848,29 @@ def bidsify_opm_meg(
     
     error_files_list = []
     if participant_mapping:
-        pmap = pd.read_csv(participant_mapping, dtype=str)
+        mapping_found=True
+        try:
+            pmap = pd.read_csv(participant_mapping, dtype=str)
+            pmap[old_session] = pd.to_datetime(pmap[old_session]).dt.strftime("%y%m%d")
+        except FileExistsError as e:
+            mapping_found=False
+            print('Participant file not found, skipping')
     if path_OPM != '' and str(path_OPM) != '()':
         print('Processing:')
+        print(f'|{path_OPM}/')
         for participant in glob('sub*', root_dir=path_OPM):
             subject = participant.strip('sub-')
             participant_path = os.path.join(path_OPM, participant)
-            print(f'|{path_OPM}/')
+            
+            if participant_mapping and mapping_found:
+                try:
+                    subject = pmap.loc[
+                        pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
+                except IndexError as e:
+                    print(f'Ignoring {subject}')
+                    continue
+
             print(f'|--- {participant}/')
-            if participant_mapping:
-                subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0]
 
             sessions = list(set([f.split('_')[0][2:] for f in glob('*', root_dir=participant_path)]))
             
@@ -843,8 +879,13 @@ def bidsify_opm_meg(
                 all_fifs_files = glob(f'*{session}*.fif', root_dir=f'{participant_path}')
                 all_tsv_files = glob(f'*{session}*_channels.tsv', root_dir=f'{participant_path}')
 
-                if participant_mapping:
-                    session = pmap.loc[pmap[old_session] == session, new_session].values[0]
+                if participant_mapping and mapping_found:
+                    try:
+                        session = pmap.loc[
+                            pmap[old_session] == session, new_session].values[0].zfill(2)
+                    except IndexError as e:
+                        print('Ignoring session')
+                        continue
 
                 # Add calibration and cross talk
                 bids_path = BIDSPath(
@@ -884,7 +925,7 @@ def bidsify_opm_meg(
                                 datatype='meg',
                                 session = session,
                                 task=er_task,
-                                acquisition='opm',
+                                acquisition='hedscan',
                                 suffix='meg',
                                 root=path_BIDS
                             )
@@ -948,22 +989,27 @@ def bidsify_opm_meg(
                             session=session,
                             datatype=datatype,
                             task=task,
-                            acquisition='opm',
+                            acquisition='hedscan',
                             root=f'{path_BIDS}',
                             suffix=datatype
                         )
 
                         if not exists(bids_path.fpath) or overwrite:
                         # Write raw BIDS data
-                            write_raw_bids(
-                                raw=raw,
-                                bids_path=bids_path,
-                                empty_room=None,
-                                events=None,
-                                overwrite=True,
-                                verbose='error'
-                            )
-                            
+                            try:
+                                write_raw_bids(
+                                    raw=raw,
+                                    bids_path=bids_path,
+                                    empty_room=None,
+                                    events=None,
+                                    overwrite=True,
+                                    verbose='error'
+                                )
+
+                            except KeyError as e:
+                                print(e)
+                                raw.save(str(bids_path.fpath) + '.fif', overwrite=True)
+
                             file_name_tsv = file_name.replace('_raw.fif', '_channels.tsv')
                             bids_path_tsv = bids_path.copy().update(
                                         suffix='channels',
@@ -1023,9 +1069,6 @@ def main():
         
         # create dataset description file if the file does not exist or overwrite_bids is True
         create_dataset_description(config_dict['BIDS'], overwrite_bids)
-
-        # # create participant files if files don't exist at MEG directory or overwrite_bids is True
-        create_participants_files(config_dict['BIDS'], overwrite_bids)
         
         bidsify_sqid_meg(config_dict,overwrite_bids)
         
