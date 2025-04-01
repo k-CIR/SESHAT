@@ -29,37 +29,25 @@ from mne.chpi import (compute_chpi_amplitudes, compute_chpi_locs,
                       read_head_pos)
 import matplotlib.patches as mpatches
 
-sys.path.append(os.getcwd())
-
-# from headpos import HeadPos
-
-
 ###############################################################################
 # Global variables
 ###############################################################################
-default_raw_path = 'neuro/data/sinuhe'
-default_output_path = 'neuro/data/local'
+default_raw_path = '/neuro/data/sinuhe'
+default_output_path = '/neuro/data/local'
 default_base_path = os.getcwd()
 
 proc_patterns = ['proc', 'tsss', 'sss', 'corr', 'mc', 'avgHead']
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
-
-
-
 debug = True
 ###############################################################################
 
 # TODO:
-# - Read data from sinuhe, write to cerberos
 # - Review and check if maxfilter configurations work
+# - Read data from sinuhe, write to cerberos
 # - Integrate with Bids?
-# - fix bug that don't allow you to cancel Maxfilter settings dialog and create to .json
-#   Now, to create a new file cancel and then load next time.
-# DONE:
-# - Maxfilter version selectable in advance settings
-
+# - Problem, maxfilter have problems with combining absolute paths and split-files so files must be copied before or after maxfiltering.
 
 def file_contains(file: str, pattern: list):
     return bool(re.compile('|'.join(pattern)).search(file))
@@ -105,7 +93,7 @@ def defaultMaxfilterConfig():
         'merge_runs': 'on',
 
         ## STEP 2: Put the names of your empty room files (files in this array won't have "movecomp" applied) (no commas between files and leave spaces between first and last brackets)
-        'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+        'empty_room_files': ['empty_room_before', 'empty_room_after'],
         'sss_files': [],
 
         ## STEP 3: Select MaxFilter options (advanced options)
@@ -141,12 +129,12 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
 
     Parameters
     ----------
-    default_data : dict, optional
+    data : dict, optional
         Default data to populate the GUI fields.
 
     Returns
     -------
-    None
+    data : dict
     """
     if not json_name:
         data = defaultMaxfilterConfig()
@@ -289,9 +277,7 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
     root.mainloop()
     return data
 
-def plot_movement(raw, head_pos, mean_trans, overwrite=False):
-
-    # Read info from, if multiple sort by recording time
+def plot_movement(raw, head_pos, mean_trans):
 
     if isinstance(head_pos, str):
         head_pos = read_head_pos(head_pos)
@@ -405,7 +391,6 @@ class MaxFilter:
             
         data_root = parameters.get('data_path')
         subj_path = f'{data_root}/{subject}/{session}/meg'
-        trans_process_file=True
         trans_folder = parameters.get('trans_folder')
         trans_file = f'{subj_path}/{trans_folder}/{task}_trans.fif'
         trans_conditions = parameters.get('trans_conditions')
@@ -413,13 +398,11 @@ class MaxFilter:
 
         def set_trans(param=None):
             if 'continous' in trans_option and task in trans_conditions:
-                trans_process_file=True
                 if param:
                     mxf = '-trans %s' % param
                     mne_mxf = '--trans=%s' % param
-                    string = 'trans'
+                    string = 'avgHead'
             else:
-                trans_process_file=False
                 mxf=''
                 mne_mxf = ''
                 string = ''
@@ -606,8 +589,8 @@ class MaxFilter:
             if parameters.get('movecomp_default') == 'on':
                 proc.append(_mc.string)
             
-            if trans_process_file:
-                proc.append('avgHead')
+            if 'continous' in trans_option and task in parameters.get('trans_conditions'):
+                proc.append(_trans.string)
 
             return('+'.join(proc))
         _proc = set_bids_proc()

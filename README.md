@@ -22,14 +22,14 @@ conda install mne mne-bids
 Option 1. Run the script by executing the following command:
 
 ```bash
-python bidsify.py --config=path/to/config.json
+python bidsify.py --config=path/to/name_of_config.json
 ```
 This will run the script with the config file wihout further questions.
 
 Option 2. Edit config file before running the script:
 
 ```bash
-python bidsify.py --config=path/to/config.json --edit
+python bidsify.py --config=path/to/name_of_config.json --edit
 ```
 This will open a dialog for you to edit the config file before running the script.
 
@@ -46,14 +46,14 @@ You will get three options in the terminal
 
 ```json
 {
-    "squidMEG": "neuro/data/sinuhe/opm",
-    "opmMEG": "neuro/data/kaptah/OPMbenchmarking1",
-    "BIDS": "neuro/data/local/OPM-benchmarking",
-    "Calibration": "neuro/databases/sss/sss_cal.dat",
-    "Crosstalk": "neuro/databases/ctc/ct_sparse.fif",
+    "squidMEG": "/neuro/data/sinuhe/opm",
+    "opmMEG": "/neuro/data/kaptah/OPMbenchmarking1",
+    "BIDS": "/neuro/data/local/OPM-benchmarking",
+    "Calibration": "/neuro/databases/sss/sss_cal.dat",
+    "Crosstalk": "/neuro/databases/ctc/ct_sparse.fif",
     "Dataset_description": "dataset_description.json",
     "Participants": "participants.tsv",
-    "Participants mapping (csv)": "neuro/data/local/OPM-benchmarking/mapping.csv",
+    "Participants mapping (csv)": "/neuro/data/local/OPM-benchmarking/mapping.csv",
     "Original subjID name": "old_subject_id",
     "New subjID name": "new_subject_id",
     "Original session name": "old_session_id",
@@ -67,9 +67,9 @@ You will get three options in the terminal
 - `BIDS`: Path to the BIDS folder where the data will be saved
 - `Calibration`: Path to the calibration file
 - `Crosstalk`: Path to the crosstalk file
-- `Dataset_description`: Path to the dataset_description.json file
-- `Participants`: Path to the participants.tsv file
-- `Participants mapping (csv)`: Path to the mapping file
+- `Dataset_description`: Path to the dataset_description.json file in the BIDS folder
+- `Participants`: Path to the participants.tsv file in the BIDS folder
+- `Participants mapping (csv)`: Path to the mapping file that contains the original and new subject IDs
 - `Original subjID name`: Name of the column in the mapping file that contains the original subject ID
 - `New subjID name`: Name of the column in the mapping file that contains the new subject ID
 - `Original session name`: Name of the column in the mapping file that contains the original session ID
