@@ -15,6 +15,7 @@ import re
 import tkinter as tk
 from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfile
 import json
+import pandas as pd
 import subprocess
 import argparse
 from datetime import datetime
@@ -29,6 +30,14 @@ from mne.chpi import (compute_chpi_amplitudes, compute_chpi_locs,
                       read_head_pos)
 import matplotlib.patches as mpatches
 
+from utils import (
+    log,
+    proc_patterns,
+    noise_patterns,
+    file_contains,
+    askForConfig
+)
+
 ###############################################################################
 # Global variables
 ###############################################################################
@@ -36,7 +45,7 @@ default_raw_path = '/neuro/data/sinuhe'
 default_output_path = '/neuro/data/local'
 default_base_path = os.getcwd()
 
-proc_patterns = ['proc', 'tsss', 'sss', 'corr', 'mc', 'avgHead']
+
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
@@ -48,9 +57,6 @@ debug = True
 # - Read data from sinuhe, write to cerberos
 # - Integrate with Bids?
 # - Problem, maxfilter have problems with combining absolute paths and split-files so files must be copied before or after maxfiltering.
-
-def file_contains(file: str, pattern: list):
-    return bool(re.compile('|'.join(pattern)).search(file))
 
 def match_task_files(files, task: str):
     matched_files = [f for f in files if not file_contains(basename(f).lower(), exclude_patterns + proc_patterns) and task in f]
@@ -68,20 +74,6 @@ def askForProjectDir():
             data_path = None
     else:
         return data_path
-
-def askForMaxfilterConfig():
-    
-    option = input("Do you want to open an existing maxfilter config file or create a new? ([open]/new/cancel): ").strip().lower()
-    if option not in ['o', 'open']:
-        if option in ['n', 'new']:
-            return 'new'
-        elif option in ['c', 'cancel']:
-            print('No MaxFilter settings file selected. Exiting opening dialog')
-            sys.exit(1)
-    else:
-        json_name = askopenfilename(title='Select Maxfilter settings', initialdir=default_output_path, filetypes=[('Json File', '*.json')])  # shows dialog box and return the MEG path
-        print(f'{json_name} selected')
-        return json_name
 
 def defaultMaxfilterConfig():
     data = {
@@ -303,6 +295,32 @@ def plot_movement(raw, head_pos, mean_trans):
     fig.tight_layout()
     return fig
 
+def import_conversion_table(conversion_file: str):
+        
+    df = pd.read_csv(conversion_file, sep='\t')
+    df = df.where(pd.notnull(df), None)
+    df['run_maxfilter'] = 'no'
+    df = df[df['acquisition'] == 'triux']
+    df = df[df['datatype'] == 'meg']
+    df = df[df['split'].isna()]
+    
+    for _, d in df.groupby(['participant_to', 'session_to', 'task']):
+        if len(d) == 1:
+            df.loc[d.index[0], 'run_maxfilter'] = 'yes'
+
+    # df = df[df['run_maxfilter'] == 'yes']
+    
+    return df.reset_index(drop=True)
+
+def MaxFilter_from_conversion_table(conversion_file: str):
+        
+    df = import_conversion_table(conversion_file)
+    df = df.where(pd.notnull(df), None)
+    
+    for _, d in df.iterrows():
+        print(d)
+        
+
 class set_parameter:
     def __init__(self, mxf, mne_mxf, string):
         self.mxf = mxf
@@ -330,9 +348,9 @@ class MaxFilter:
         merge_headpos = parameters.get('merge_runs')
         os.makedirs(f"{subj_path}/{trans_path}", exist_ok=True)
 
-        headpos_name = f"{subj_path}/{trans_path}/{task}_headpos.pos"
-        trans_name = f"{subj_path}/{trans_path}/{task}_trans.fif"
-        fig_name = f"{subj_path}/{trans_path}/{task}_movement.png"
+        headpos_name = f"{subj_path}/{task}_headpos.pos"
+        trans_name = f"{subj_path}/{task}_trans.fif"
+        fig_name = f"{subj_path}/{task}_movement.png"
 
         if not exists(headpos_name) or overwrite:
             
@@ -765,7 +783,7 @@ def main():
     if args.config:
         file_config = args.config
     else:
-        file_config = askForMaxfilterConfig()
+        file_config = askForConfig()
     
     if file_config == 'new':
         config_dict = OpenMaxFilterSettingsUI()
