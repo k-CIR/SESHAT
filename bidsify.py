@@ -815,9 +815,11 @@ def generate_new_conversion_table(
     df = pd.DataFrame(processing_schema)
     
     df.insert(2, 'task_count',
-              df.groupby(['acquisition', 'datatype', 'split', 'task', 'processing'])['task'].transform('count'))
+              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing'])['task'].transform('count'))
+    
     df.insert(3, 'task_flag', df.apply(
                 lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
+    
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
@@ -848,13 +850,14 @@ def load_conversion_table(config_dict: dict,
         
     return conversion_table
 
-def bidsify(config_dict: dict):
+def bidsify(config_dict: dict, conversion_file: str=None):
     
     path_BIDS = config_dict.get('BIDS')
     calibration = config_dict['Calibration']
     crosstalk = config_dict['Crosstalk']
+    overwrite = config_dict['Overwrite']
 
-    df = load_conversion_table(config_dict)
+    df = load_conversion_table(config_dict, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure
@@ -872,7 +875,7 @@ def bidsify(config_dict: dict):
             if not bids_path.meg_crosstalk_fpath:
                 write_meg_crosstalk(crosstalk, bids_path)
     
-    # ignore split files
+    # ignore split files as they are processed automatically
     df = df[df['split'].isna()]
 
     deviants = df[df['task_flag'] == 'check']
@@ -885,8 +888,8 @@ def bidsify(config_dict: dict):
     for i, d in df.iterrows():
         
         # Ignore files that are already converted
-        if d['run_conversion'] == 'no':
-            print(f'{d['bids_name']} already converted')
+        if d['run_conversion'] == 'no' and overwrite == 'off':
+            print(f"{d['bids_name']} already converted")
             continue
 
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
@@ -981,6 +984,7 @@ def main():
     parser = argparse.ArgumentParser(description='BIDSify Configuration')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
+    parser.add_argument('--conversion', type=str, help='Path to the conversion file')
     args = parser.parse_args()
 
     if args.config:
@@ -1001,16 +1005,11 @@ def main():
         for key, value in config_dict.items():
             print(f"{key}: {value}")
         
-        if config_dict['Overwrite'] == 'on':
-            overwrite_bids = True
-        else:
-            overwrite_bids = False
-        
         # create dataset description file if the file does not exist or overwrite_bids is True
 
         create_dataset_description(config_dict['BIDS'], args.edit)
         
-        bidsify(config_dict)
+        bidsify(config_dict, args.conversion)
         
         update_sidecars(config_dict['BIDS'])
 
