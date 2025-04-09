@@ -36,11 +36,17 @@ from mne_bids import (
 from mne_bids.utils import _write_json
 import mne
 
+from utils import (
+    log,
+    noise_patterns,
+    headpos_patterns,
+    askForConfig,
+    extract_info_from_filename,
+    file_contains
+)
 ###############################################################################
 # Global variables
 ###############################################################################
-noise_patterns = ['empty', 'noise', 'Empty']
-proc_patterns = ['tsss', 'sss', r'corr\d+', 'ds', 'mc', 'avgHead']
 exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
 
 InstitutionName = 'Karolinska Institutet'
@@ -50,52 +56,6 @@ global data
 ###############################################################################
 # Functions: Create or fill templates: dataset description, participants info
 ###############################################################################
-
-def log(
-    message: str,
-    level: str='info',
-    logfile: str='log.tsv',
-    logpath: str='.'):
-    """
-    Print a message to the console and write it to a log file.
-    Parameters
-    ----------
-    message : str
-        The message to print and write to the log file.
-    level : str
-        The log level. Can be 'info', 'warning', or 'error'.
-    logfile : str
-        The name of the log file.
-    logpath : str
-        The path to the log file.
-    """ 
-
-    # Define colors for different log levels
-    level_colors = {
-        'info': '\033[94m',   # Blue
-        'warning': '\033[93m',   # Yellow
-        'error': '\033[91m'    # Red
-    }
-    
-    # Check if the log level is valid
-    if level not in level_colors:
-        print(f"Invalid log level '{level}'. Supported levels are: info, warning, error.")
-        return
-
-    # Get the current timestamp
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Format the message
-    formatted_message = f"""
-    {level_colors[level]}[{level.upper()}] {timestamp}
-    {message}\033[0m
-     """
-
-    # Write the message to the log file
-    with open(f'{logpath}/{logfile}', 'a') as f:
-        f.write(f"[{level.upper()}]\t{timestamp}\t{message}\n")
-    print(formatted_message)
-
 
 def create_dataset_description(
     path_BIDS: str='.',
@@ -206,7 +166,6 @@ def create_dataset_description(
         # Start GUI loop
         root.mainloop()
 
-
 def create_participants_files(
     path_BIDS: str='.',
     overwrite=False):
@@ -272,7 +231,6 @@ def defaultBidsConfig():
             'Overwrite': 'off'  
         }
     return data
-
 
 def openBidsConfigUI(json_name: str = None):
     """_summary_
@@ -375,36 +333,6 @@ def openBidsConfigUI(json_name: str = None):
     root.mainloop()
     return data
 
-def askForBidsConfig():
-    """_summary_
-
-    Args:
-        file_config (str, optional): _description_. Defaults
-            to None.
-
-    Returns:
-        dict: dictionary with the configuration parameters
-    """
-    option = input("Do you want to open an existing BIDS config file or create a new? ([open]/new/cancel): ").strip().lower()
-    # Check if the file is defined or ask for it
-    if option not in ['o', 'open']:
-        if option in ['n', 'new']:
-            return 'new'
-        elif option in ['c', 'cancel']:
-            print('User cancelled')
-            sys.exit(1)
-
-    else:
-        file_config = askopenfilename(title='Select config file', filetypes=[('JSON files', '*.json')],
-                                      initialdir='/neuro/data/local')
-        if not file_config:
-            print('No BIDS settings file selected. Exiting opening dialog')
-            sys.exit(1)
-        
-        print(f'{file_config} selected')
-        return file_config
-
-
 def update_sidecars(bids_root):
     
     """_summary_
@@ -420,6 +348,7 @@ def update_sidecars(bids_root):
                                      suffixes='meg',
                                     acquisitions=['triux', 'hedscan'],
                                     splits=None,
+                                    descriptions=None,
                                      extensions='.fif')
     # Add institution name, department and address
     institution = {
@@ -429,60 +358,97 @@ def update_sidecars(bids_root):
             }
     
     for bp in bids_paths:
-        acq = bp.acquisition
-        proc = bp.processing
-        suffix = bp.suffix
-        info = mne.io.read_info(bp.fpath, verbose='error')
-        bp_json = bp.copy().update(extension='.json', split=None)
-        with open(str(bp_json.fpath), 'r') as f:
-            sidecar = json.load(f)
+        if not file_contains(bp.basename, headpos_patterns):
+            acq = bp.acquisition
+            proc = bp.processing
+            suffix = bp.suffix
+            info = mne.io.read_info(bp.fpath, verbose='error')
+            bp_json = bp.copy().update(extension='.json', split=None)
+            with open(str(bp_json.fpath), 'r') as f:
+                sidecar = json.load(f)
+            
+            if not file_contains(bp.task.lower(), noise_patterns):
+                match_paths = find_matching_paths(
+                                bp.directory,
+                                acquisitions=acq,
+                                suffixes='meg',
+                                extensions='.fif')
 
-        if acq == 'triux' and suffix == 'meg':
-            if info['gantry_angle'] > 0:
-                dewar_pos = f'upright ({int(info["gantry_angle"])} degrees)'
-            else:
-                dewar_pos = f'supine ({int(info["gantry_angle"])} degrees)'
-            sidecar['DewarPosition'] = dewar_pos
-            try:
-                sidecar['HeadCoilFrequency'] = [f['coil_freq'] for f in info['hpi_meas'][0]['hpi_coils']]
-            except IndexError:
-                'No head coil frequency found'
-            
-            # sidecar['ContinuousHeadLocalization']
-            
-            # TODO: Add maxfilter and headposition parameters
-            if proc:
-                print('Processing detected')
-                proc_list = proc.split('+')
-                max_info = info['proc_history'][0]['max_info']
+                noise_paths = [p for p in match_paths if 'noise' in p.task.lower()]
+                sidecar['AssociatedEmptyRoom'] = [basename(er) for er in noise_paths]
                 
-                if file_contains(proc, ['sss', 'tsss']):
-                    sss_info = max_info['sss_info']
-                    sidecar['SoftwareFilters']['MaxFilterVersion'] = info['proc_history'][0]['creator']
-                    sidecar['SoftwareFilters']['SignalSpaceSeparation'] = {
-                        'Origin': sss_info['origin'].tolist(),
-                        'NComponents': sss_info['nfree'],
-                        'HPIGLimit': sss_info['hpi_g_limit'],
-                        'HPIDistanceLimit': sss_info['hpi_dist_limit']
-                        
-                    }
-                    if ['tsss'] in proc_list:
-                        max_st = max_info['max_st']
-                        sidecar['SoftwareFilters']['TemporalSignalSpaceSeparation'] = {
-                            'SubSpaceCorrelationLimit': max_st['subspcorr'],
-                            'LengtOfDataBuffert': max_st['buflen']
+                # Find associated headpos and trans files
+                headpos_file = find_matching_paths(
+                    bp.directory,
+                    bp.task,
+                    acquisitions=acq,
+                    descriptions='headpos',
+                    extensions='.pos',
+                )
+                trans_file = find_matching_paths(
+                    bp.directory,
+                    bp.task,
+                    acquisitions=acq,
+                    descriptions='trans',
+                    extensions='.fif',
+                )
+                if headpos_file:
+                    path = f"{headpos_file[0].root}/{headpos_file[0].basename}"
+                    headpos = mne.chpi.read_head_pos(path)
+                    trans_head, rot, t = mne.chpi.head_pos_to_trans_rot_t(headpos)
+                    sidecar['MaxMovement'] = round(float(trans_head.max()), 4)
+                    
+                if trans_file:
+                    path = f"{headpos_file[0].root}/{headpos_file[0].basename}"
+                    trans = mne.read_trans(path)
+
+            if acq == 'triux' and suffix == 'meg':
+                if info['gantry_angle'] > 0:
+                    dewar_pos = f'upright ({int(info["gantry_angle"])} degrees)'
+                else:
+                    dewar_pos = f'supine ({int(info["gantry_angle"])} degrees)'
+                sidecar['DewarPosition'] = dewar_pos
+                try:
+                    # mne.chpi.get_chpi_info(info)
+                    sidecar['HeadCoilFrequency'] = [f['coil_freq'] for f in info['hpi_meas'][0]['hpi_coils']]
+                except IndexError:
+                    'No head coil frequency found'
+
+                # sidecar['ContinuousHeadLocalization']
+                
+                # TODO: Add maxfilter and headposition parameters
+                if proc:
+                    print('Processing detected')
+                    proc_list = proc.split('+')
+                    max_info = info['proc_history'][0]['max_info']
+                    
+                    if file_contains(proc, ['sss', 'tsss']):
+                        sss_info = max_info['sss_info']
+                        sidecar['SoftwareFilters']['MaxFilterVersion'] = info['proc_history'][0]['creator']
+                        sidecar['SoftwareFilters']['SignalSpaceSeparation'] = {
+                            'Origin': sss_info['origin'].tolist(),
+                            'NComponents': sss_info['nfree'],
+                            'HPIGLimit': sss_info['hpi_g_limit'],
+                            'HPIDistanceLimit': sss_info['hpi_dist_limit']
+                            
                         }
-                
-                # sidecar['MaxMovement'] 
-                # Add average head position file
+                        if ['tsss'] in proc_list:
+                            max_st = max_info['max_st']
+                            sidecar['SoftwareFilters']['TemporalSignalSpaceSeparation'] = {
+                                'SubSpaceCorrelationLimit': max_st['subspcorr'],
+                                'LengtOfDataBuffert': max_st['buflen']
+                            }
+                    
+                    # sidecar['MaxMovement'] 
+                    # Add average head position file
 
-        if acq == 'hedscan':
-            sidecar['Manufacturer'] = 'FieldLine'
-        
-        new_sidecar = institution | sidecar
-        
-        with open(str(bp_json.fpath), 'w') as f:
-            json.dump(new_sidecar, f, indent=4)
+            if acq == 'hedscan':
+                sidecar['Manufacturer'] = 'FieldLine'
+            
+            new_sidecar = institution | sidecar
+            
+            with open(str(bp_json.fpath), 'w') as f:
+                json.dump(new_sidecar, f, indent=4)
 
 
 def update_sidecar(bids_path: BIDSPath):
@@ -538,10 +504,6 @@ def update_sidecar(bids_path: BIDSPath):
     message = f'{sidecar_path.basename} updated'
     print(message)
 
-def file_contains(file: str, pattern: list):
-    return bool(re.compile('|'.join(pattern)).search(file))
-
-
 def add_channel_parameters(
     bids_tsv: str,
     opm_tsv: str):
@@ -563,104 +525,33 @@ def add_channel_parameters(
             bids_df.to_csv(bids_tsv, sep='\t', index=False)
     print(f'Adding channel parameters to {basename(bids_tsv)}')
 
-
-def extract_info_from_filename(file_name: str):
-    
-    """_summary_
-    
-    Function to clean up filenames and extract
-    
-    Args:
-        file_name (str, required): _description_
-        
-    Returns:
-        dict: 
-            filename (str): _description_
-            participant (str): _description_
-            task (str): _description_
-            processing (list): _description_
-            datatypes (list): _description_
-            extension (str): _description_
-    """
-    
-    # Extract participant, task, processing, datatypes and extension
-    participant = re.search(r'(NatMEG_|sub-)(\d+)', file_name).group(2)
-    extension = '.' + re.search(r'\.(.*)', file_name).group(1)
-    datatypes = list(set([r.lower() for r in re.findall(r'(meg|raw|opm|eeg|behav)', basename(file_name), re.IGNORECASE)] +
-                         ['opm' if 'kaptah' in file_name else '']))
-    datatypes = [d for d in datatypes if d != '']
-
-    proc = re.findall('|'.join(proc_patterns), basename(file_name))
-    
-    split = re.search(r'(\-\d+\.fif)', basename(file_name))
-    split = split.group(1).strip('.fif') if split else ''
-    
-    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc  + [split] + ['\\+'] + ['\\-'])
-    
-    if 'opm' in datatypes or 'kaptah' in file_name:
-        task = re.split('_', basename(file_name), flags=re.IGNORECASE)[-2].replace('file-', '')
-        task = re.split('opm', task, flags=re.IGNORECASE)[0]
-
-    else:
-        task = re.sub(exclude_from_task, '', basename(file_name), flags=re.IGNORECASE)
-    task = [t for t in task.split('_') if t]
-    if len(task) > 1:
-        task = ''.join([t.title() for t in task])
-    else:
-        task = task[0]
-    
-    if file_contains(task, noise_patterns):
-        try:
-            task = f'Noise{re.search("before|after", task.lower()).group().title()}'
-        except:
-            task = 'Noise'
-
-    info_dict = {
-        'filename': file_name,
-        'participant': participant,
-        'task': task,
-        'split': split,
-        'processing': proc,
-        'datatypes': datatypes,
-        'extension': extension
-    }
-    
-    return info_dict
-
-
 def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
     
-    raw = mne.io.read_raw_fif(file_name, allow_maxshield=True, verbose='error')
-    
-    # Confirm that the file is EEG
-    if not 'meg' in set(raw.info.get_channel_types()):
-       bids_json = find_matching_paths(bids_path.root,
-                            tasks=bids_path.task,
-                            suffixes='eeg',
-                            extensions='.json')[0]
-       bids_eeg = bids_json.copy().update(datatype='meg',
-                                          extension='.fif')
-       
-       raw.save(bids_eeg.fpath, overwrite=True)
+    if not file_contains(file_name, headpos_patterns):
+        raw = mne.io.read_raw_fif(file_name, allow_maxshield=True, verbose='error')
+        ch_types = set(raw.info.get_channel_types())
+        # Confirm that the file is EEG
+        if not 'meg' in ch_types:
+            bids_json = find_matching_paths(bids_path.root,
+                                    tasks=bids_path.task,
+                                    suffixes='eeg',
+                                    extensions='.json')[0]
+            bids_eeg = bids_json.copy().update(datatype='meg',
+                                                extension='.fif')
+            
+            raw.save(bids_eeg.fpath, overwrite=True)
 
-       json_from = bids_json.fpath
-       json_to = bids_json.copy().update(datatype='meg').fpath
-       
-       copy2(json_from, json_to)
-       
-       # Copy CapTrak files
-       CapTrak = find_matching_paths(bids_eeg.root, spaces='CapTrak')
-       for old_cap in CapTrak:
-           new_cap = old_cap.copy().update(datatype='meg')
-           if not exists(new_cap):
-               copy2(old_cap, new_cap)
-
-def get_desc_from_raw(file_name):
-    info = mne.io.read_info(file_name, verbose='error')
-    
-    update_dict = {
-        
-    }
+            json_from = bids_json.fpath
+            json_to = bids_json.copy().update(datatype='meg').fpath
+            
+            copy2(json_from, json_to)
+            
+            # Copy CapTrak files
+            CapTrak = find_matching_paths(bids_eeg.root, spaces='CapTrak')
+            for old_cap in CapTrak:
+                new_cap = old_cap.copy().update(datatype='meg')
+                if not exists(new_cap):
+                    copy2(old_cap, new_cap)
 
 def generate_new_conversion_table(
     config_dict: dict,
@@ -674,8 +565,6 @@ def generate_new_conversion_table(
     path_triux = config_dict['squidMEG']
     path_opm = config_dict['opmMEG']
     path_BIDS = config_dict['BIDS']
-    calibration = config_dict['Calibration']
-    crosstalk = config_dict['Crosstalk']
     participant_mapping = config_dict['Participants mapping file']
     old_subj_id = config_dict['Original subjID name']
     new_subj_id = config_dict['New subjID name']
@@ -701,6 +590,7 @@ def generate_new_conversion_table(
         'datatype': [],
         'acquisition': [],
         'processing': [],
+        'description': [],
         'raw_path': [],
         'raw_name': [],
         'bids_path': [],
@@ -736,11 +626,13 @@ def generate_new_conversion_table(
                 session = date_session
                 
                 if mod == 'triux':
-                    all_fifs = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')))
+                    all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
+                                      glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
+                    
                 elif mod == 'hedscan':
-                    all_fifs = sorted(glob('*.fif', root_dir=os.path.join(path, participant)))
+                    all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant)))
 
-                for file in all_fifs:
+                for file in all_files:
                     
                     if mod == 'triux':
                         full_file_name = os.path.join(path, participant, date_session, 'meg', file)
@@ -756,6 +648,9 @@ def generate_new_conversion_table(
                     subject = info_dict.get('participant')
                     split = info_dict.get('split')
                     run = ''
+                    desc = '+'.join(info_dict.get('description'))
+                    extension = info_dict.get('extension')
+                    suffix='meg'
                     
                     if participant_mapping and mapping_found:
                         pmap = pd.read_csv(participant_mapping, dtype=str)
@@ -763,17 +658,21 @@ def generate_new_conversion_table(
                         
                         session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                     
-                    info = mne.io.read_raw_fif(full_file_name,
-                                    allow_maxshield=True,
-                                    verbose='error')
-                    ch_types = set(info.get_channel_types())
+                    if not file_contains(file, headpos_patterns):
+                        info = mne.io.read_raw_fif(full_file_name,
+                                        allow_maxshield=True,
+                                        verbose='error')
+                        ch_types = set(info.get_channel_types())
 
-                    if 'mag' in ch_types:
+                        if 'mag' in ch_types:
+                            datatype = 'meg'
+                        elif 'eeg' in ch_types:
+                            datatype = 'eeg'
+                            extension = None
+                            suffix = None
+                    else:
                         datatype = 'meg'
-                        extension = '.fif'
-                    elif 'eeg' in ch_types:
-                        datatype = 'eeg'
-
+                        
                     bids_path = BIDSPath(
                         subject=subject,
                         session=session,
@@ -782,7 +681,10 @@ def generate_new_conversion_table(
                         processing=None if proc == '' else proc,
                         run=None if run == '' else run,
                         datatype=datatype,
-                        root=path_BIDS
+                        description=None if desc == '' else desc,
+                        root=path_BIDS,
+                        extension=extension,
+                        suffix=suffix
                     )
                     
                     # Check if bids exist
@@ -790,7 +692,9 @@ def generate_new_conversion_table(
                     if (find_matching_paths(bids_path.directory,
                                         tasks=task,
                                         acquisitions=mod,
-                                        extensions='.fif')):
+                                        suffixes=suffix,
+                                        descriptions=None if desc == '' else desc,
+                                        extensions=extension)):
                         run_conversion = 'no'
 
                     processing_schema['time_stamp'].append(ts)
@@ -805,6 +709,7 @@ def generate_new_conversion_table(
                     processing_schema['datatype'].append(datatype)
                     processing_schema['acquisition'].append(mod)
                     processing_schema['processing'].append(proc)
+                    processing_schema['description'].append(desc)
                     processing_schema['raw_path'].append(dirname(full_file_name))
                     processing_schema['raw_name'].append(file)
                     processing_schema['bids_path'].append(bids_path.directory)
@@ -815,14 +720,14 @@ def generate_new_conversion_table(
     df = pd.DataFrame(processing_schema)
     
     df.insert(2, 'task_count',
-              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing'])['task'].transform('count'))
+              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description'])['task'].transform('count'))
     
     df.insert(3, 'task_flag', df.apply(
                 lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
     
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
-    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
+    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False) 
 
 def load_conversion_table(config_dict: dict,
                           conversion_file: str=None):
@@ -891,75 +796,87 @@ def bidsify(config_dict: dict, conversion_file: str=None):
         if d['run_conversion'] == 'no' and overwrite == 'off':
             print(f"{d['bids_name']} already converted")
             continue
-
+        
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
-        
-        raw = mne.io.read_raw_fif(raw_file,
-                                  allow_maxshield=True,
-                                  verbose='error')
+        if not file_contains(raw_file, headpos_patterns):
+            raw = mne.io.read_raw_fif(raw_file,
+                                    allow_maxshield=True,
+                                    verbose='error')
 
-        ch_types = set(raw.info.get_channel_types())
+            ch_types = set(raw.info.get_channel_types())
 
-        if 'mag' in ch_types:
-            datatype = 'meg'
-            extension = '.fif'
-            suffix = 'meg'
-        elif 'eeg' in ch_types:
-            datatype = 'eeg'
-            extension = None
-            suffix = None
-        
-        subject = d['participant_to']
-        session = d['session_to']
-        task = d['task']
-        acquisition = d['acquisition']
-        processing = d['processing']
-        run = d['run']
+            if 'mag' in ch_types:
+                datatype = 'meg'
+                extension = '.fif'
+                suffix = 'meg'
+            elif 'eeg' in ch_types:
+                datatype = 'eeg'
+                extension = None
+                suffix = None
+            
+            subject = d['participant_to']
+            session = d['session_to']
+            task = d['task']
+            acquisition = d['acquisition']
+            processing = d['processing']
+            run = d['run']
 
-        # Create BIDS path
-        bids_path = BIDSPath(
-            subject=subject,
-            session=session,
-            task=task,
-            run=run,
-            datatype=datatype,
-            acquisition=acquisition,
-            processing=processing,
-            suffix=suffix,
-            extension=extension,
-            root=path_BIDS
-        )
-        # Write the BIDS file
-        try:
-            write_raw_bids(
-                raw=raw,
-                bids_path=bids_path,
-                empty_room=None,
-                events=None,
-                overwrite=True,
-                verbose='error'
+            # Create BIDS path
+            bids_path = BIDSPath(
+                subject=subject,
+                session=session,
+                task=task,
+                run=run,
+                datatype=datatype,
+                acquisition=acquisition,
+                processing=processing,
+                suffix=suffix,
+                extension=extension,
+                root=path_BIDS
             )
-        except Exception as e:
-            print(f"Error writing BIDS file: {e}")
-            # If write_raw_bids fails, try to save the raw file directly
-            # Fall back on raw.save if write_raw_bids fails
-            fname = bids_path.copy().update(suffix=datatype, extension = '.fif').fpath
-            raw.save(fname, overwrite=True)
-        
-        # Copy EEG to MEG
-        if datatype == 'eeg':
-            copy_eeg_to_meg(raw_file, bids_path)
-            
-        # Update the sidecar file
-        else:
-            update_sidecar(bids_path)
+        # Write the BIDS file
+            try:
+                write_raw_bids(
+                    raw=raw,
+                    bids_path=bids_path,
+                    empty_room=None,
+                    events=None,
+                    overwrite=True,
+                    verbose='error'
+                )
+            except Exception as e:
+                print(f"Error writing BIDS file: {e}")
+                # If write_raw_bids fails, try to save the raw file directly
+                # Fall back on raw.save if write_raw_bids fails
+                fname = bids_path.copy().update(suffix=datatype, extension = '.fif').fpath
+                raw.save(fname, overwrite=True)
 
-        # Add channel parameters 
-        if acquisition == 'hedscan':
-            opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
-            
-            bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
-            add_channel_parameters(bids_tsv, opm_tsv)
+            # Copy EEG to MEG
+            if datatype == 'eeg':
+                copy_eeg_to_meg(raw_file, bids_path)
+                
+            # Update the sidecar file
+            else:
+                update_sidecar(bids_path)
+
+            # Add channel parameters 
+            if acquisition == 'hedscan':
+                opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
+                
+                bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
+                add_channel_parameters(bids_tsv, opm_tsv)
+
+        # If the file is a head position file, copy it to the BIDS directory
+        # and rename it to the BIDS format
+        else:
+            bids_path = f"{d['bids_path']}/{d['bids_name']}"
+
+            if 'headpos' in d['description']:
+                headpos = mne.chpi.read_head_pos(raw_file)
+                mne.chpi.write_head_pos(bids_path, headpos)
+            elif 'trans' in d['description']:
+                trans = mne.read_trans(raw_file)
+                mne.write_trans(bids_path, trans, overwrite=True)
 
         # Log the conversion
         log( 
@@ -970,10 +887,6 @@ def bidsify(config_dict: dict, conversion_file: str=None):
         )
         # Print the conversion
         print(f'{raw_file} -> {bids_path}')
-        # Print the sidecar file
-        print(f'{bids_path.fpath} updated')
-        # Print the CapTrak file
-        print(f'{bids_path.fpath} updated')
         
         df.at[i, 'run_conversion'] = 'no'
     
@@ -990,7 +903,7 @@ def main():
     if args.config:
         file_config = args.config
     else:
-        file_config = askForBidsConfig()
+        file_config = askForConfig()
     # Select BIDS configuration file dialog
     
     if file_config == 'new':
