@@ -8,7 +8,7 @@ from os.path import basename
 
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
-proc_patterns = ['tsss', 'sss', r'corr\d+', 'ds', 'mc', 'avgHead']
+proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
 
 def log(

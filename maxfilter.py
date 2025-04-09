@@ -49,7 +49,7 @@ default_base_path = os.getcwd()
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
-debug = True
+debug = False
 ###############################################################################
 
 # TODO:
@@ -107,7 +107,6 @@ def defaultMaxfilterConfig():
         'cal': '/neuro/databases/sss/sss_cal.dat',
         'ctc': '/neuro/databases/ctc/ct_sparse.fif',
         'dst_path': '',
-        'trans_folder': 'headtrans',
         'log_folder': 'log',
         'maxfilter_version': '/neuro/bin/util/mfilter',
         'MaxFilter_commands': '',
@@ -344,19 +343,41 @@ class MaxFilter:
 
         parameters = self.parameters
 
-        trans_path = parameters.get('trans_folder')
         merge_headpos = parameters.get('merge_runs')
-        os.makedirs(f"{subj_path}/{trans_path}", exist_ok=True)
 
         headpos_name = f"{subj_path}/{task}_headpos.pos"
-        trans_name = f"{subj_path}/{task}_trans.fif"
+        trans_file = f"{subj_path}/{task}_trans.fif"
         fig_name = f"{subj_path}/{task}_movement.png"
 
         if not exists(headpos_name) or overwrite:
             
             if isinstance(files, str):
                 files = [files]
+            raws = [mne.io.read_raw_fif(
+                    f'{subj_path}/{file}',
+                    allow_maxshield=True,
+                    verbose='error')
+                        for file in files]
+            
+            if merge_headpos == 'on' and len(files) > 1:
+                raws[0].info['dev_head_t'] = raws[1].info['dev_head_t']
+                raw = mne.concatenate_raws(raws)
+            else:
+                raw = raws[0]
             print(f"Creating average head position for files: {' | '.join(files)}")
+            chpi_amplitudes = compute_chpi_amplitudes(raw)
+            chpi_locs = compute_chpi_locs(raw.info, chpi_amplitudes)
+            head_pos = compute_head_pos(raw.info, chpi_locs, verbose='error')
+            
+            write_head_pos(headpos_name, head_pos)
+            print(f"Wrote headposition file to: {basename(headpos_name)}")
+        else:
+            print(f'{basename(headpos_name)} already exists. Skipping...')
+        
+        if not exists(trans_file) or overwrite:
+
+            if isinstance(files, str):
+                files = [files]
             raws = [mne.io.read_raw_fif(
                     f'{subj_path}/{file}',
                     allow_maxshield=True,
@@ -369,33 +390,20 @@ class MaxFilter:
             else:
                 raw = raws[0]
 
-            chpi_amplitudes = compute_chpi_amplitudes(raw)
-            chpi_locs = compute_chpi_locs(raw.info, chpi_amplitudes)
-            head_pos = compute_head_pos(raw.info, chpi_locs, verbose='error')
-
-            os.makedirs(f'{subj_path}/{trans_path}', exist_ok=True)
-            
-            write_head_pos(headpos_name, head_pos)
-            print(f"Wrote headposition file to: {basename(headpos_name)}")
-        else:
-            print(f'{basename(headpos_name)} already exists. Skipping...')
-        
-        if not exists(trans_name) or overwrite:
-
             head_pos = read_head_pos(headpos_name)
             # trans, rot, t = head_pos_to_trans_rot_t(head_pos) 
 
             mean_trans = invert_transform(
                 compute_average_dev_head_t(raw, head_pos))
             
-            write_trans(trans_name, mean_trans, overwrite=True)
-            print(f'Wrote trans file to {basename(trans_name)}')
+            write_trans(trans_file, mean_trans, overwrite=True)
+            print(f'Wrote trans file to {basename(trans_file)}')
         
         else:
-            print(f'{basename(trans_name)} already exists. Skipping...')
+            print(f'{basename(trans_file)} already exists. Skipping...')
         
         if not exists(fig_name) or overwrite:
-            plot_movement(raw, headpos_name, trans_name).savefig(fig_name)
+            plot_movement(raw, headpos_name, trans_file).savefig(fig_name)
 
     def set_params(self, subject, session, task):
         
@@ -409,8 +417,7 @@ class MaxFilter:
             
         data_root = parameters.get('data_path')
         subj_path = f'{data_root}/{subject}/{session}/meg'
-        trans_folder = parameters.get('trans_folder')
-        trans_file = f'{subj_path}/{trans_folder}/{task}_trans.fif'
+        trans_file = f'{task}_trans.fif'
         trans_conditions = parameters.get('trans_conditions')
         trans_option = parameters.get('trans_option')
 
@@ -673,6 +680,9 @@ class MaxFilter:
             trans_files +
             sss_files +
             empty_room_files)))
+        
+        # Remove if empty
+        tasks_to_run = [t for t in tasks_to_run if t != '']
 
         for task in tasks_to_run:
 
@@ -703,16 +713,6 @@ class MaxFilter:
                 
                 if not ncov:
                     clean = clean.replace('.fif', '_meg.fif')
-
-                if not exists(clean):
-                    print('''
-                          Running Maxfilter on
-                          Subject: %s
-                          Session: %s
-                          Task: %s
-                          ''' % (subject, 
-                                 session,
-                                 file))
                 
                 log = f'{log_path}/{clean.replace(".fif",".log")}'
                 
@@ -738,16 +738,30 @@ class MaxFilter:
                     ])
                 self.command_mxf = ' '.join(command_list)
                 self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
-                print(self.command_mxf)
-                
-                if not debug:
-                    subprocess.run(self.command_mxf, shell=True, cwd=subj_path)
 
-            else:
-                print('''
+                if not exists(clean):
+                    print('''
+                          Running Maxfilter on
+                          Subject: %s
+                          Session: %s
+                          Task: %s
+                          ''' % (subject, 
+                                 session,
+                                 file))
+                    if not debug:
+                        subprocess.run(self.command_mxf, shell=True, cwd=subj_path)
+                    else:
+                        print(self.command_mxf)
+
+                else:
+                    print('''
                         Existing file: %s
                         Delete to rerun MaxFilter process
                         ''' % clean)
+                
+               
+
+                
 
         # os.chdir(default_base_path)
 
