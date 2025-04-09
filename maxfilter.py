@@ -43,6 +43,7 @@ from utils import (
 ###############################################################################
 default_raw_path = '/neuro/data/sinuhe'
 default_output_path = '/neuro/data/local'
+temp_path = '/home/natmeg/Scripts/natmeg_utils'
 default_base_path = os.getcwd()
 
 
@@ -53,10 +54,8 @@ debug = False
 ###############################################################################
 
 # TODO:
-# - Review and check if maxfilter configurations work
 # - Read data from sinuhe, write to cerberos
 # - Integrate with Bids?
-# - Problem, maxfilter have problems with combining absolute paths and split-files so files must be copied before or after maxfiltering.
 
 def match_task_files(files, task: str):
     matched_files = [f for f in files if not file_contains(basename(f).lower(), exclude_patterns + proc_patterns) and task in f]
@@ -108,7 +107,7 @@ def defaultMaxfilterConfig():
         'ctc': '/neuro/databases/ctc/ct_sparse.fif',
         'dst_path': '',
         'log_folder': 'log',
-        'maxfilter_version': '/neuro/bin/util/mfilter',
+        'maxfilter_version': '/neuro/bin/util/maxfilter',
         'MaxFilter_commands': '',
         }
     }
@@ -195,9 +194,10 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         
         if key == 'maxfilter_version':
             selected_option = tk.StringVar()
-            # options = ['/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter']
+            # options = ['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter']
+            # WARNING. mfiler is a new experimental version, seems to find extremly many bad channels
             options = options = [value] + list(
-                {'/neuro/bin/util/mfilter', '/neuro/bin/util/maxfilter'} - {value})
+                {'/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'} - {value})
             entry = tk.OptionMenu(adv_frame, selected_option, *options)
             entry.grid(row=i, column=1, padx=2, pady=2, sticky='w')
             selected_option.set(options[0])
@@ -713,8 +713,14 @@ class MaxFilter:
                 
                 if not ncov:
                     clean = clean.replace('.fif', '_meg.fif')
-                
-                log = f'{log_path}/{clean.replace(".fif",".log")}'
+
+                # Test absolute path
+                file = f"{temp_path}/{subj_path}/{file}"
+                clean = f"{temp_path}/{subj_path}/{clean}"
+                tmp_trans = f"-trans {temp_path}/{subj_path}/AudOddSplitted_trans.fif"
+                log = f'{clean.replace(".fif",".log")}'
+
+                # log = f'{log_path}/{clean.replace(".fif",".log")}'
                 
                 command_list = []
                 command_list.extend([
@@ -723,7 +729,7 @@ class MaxFilter:
                     '-o %s' % clean,
                     self._cal.mxf,
                     self._ctc.mxf,
-                    self._trans.mxf,
+                    tmp_trans,
                     self._tsss.mxf,
                     self._ds.mxf,
                     self._corr.mxf,
@@ -747,7 +753,7 @@ class MaxFilter:
                           Task: %s
                           ''' % (subject, 
                                  session,
-                                 file))
+                                 task))
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_path)
                     else:
