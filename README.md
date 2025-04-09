@@ -17,43 +17,24 @@ Ensure you have the following non-defualt libraries installed in your Python env
 conda install mne mne-bids
 ```
 
-### Run script
-
-Option 1. Run the script by executing the following command:
-
-```bash
-python bidsify.py --config=path/to/config.json
-```
-This will run the script with the config file wihout further questions.
-
-Option 2. Edit config file before running the script:
-
-```bash
-python bidsify.py --config=path/to/config.json --edit
-```
-This will open a dialog for you to edit the config file before running the script.
-
-Option 3. Run the script without a config flag
-```bash
-python bidsify.py # (add --edit to also edit an existing file)
-```
-You will get three options in the terminal
-- `open`: Open an existing config file (default)
-- `new`: Create a new config file from a default template using the dialog
-- `cancel`: Cancel the operation
+## Components 
 
 ### Config file
 
+A configuration file is needed and you will be prompted to create a defaul file if it does not exist.
+
+#### Example
+
 ```json
 {
-    "squidMEG": "neuro/data/sinuhe/opm",
-    "opmMEG": "neuro/data/kaptah/OPMbenchmarking1",
-    "BIDS": "neuro/data/local/OPM-benchmarking",
-    "Calibration": "neuro/databases/sss/sss_cal.dat",
-    "Crosstalk": "neuro/databases/ctc/ct_sparse.fif",
+    "squidMEG": "/neuro/data/sinuhe/opm",
+    "opmMEG": "/neuro/data/kaptah/OPMbenchmarking1",
+    "BIDS": "/neuro/data/local/OPM-benchmarking",
+    "Calibration": "/neuro/databases/sss/sss_cal.dat",
+    "Crosstalk": "/neuro/databases/ctc/ct_sparse.fif",
     "Dataset_description": "dataset_description.json",
     "Participants": "participants.tsv",
-    "Participants mapping (csv)": "neuro/data/local/OPM-benchmarking/mapping.csv",
+    "Participants mapping (csv)": "/neuro/data/local/OPM-benchmarking/mapping.csv",
     "Original subjID name": "old_subject_id",
     "New subjID name": "new_subject_id",
     "Original session name": "old_session_id",
@@ -62,19 +43,79 @@ You will get three options in the terminal
 }
 ```
 
+#### Description
+
 - `squidMEG`: Path to the raw data folder for SQUID MEG data
 - `opmMEG`: Path to the raw data folder for OPM MEG data
 - `BIDS`: Path to the BIDS folder where the data will be saved
 - `Calibration`: Path to the calibration file
 - `Crosstalk`: Path to the crosstalk file
-- `Dataset_description`: Path to the dataset_description.json file
-- `Participants`: Path to the participants.tsv file
-- `Participants mapping (csv)`: Path to the mapping file
+- `Dataset_description`: Path to the dataset_description.json file in the BIDS folder
+- `Participants`: Path to the participants.tsv file in the BIDS folder
+- `Participants mapping (csv)`: Path to the mapping file that contains the original and new subject IDs
 - `Original subjID name`: Name of the column in the mapping file that contains the original subject ID
 - `New subjID name`: Name of the column in the mapping file that contains the new subject ID
 - `Original session name`: Name of the column in the mapping file that contains the original session ID
 - `New session name`: Name of the column in the mapping file that contains the new session ID
 - `Overwrite`: If set to "on", the script will overwrite existing files in the BIDS folder
+
+### The conversion table
+A conversion table will be created when running `bidsify.py`. This conversion file estimates task names, processing, and other parameters to create the bidsified file name. The conversion table is then looped through, skipping split-files and already converted files. By editing the lates file, you can change deviant task names, and decide to whether to run the conversion on a specific file or not. The conversion table is saved in the conversion_logs folder as `<date_of_creationg>_bids_conversion_table.csv`. By default the latest file will be used but you can also select your own file by adding the `--conversion` flag to the command line.
+
+#### Header description
+
+- `time_stamp`: The timestamp when the original conversion file was created.
+- `run_conversion`: Indicates whether the conversion should be executed (`yes` or `no`).
+- `task_count`: N tasks that are unique to participant, session and acquisition, and datatype.
+- `task_flag`: Flag `ok` if task_count is not 1, else `check`.
+- `participant_from`: The original participant ID.
+- `participant_to`: The new participant ID after mapping.
+- `session_from`: The original session ID.
+- `session_to`: The new session ID after mapping.
+- `task`: The task name associated with the file.
+- `split`: Indicates if the file is a split file.
+- `run`: If more than one occurence of a task in the same session this should be set modifided manually.
+- `datatype`: The type of data according to BIDS (e.g., `meg`, `eeg`).
+- `acquisition`: Acquisition device.
+- `processing`: Pre-processing details for the data, eg. MaxFilter.
+- `raw_path`: The path to the raw data file.
+- `raw_name`: The name of the raw data file.
+- `bids_path`: The path where the BIDS-compliant file will be saved.
+- `bids_name`: The name of the BIDS-compliant file.
+
+> If task_flag is `check`. You will be prompted to edit the conversion file before continuing. This is to ensure that the task name is correct and that the file is not a split file. If you are sure that the task name is correct, you can set the task_flag to `ok` and continue with the conversion.
+
+### Run script examples
+
+Example 1. Run the script by executing the following command:
+
+```bash
+python bidsify.py --config=path/to/name_of_config.json
+```
+
+This will run the script with the config file without further questions using the latest created conversion file.
+
+Example 2. Edit config file before running the script:
+
+```bash
+python bidsify.py --config=path/to/name_of_config.json --edit
+```
+This will open a dialog for you to edit the config file before running the script.
+
+Example 3. Run the script without a config flag
+```bash
+python bidsify.py # (add --edit to also edit an existing file)
+```
+You will get three options in the terminal
+- `open`: Open an existing config file (default)
+- `new`: Create a new config file from a default template using the dialog
+- `cancel`: Cancel the operation
+
+Example 4. Run the script with a specific config and conversion file:
+```bash
+python bidsify.py --config=path/to/name_of_config.json --conversion=path/to/conversion_file.csv
+```
+Runs conversion without any further questions using a specific conversion file. 
 
 ### BIDS descriptions
 
