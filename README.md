@@ -27,14 +27,14 @@ A configuration file is needed and you will be prompted to create a defaul file 
 
 ```json
 {
-    "squidMEG": "/neuro/data/sinuhe/opm",
-    "opmMEG": "/neuro/data/kaptah/OPMbenchmarking1",
-    "BIDS": "/neuro/data/local/OPM-benchmarking",
+    "squidMEG": "/neuro/data/sinuhe/<project>",
+    "opmMEG": "/neuro/data/kaptah/<project>",
+    "BIDS": "/neuro/data/local/<project>",
     "Calibration": "/neuro/databases/sss/sss_cal.dat",
     "Crosstalk": "/neuro/databases/ctc/ct_sparse.fif",
     "Dataset_description": "dataset_description.json",
     "Participants": "participants.tsv",
-    "Participants mapping (csv)": "/neuro/data/local/OPM-benchmarking/mapping.csv",
+    "Participants mapping file": "/neuro/data/local/<project>/mapping.csv",
     "Original subjID name": "old_subject_id",
     "New subjID name": "new_subject_id",
     "Original session name": "old_session_id",
@@ -52,7 +52,7 @@ A configuration file is needed and you will be prompted to create a defaul file 
 - `Crosstalk`: Path to the crosstalk file
 - `Dataset_description`: Path to the dataset_description.json file in the BIDS folder
 - `Participants`: Path to the participants.tsv file in the BIDS folder
-- `Participants mapping (csv)`: Path to the mapping file that contains the original and new subject IDs
+- `Participants mapping file`: Path to the mapping file that contains the original and new subject IDs
 - `Original subjID name`: Name of the column in the mapping file that contains the original subject ID
 - `New subjID name`: Name of the column in the mapping file that contains the new subject ID
 - `Original session name`: Name of the column in the mapping file that contains the original session ID
