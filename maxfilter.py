@@ -642,11 +642,12 @@ class MaxFilter:
 
         parameters = self.parameters
 
+        sys_root = os.getcwd()
         data_root = parameters.get('data_path')
         subj_path = f'{data_root}/{subject}/{session}/meg'
         # Create log directory if it doesn't exist
-        log_path = f'{data_root}/{subject}/{session}/meg/{parameters['log_folder']}'
-        os.makedirs(log_path, exist_ok=True)
+        log_path = parameters['log_folder']
+        os.makedirs(f'{sys_root}/{subj_path}/{log_path}', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
 
@@ -715,13 +716,10 @@ class MaxFilter:
                     clean = clean.replace('.fif', '_meg.fif')
 
                 # Test absolute path
-                file = f"{temp_path}/{subj_path}/{file}"
-                clean = f"{temp_path}/{subj_path}/{clean}"
-                tmp_trans = f"-trans {temp_path}/{subj_path}/AudOddSplitted_trans.fif"
-                log = f'{clean.replace(".fif",".log")}'
+                file = f"{sys_root}/{subj_path}/{file}"
+                clean = f"{sys_root}/{subj_path}/{clean}"
+                log = f'{sys_root}/{subj_path}/{log_path}/{basename(clean).replace(".fif",".log")}'
 
-                # log = f'{log_path}/{clean.replace(".fif",".log")}'
-                
                 command_list = []
                 command_list.extend([
                     maxfilter_path,
@@ -729,7 +727,7 @@ class MaxFilter:
                     '-o %s' % clean,
                     self._cal.mxf,
                     self._ctc.mxf,
-                    tmp_trans,
+                    self._trans.mxf,
                     self._tsss.mxf,
                     self._ds.mxf,
                     self._corr.mxf,
@@ -764,10 +762,6 @@ class MaxFilter:
                         Existing file: %s
                         Delete to rerun MaxFilter process
                         ''' % clean)
-                
-               
-
-                
 
         # os.chdir(default_base_path)
 
