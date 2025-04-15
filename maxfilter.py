@@ -43,7 +43,6 @@ from utils import (
 ###############################################################################
 default_raw_path = '/neuro/data/sinuhe'
 default_output_path = '/neuro/data/local'
-temp_path = '/home/natmeg/Scripts/natmeg_utils'
 default_base_path = os.getcwd()
 
 
@@ -78,7 +77,7 @@ def defaultMaxfilterConfig():
     data = {
     'standard_settings': {
         ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
-        'project_name': '',
+        'project_path': '',
         'trans_conditions': ['task1', 'task2'],
         'trans_option': 'continous',
         'merge_runs': 'on',
@@ -94,7 +93,8 @@ def defaultMaxfilterConfig():
         'tsss_default': 'on',
         'correlation': 0.98,
         'movecomp_default': 'on',
-        'data_path': '.'
+        'squid_data_path': '/neuro/data/sinuhe/',
+        'participant_skip_list': []
         },
     'advanced_settings': {
         'force': 'off',
@@ -105,7 +105,7 @@ def defaultMaxfilterConfig():
         'scripts_path': '/home/natmeg/Scripts',
         'cal': '/neuro/databases/sss/sss_cal.dat',
         'ctc': '/neuro/databases/ctc/ct_sparse.fif',
-        'dst_path': '',
+        'destination_path': '', # Not in use
         'log_folder': 'log',
         'maxfilter_version': '/neuro/bin/util/maxfilter',
         'MaxFilter_commands': '',
@@ -132,8 +132,8 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         with open(json_name, 'r') as f:
             data = json.load(f)
 
-    if not data['standard_settings']['data_path']:
-        data['standard_settings']['data_path'] = askForProjectDir()
+    if not data['standard_settings']['squid_data_path']:
+        data['standard_settings']['squid_data_path'] = askForProjectDir()
 
     standard_settings = data['standard_settings']
     advanced_settings = data['advanced_settings']
@@ -244,7 +244,8 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         data['standard_settings'] = std_entries
         data['advanced_settings'] = adv_entries
 
-        save_path = asksaveasfile(defaultextension=".json", filetypes=[("JSON files", "*.json")])
+        save_path = asksaveasfile(defaultextension=".json", filetypes=[("JSON files", "*.json")],
+                                  initialdir=default_output_path)
         if save_path:
             with open(save_path.name, 'w') as f:
                 json.dump(data, f, indent=4)
@@ -254,8 +255,9 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
     def cancel():
         root.destroy()
         print("Operation canceled.")
+        sys.exit(1)
 
-    save_button = tk.Button(button_frame, text="Save", command=save)
+    save_button = tk.Button(button_frame, text="Save + Run", command=save)
     save_button.grid(row=0, column=0, padx=5, pady=5)
 
     toggle_button = tk.Button(button_frame, text="Show Advanced Settings", command=toggle_advanced)
@@ -414,9 +416,7 @@ class MaxFilter:
             subject (str): _description_
             task (str): _description_
         """
-            
-        data_root = parameters.get('data_path')
-        subj_path = f'{data_root}/{subject}/{session}/meg'
+
         trans_file = f'{task}_trans.fif'
         trans_conditions = parameters.get('trans_conditions')
         trans_option = parameters.get('trans_option')
@@ -643,7 +643,13 @@ class MaxFilter:
         parameters = self.parameters
 
         sys_root = os.getcwd()
-        data_root = parameters.get('data_path')
+        data_root = os.path.join(parameters.get('squid_data_path'),
+                                 parameters.get('project_path'))
+        #TODO: implement destination 
+        dest_path= parameters.get('destination_path')
+        if not dest_path:
+            dest_path = data_root
+
         subj_path = f'{data_root}/{subject}/{session}/meg'
         # Create log directory if it doesn't exist
         log_path = parameters['log_folder']
@@ -775,11 +781,19 @@ class MaxFilter:
             None
         """
         parameters = self.parameters
-        data_root = parameters.get('data_path')
+        data_root = os.path.join(parameters.get('squid_data_path'),
+                                 parameters.get('project_path'))
         
         subjects = sorted(glob('NatMEG*',
                                root_dir=data_root))
         
+        skip_subjects = parameters.get('participant_skip_list')
+
+        print(f'Skipping {", ".join(skip_subjects)}')
+
+        subjects = [s for s in subjects if s not in skip_subjects]
+
+
         # TODO: include only folders
         for subject in [s for s in subjects if isdir(f'{data_root}/{s}')]:
             sessions = [s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')]
