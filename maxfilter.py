@@ -797,6 +797,13 @@ def args_parser():
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for Maxfilter configuration')
     args = parser.parse_args()
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS,
+                        help='''
+                        MaxFilter Configuration Tool:
+                        - Use -c or --config to specify the path to a configuration file.
+                        - Use -e or --edit to launch the UI for editing MaxFilter configuration.
+                        - If no arguments are provided, the tool will prompt for a configuration file.
+                        ''')
     return args
 
 # %%
