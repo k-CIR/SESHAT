@@ -156,6 +156,8 @@ def extract_info_from_filename(file_name: str):
     
     return info_dict
 
+
+#### Not in use ####
 def get_desc_from_raw(file_name):
     info = mne.io.read_info(file_name, verbose='error')
     

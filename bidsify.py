@@ -893,13 +893,26 @@ def bidsify(config_dict: dict, conversion_file: str=None):
     # Update the conversion table
     df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
 
-def main():
+def args_parser():
     parser = argparse.ArgumentParser(description='BIDSify Configuration')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
     args = parser.parse_args()
+    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS,
+                        help='''
+                        MaxFilter Configuration Tool:
+                        - Use -c or --config to specify the path to a configuration file.
+                        - Use -e or --edit to launch the UI for editing MaxFilter configuration.
+                        - If no arguments are provided, the tool will prompt for a configuration file.
+                        ''')
+    return args
 
+def main():
+    
+    # Parse command line arguments
+    args = args_parser()
+    
     if args.config:
         file_config = args.config
     else:
