@@ -15,12 +15,6 @@ import argparse
 from datetime import datetime
 
 
-# Activate the conda environment 'mne' if not already activated
-# if "CONDA_DEFAULT_ENV" not in os.environ or os.environ["CONDA_DEFAULT_ENV"] != "mne":
-#     conda_activate = "/opt/homebrew/Caskroom/miniconda/base/bin/activate"  # Adjust path if necessary
-#     conda_env = "mne"
-#     os.execv("/bin/bash", ["bash", "-c", f"source {conda_activate} {conda_env} && python {' '.join(sys.argv)}"])
-
 from mne_bids import (
     BIDSPath,
     write_raw_bids,
