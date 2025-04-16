@@ -50,7 +50,7 @@ default_base_path = os.getcwd()
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
-debug = False
+debug = True
 ###############################################################################
 
 # TODO:
@@ -94,7 +94,9 @@ def defaultMaxfilterConfig():
         'tsss_default': 'on',
         'correlation': 0.98,
         'movecomp_default': 'on',
-        'data_path': '.'
+        'data_path': '/neuro/data/sinuhe',
+        'output_path': '',
+        'subjects_to_skip': []
         },
     'advanced_settings': {
         'force': 'off',
@@ -102,13 +104,10 @@ def defaultMaxfilterConfig():
         'downsample_factor': 4,
         'apply_linefreq': 'off',
         'linefreq_Hz': 50,
-        'scripts_path': '/home/natmeg/Scripts',
         'cal': '/neuro/databases/sss/sss_cal.dat',
         'ctc': '/neuro/databases/ctc/ct_sparse.fif',
-        'dst_path': '',
-        'log_folder': 'log',
         'maxfilter_version': '/neuro/bin/util/maxfilter',
-        'MaxFilter_commands': '',
+        'MaxFilter_commands': ''
         }
     }
     return data
@@ -255,7 +254,7 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         root.destroy()
         print("Operation canceled.")
 
-    save_button = tk.Button(button_frame, text="Save", command=save)
+    save_button = tk.Button(button_frame, text="Save & Run", command=save)
     save_button.grid(row=0, column=0, padx=5, pady=5)
 
     toggle_button = tk.Button(button_frame, text="Show Advanced Settings", command=toggle_advanced)
@@ -335,7 +334,8 @@ class MaxFilter:
         self.parameters = parameters
     
     def create_task_headpos(self, 
-                            subj_path: str,
+                            data_path: str,
+                            out_path: str,
                             task: str,
                             files: list | str,
                             overwrite=False,
@@ -345,16 +345,16 @@ class MaxFilter:
 
         merge_headpos = parameters.get('merge_runs')
 
-        headpos_name = f"{subj_path}/{task}_headpos.pos"
-        trans_file = f"{subj_path}/{task}_trans.fif"
-        fig_name = f"{subj_path}/{task}_movement.png"
+        headpos_name = f"{out_path}/{task}_headpos.pos"
+        trans_file = f"{out_path}/{task}_trans.fif"
+        fig_name = f"{out_path}/{task}_movement.png"
 
         if not exists(headpos_name) or overwrite:
             
             if isinstance(files, str):
                 files = [files]
             raws = [mne.io.read_raw_fif(
-                    f'{subj_path}/{file}',
+                    f'{data_path}/{file}',
                     allow_maxshield=True,
                     verbose='error')
                         for file in files]
@@ -379,7 +379,7 @@ class MaxFilter:
             if isinstance(files, str):
                 files = [files]
             raws = [mne.io.read_raw_fif(
-                    f'{subj_path}/{file}',
+                    f'{data_path}/{file}',
                     allow_maxshield=True,
                     verbose='error')
                         for file in files]
@@ -416,8 +416,13 @@ class MaxFilter:
         """
             
         data_root = parameters.get('data_path')
-        subj_path = f'{data_root}/{subject}/{session}/meg'
-        trans_file = f'{task}_trans.fif'
+        output_path = parameters.get('output_path')
+        # Check if output path is set
+        if not output_path:
+            output_path = data_root
+
+        subj_path = f'{output_path}/{subject}/{session}/meg'
+        trans_file = f'{subj_path}/{task}_trans.fif'
         trans_conditions = parameters.get('trans_conditions')
         trans_option = parameters.get('trans_option')
 
@@ -485,6 +490,11 @@ class MaxFilter:
                 sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
         _mc = set_mc(parameters.get('movecomp_default'))
+        # If empty room file set tsss off and remove trans and headpos
+        if file_contains(task, noise_patterns):
+            _mc.mxf = ''
+            _mc.mne_mxf = ''
+            _mc.string = ''
 
         # create set_tsss function
         def set_tsss(param=None):
@@ -590,15 +600,7 @@ class MaxFilter:
         _bad_channels = set_bad_channels(parameters.get('bad_channels'))
 
         tsss_default = parameters.get('tsss_default')
-        # If empty room file set tsss off and remove trans and headpos
-        if 'noise' in task.lower() or 'empty' in task.lower():
-            movecomp_default = 'off'
-            _mc.mxf = ''
-            _mc.mne_mxf = ''
-            _mc.string = ''
-            _corr.mxf = ''
-            _corr.mne_mxf = ''
-            _corr.string = ''
+        
         if task in parameters.get('sss_files'):
             tsss_default = 'off'
 
@@ -616,6 +618,8 @@ class MaxFilter:
             
             if 'continous' in trans_option and task in parameters.get('trans_conditions'):
                 proc.append(_trans.string)
+            
+            proc = [p for p in proc if p != '']
 
             return('+'.join(proc))
         _proc = set_bids_proc()
@@ -642,17 +646,22 @@ class MaxFilter:
 
         parameters = self.parameters
 
-        sys_root = os.getcwd()
         data_root = parameters.get('data_path')
-        subj_path = f'{data_root}/{subject}/{session}/meg'
+        output_path = parameters.get('output_path')
+        # Check if output path is set
+        if not output_path:
+            output_path = data_root
+ 
+        subj_in = f'{data_root}/{subject}/{session}/meg'
+        subj_out = f'{output_path}/{subject}/{session}/meg'
+        
         # Create log directory if it doesn't exist
-        log_path = parameters['log_folder']
-        os.makedirs(f'{sys_root}/{subj_path}/{log_path}', exist_ok=True)
+        os.makedirs(f'{subj_out}/{'log'}', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
 
         # List all files in directory
-        all_fifs = sorted(glob('*.fif', root_dir=subj_path))
+        all_fifs = sorted(glob('*.fif', root_dir=subj_in))
 
         # Create patterns to exclude files
         
@@ -661,10 +670,6 @@ class MaxFilter:
             'meg'
         ]
         naming_conv = re.compile(r'|'.join(naming_convs))
-
-        # trans_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('trans_conditions') if cond)]
-        # sss_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('sss_files') if cond)]
-        # empty_room_files = [f for f in all_fifs if any(cond in f for cond in parameters.get('empty_room_files') if cond)]
         
         trans_files = parameters.get('trans_conditions')
         sss_files = parameters.get('sss_files')
@@ -695,13 +700,14 @@ class MaxFilter:
             
             print(f'''
                 Processing task: {task}
-                Using files: {' | '.join(files)}
+                Using files: 
+                    {'\n'.join(files)}
                 ''')
 
             # Average head position
             # TODO: make transname absolute path, or try relative path?
             if task in trans_files:
-                self.create_task_headpos(subj_path, task, files, overwrite=False)
+                self.create_task_headpos(subj_in, subj_out, task, files, overwrite=False)
 
             self.set_params(subject, session, task)
             
@@ -716,9 +722,9 @@ class MaxFilter:
                     clean = clean.replace('.fif', '_meg.fif')
 
                 # Test absolute path
-                file = f"{sys_root}/{subj_path}/{file}"
-                clean = f"{sys_root}/{subj_path}/{clean}"
-                log = f'{sys_root}/{subj_path}/{log_path}/{basename(clean).replace(".fif",".log")}'
+                file = f"{subj_in}/{file}"
+                clean = f"{subj_out}/{clean}"
+                log = f'{subj_out}/{'log'}/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
@@ -753,7 +759,7 @@ class MaxFilter:
                                  session,
                                  task))
                     if not debug:
-                        subprocess.run(self.command_mxf, shell=True, cwd=subj_path)
+                        subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
                     else:
                         print(self.command_mxf)
 
@@ -786,13 +792,17 @@ class MaxFilter:
             for session in sessions:
                 self.run_command(subject, session)
 
-# %%
-def main():
-    
+def args_parser():
     parser = argparse.ArgumentParser(description='Maxfilter Configuration')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for Maxfilter configuration')
     args = parser.parse_args()
+    return args
+
+# %%
+def main():
+    
+    args = args_parser()
 
     if args.config:
         file_config = args.config
