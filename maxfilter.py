@@ -49,7 +49,7 @@ default_base_path = os.getcwd()
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
-debug = True
+debug = False
 ###############################################################################
 
 # TODO:
