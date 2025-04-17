@@ -15,12 +15,6 @@ import argparse
 from datetime import datetime
 
 
-# Activate the conda environment 'mne' if not already activated
-if "CONDA_DEFAULT_ENV" not in os.environ or os.environ["CONDA_DEFAULT_ENV"] != "mne":
-    conda_activate = "/opt/homebrew/Caskroom/miniconda/base/bin/activate"  # Adjust path if necessary
-    conda_env = "mne"
-    os.execv("/bin/bash", ["bash", "-c", f"source {conda_activate} {conda_env} && python {' '.join(sys.argv)}"])
-
 from mne_bids import (
     BIDSPath,
     write_raw_bids,
@@ -893,13 +887,21 @@ def bidsify(config_dict: dict, conversion_file: str=None):
     # Update the conversion table
     df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
 
-def main():
-    parser = argparse.ArgumentParser(description='BIDSify Configuration')
+def args_parser():
+    parser = argparse.ArgumentParser(description='BIDSify Configuration',
+                                     add_help=True)
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
     args = parser.parse_args()
 
+    return args
+
+def main():
+    
+    # Parse command line arguments
+    args = args_parser()
+    
     if args.config:
         file_config = args.config
     else:

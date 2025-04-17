@@ -1,5 +1,6 @@
 # Ignore folders
 neuro
+data
 
 # Ignore config files
 *config*
