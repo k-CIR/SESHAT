@@ -3,7 +3,7 @@ title: Utility scripts for NatMEG
 ---
 
 # Bidsify
-This script converts data from NatMEG (MEG, EEG, OPM) to BIDS format and organizes the data into a BIDS-compliant folder structure. The script is designed to work with data collected at NatMEG and is based on the MNE-BIDS library.
+This script converts data from NatMEG (MEG, EEG, OPM) to BIDS format and organizes the data into a BIDS-compliant folder structure. The script is designed to work with data collected at NatMEG and uses the MNE-BIDS library.
 
 ## Prerequisits
 Ensure you have the following non-defualt libraries installed in your Python environment: `mne`, `mne_bids`, `numpy`, `pandas`
@@ -27,9 +27,9 @@ A configuration file is needed and you will be prompted to create a defaul file 
 
 ```json
 {
-    "squidMEG": "/neuro/data/sinuhe/<project>",
-    "opmMEG": "/neuro/data/kaptah/<project>",
-    "BIDS": "/neuro/data/local/<project>",
+    "squidMEG": "/neuro/data/sinuhe/<project_on_sinuhe>",
+    "opmMEG": "/neuro/data/kaptah/<project_on_kaptah>",
+    "BIDS": "/neuro/data/local/<project_on_local>",
     "Calibration": "/neuro/databases/sss/sss_cal.dat",
     "Crosstalk": "/neuro/databases/ctc/ct_sparse.fif",
     "Dataset_description": "dataset_description.json",
@@ -39,7 +39,7 @@ A configuration file is needed and you will be prompted to create a defaul file 
     "New subjID name": "new_subject_id",
     "Original session name": "old_session_id",
     "New session name": "new_session_id",
-    "Overwrite": "on"
+    "Overwrite": "off"
 }
 ```
 
