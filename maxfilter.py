@@ -416,7 +416,8 @@ class MaxFilter:
             task (str): _description_
         """
             
-        data_root = parameters.get('data_path')
+        data_root = os.path.join(parameters.get('data_path'),
+                                 parameters.get('project_path'))
         output_path = parameters.get('output_path')
         # Check if output path is set
         if not output_path:
@@ -647,7 +648,8 @@ class MaxFilter:
 
         parameters = self.parameters
 
-        data_root = parameters.get('data_path')
+        data_root = os.path.join(parameters.get('data_path'),
+                                 parameters.get('project_path'))
         output_path = parameters.get('output_path')
         # Check if output path is set
         if not output_path:
@@ -782,13 +784,13 @@ class MaxFilter:
             None
         """
         parameters = self.parameters
-        data_root = os.path.join(parameters.get('squid_data_path'),
+        data_root = os.path.join(parameters.get('data_path'),
                                  parameters.get('project_path'))
         
         subjects = sorted(glob('NatMEG*',
                                root_dir=data_root))
         
-        skip_subjects = parameters.get('participant_skip_list')
+        skip_subjects = parameters.get('subjects_to_skip')
 
         print(f'Skipping {", ".join(skip_subjects)}')
 
@@ -806,13 +808,13 @@ def args_parser():
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for Maxfilter configuration')
     args = parser.parse_args()
-    parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS,
-                        help='''
-                        MaxFilter Configuration Tool:
-                        - Use -c or --config to specify the path to a configuration file.
-                        - Use -e or --edit to launch the UI for editing MaxFilter configuration.
-                        - If no arguments are provided, the tool will prompt for a configuration file.
-                        ''')
+    # parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS,
+    #                     help='''
+    #                     MaxFilter Configuration Tool:
+    #                     - Use -c or --config to specify the path to a configuration file.
+    #                     - Use -e or --edit to launch the UI for editing MaxFilter configuration.
+    #                     - If no arguments are provided, the tool will prompt for a configuration file.
+    #                     ''')
     return args
 
 # %%
