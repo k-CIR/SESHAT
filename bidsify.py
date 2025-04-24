@@ -756,19 +756,20 @@ def load_conversion_table(config_dict: dict,
 
 def update_conversion_table(conversion_table: pd.DataFrame, 
                             conversion_file: str=None):
-    for _, row in conversion_table.iterrows():
+    for i, row in conversion_table.iterrows():
         
-        file = row['bids_name'].split('_acq')[0]
         path = row['bids_path']
-        
-        # Check if the file exists
-        print(glob(f'{file}*', root_dir=path))
-        
-        exists = os.path.exists(path)
-        
+        datatype = basename(row['bids_path'])
+        file = row['bids_name'].split(datatype)[0]
+        files = glob(f'{file}*', root_dir=path)
+        if not files:
+            conversion_table.at[i, 'run_conversion'] = 'yes'
+            print(f'Running conversion on {row['raw_name']}')
     
-        print(exists(path))
+    conversion_table.to_csv(conversion_file, sep='\t', index=False)
+    return conversion_table
 
+        
 def bidsify(config_dict: dict, conversion_file: str=None):
     
     path_BIDS = config_dict.get('BIDS')
@@ -777,6 +778,7 @@ def bidsify(config_dict: dict, conversion_file: str=None):
     overwrite = config_dict['Overwrite']
 
     df = load_conversion_table(config_dict, conversion_file)
+    df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure
