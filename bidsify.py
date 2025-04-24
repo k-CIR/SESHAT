@@ -614,8 +614,9 @@ def generate_new_conversion_table(
             
             if mod == 'triux':
                 sessions = [session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))]
+                
             elif mod == 'hedscan':
-                sessions = list(set([f.split('_')[0][2:] for f in glob('*', root_dir=os.path.join(path, participant))]))
+                sessions = list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))]))
 
             for date_session in sessions:
                 
@@ -647,7 +648,7 @@ def generate_new_conversion_table(
                     desc = '+'.join(info_dict.get('description'))
                     extension = info_dict.get('extension')
                     suffix='meg'
-                    
+
                     if participant_mapping and mapping_found:
                         pmap = pd.read_csv(participant_mapping, dtype=str)
                         subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
@@ -662,10 +663,11 @@ def generate_new_conversion_table(
 
                         if 'mag' in ch_types:
                             datatype = 'meg'
+                            format=None
                         elif 'eeg' in ch_types:
                             datatype = 'eeg'
                             extension = None
-                            suffix = None
+                            suffix = 'eeg'
                     else:
                         datatype = 'meg'
                         
@@ -751,6 +753,21 @@ def load_conversion_table(config_dict: dict,
         conversion_table = pd.read_csv(conversion_file, sep='\t', dtype=str)
         
     return conversion_table
+
+def update_conversion_table(conversion_table: pd.DataFrame, 
+                            conversion_file: str=None):
+    for _, row in conversion_table.iterrows():
+        
+        file = row['bids_name'].split('_acq')[0]
+        path = row['bids_path']
+        
+        # Check if the file exists
+        print(glob(f'{file}*', root_dir=path))
+        
+        exists = os.path.exists(path)
+        
+    
+        print(exists(path))
 
 def bidsify(config_dict: dict, conversion_file: str=None):
     
