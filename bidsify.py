@@ -125,6 +125,7 @@ def create_dataset_description(
         def cancel():
             root.destroy()
             print('Closed')
+            sys.exit(1)
 
         def save():
             desc_data = {key: entry.get() for key, entry
@@ -294,6 +295,7 @@ def openBidsConfigUI(json_name: str = None):
     def cancel():
             root.destroy()
             print('Closed')
+            sys.exit(1)
 
     def save():
         data = {}
@@ -729,7 +731,8 @@ def load_conversion_table(config_dict: dict,
     path_BIDS = config_dict.get('BIDS')
     conversion_logs_path = os.path.join(path_BIDS, 'conversion_logs')
     if not os.path.exists(conversion_logs_path):
-        print("No conversion logs directory found.")
+        os.makedirs(conversion_logs_path, exist_ok=True)
+        print("No conversion logs directory found. Created new")
         return None
         
     if not conversion_file:
@@ -888,8 +891,13 @@ def bidsify(config_dict: dict, conversion_file: str=None):
     df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
 
 def args_parser():
-    parser = argparse.ArgumentParser(description='BIDSify Configuration',
-                                     add_help=True)
+    parser = argparse.ArgumentParser(description='''BIDSify
+                                     
+                                     Will use a configuation file to create a BIDS structure of the data. Select to open an existing configuration file or create a new one. A conversion table will be used where manual edits can be done.
+                                     
+                                     ''',
+                                     add_help=True,
+                                     usage='bidsify [-h] [-c CONFIG] [-e] [--conversion CONVERSION]',)
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
