@@ -49,7 +49,7 @@ default_base_path = os.getcwd()
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 global data
 
-debug = False
+debug = True
 ###############################################################################
 
 # TODO:
@@ -77,7 +77,7 @@ def defaultMaxfilterConfig():
     data = {
     'standard_settings': {
         ## STEP 1: On which conditions should average headposition be done (consistent naming is mandatory!)?
-        'project_path': '',
+        'project_name': '',
         'trans_conditions': ['task1', 'task2'],
         'trans_option': 'continous',
         'merge_runs': 'on',
@@ -130,8 +130,8 @@ def OpenMaxFilterSettingsUI(json_name: str = None):
         with open(json_name, 'r') as f:
             data = json.load(f)
 
-    if not data['standard_settings']['squid_data_path']:
-        data['standard_settings']['squid_data_path'] = askForProjectDir()
+    if not data['standard_settings']['data_path']:
+        data['standard_settings']['data_path'] = askForProjectDir()
 
     standard_settings = data['standard_settings']
     advanced_settings = data['advanced_settings']
@@ -417,7 +417,7 @@ class MaxFilter:
         """
             
         data_root = os.path.join(parameters.get('data_path'),
-                                 parameters.get('project_path'))
+                                 parameters.get('project_name'))
         output_path = parameters.get('output_path')
         # Check if output path is set
         if not output_path:
@@ -649,7 +649,7 @@ class MaxFilter:
         parameters = self.parameters
 
         data_root = os.path.join(parameters.get('data_path'),
-                                 parameters.get('project_path'))
+                                 parameters.get('project_name'))
         output_path = parameters.get('output_path')
         # Check if output path is set
         if not output_path:
@@ -785,7 +785,7 @@ class MaxFilter:
         """
         parameters = self.parameters
         data_root = os.path.join(parameters.get('data_path'),
-                                 parameters.get('project_path'))
+                                 parameters.get('project_name'))
         
         subjects = sorted(glob('NatMEG*',
                                root_dir=data_root))
@@ -804,8 +804,15 @@ class MaxFilter:
                 self.run_command(subject, session)
 
 def args_parser():
-    parser = argparse.ArgumentParser(description='Maxfilter Configuration',
-                                     add_help=True)
+    parser = argparse.ArgumentParser(description=
+                                     '''Maxfilter
+                                     
+                                     Will use a configuation file to run MaxFilter on the data.
+                                     Select to open an existing configuration file or create a new one.
+                                     
+                                     ''',
+                                     add_help=True,
+                                     usage='maxfilter [-h] [-c CONFIG] [-e]')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for Maxfilter configuration')
     args = parser.parse_args()
