@@ -657,6 +657,7 @@ def generate_new_conversion_table(
                     
                     if not file_contains(file, headpos_patterns):
                         # TODO: Test bypass if file broken
+                        print(full_file_name)
                         try:
                             info = mne.io.read_raw_fif(full_file_name,
                                             allow_maxshield=True,
