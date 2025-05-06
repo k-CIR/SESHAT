@@ -656,18 +656,26 @@ def generate_new_conversion_table(
                         session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                     
                     if not file_contains(file, headpos_patterns):
-                        info = mne.io.read_raw_fif(full_file_name,
-                                        allow_maxshield=True,
-                                        verbose='error')
-                        ch_types = set(info.get_channel_types())
+                        # TODO: Test bypass if file broken
+                        try:
+                            info = mne.io.read_raw_fif(full_file_name,
+                                            allow_maxshield=True,
+                                            verbose='error')
+                            ch_types = set(info.get_channel_types())
+                        except Exception as e:
+                            print(f"Error reading file {full_file_name}: {e}")
+                            ch_types = ['']
 
                         if 'mag' in ch_types:
                             datatype = 'meg'
-                            format=None
                         elif 'eeg' in ch_types:
                             datatype = 'eeg'
                             extension = None
                             suffix = 'eeg'
+                        else:
+                            datatype = 'meg'
+                            extension = None
+                            suffix = None
                     else:
                         datatype = 'meg'
                         
