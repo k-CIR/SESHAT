@@ -610,6 +610,7 @@ def generate_new_conversion_table(
             path = path_opm
             participants = [p for p in glob('sub*', root_dir=path) if os.path.isdir(os.path.join(path, p))]
 
+        print(participants)
         for participant in participants:
             
             if mod == 'triux':
