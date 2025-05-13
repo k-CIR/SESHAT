@@ -605,19 +605,23 @@ def generate_new_conversion_table(
     for mod in processing_modalities:
         if mod == 'triux':
             path = path_triux
-            participants = [p for p in glob('NatMEG*', root_dir=path) if os.path.isdir(os.path.join(path, p))]
+            participants = sorted([p for p in glob('NatMEG*', root_dir=path) if os.path.isdir(os.path.join(path, p))])
         elif mod == 'hedscan':
             path = path_opm
-            participants = [p for p in glob('sub*', root_dir=path) if os.path.isdir(os.path.join(path, p))]
+            participants = sorted([p for p in glob('sub*', root_dir=path) if os.path.isdir(os.path.join(path, p))])
 
-        print(participants)
         for participant in participants:
             
+            print(participant)
             if mod == 'triux':
                 sessions = [session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))]
                 
+                print(sessions)
+                
             elif mod == 'hedscan':
                 sessions = list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))]))
+                
+                print(sessions)
 
             for date_session in sessions:
                 
@@ -626,7 +630,6 @@ def generate_new_conversion_table(
                 if mod == 'triux':
                     all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
                                       glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
-                    
                 elif mod == 'hedscan':
                     all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant)))
 
@@ -744,7 +747,7 @@ def generate_new_conversion_table(
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False) 
 
 def load_conversion_table(config_dict: dict,
-                          conversion_file: str=None):
+                          conversion_file: str=None, overwrite=False):
         # Load the most recent conversion table
     path_BIDS = config_dict.get('BIDS')
     conversion_logs_path = os.path.join(path_BIDS, 'conversion_logs')
@@ -753,7 +756,7 @@ def load_conversion_table(config_dict: dict,
         print("No conversion logs directory found. Created new")
         conversion_file=None
         
-    if not conversion_file:
+    if overwrite or not conversion_file:
         print(f"Loading most recent conversion table from {conversion_logs_path}")
         conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
         if not conversion_files:
@@ -786,14 +789,14 @@ def update_conversion_table(conversion_table: pd.DataFrame,
     return conversion_table
 
         
-def bidsify(config_dict: dict, conversion_file: str=None):
+def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     
     path_BIDS = config_dict.get('BIDS')
     calibration = config_dict['Calibration']
     crosstalk = config_dict['Crosstalk']
-    overwrite = config_dict['Overwrite']
+    # overwrite = config_dict['Overwrite']
 
-    df = load_conversion_table(config_dict, conversion_file)
+    df = load_conversion_table(config_dict, conversion_file, overwrite)
     df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
@@ -825,7 +828,7 @@ def bidsify(config_dict: dict, conversion_file: str=None):
     for i, d in df.iterrows():
         
         # Ignore files that are already converted
-        if d['run_conversion'] == 'no' and overwrite == 'off':
+        if d['run_conversion'] == 'no' and not overwrite:
             print(f"{d['bids_name']} already converted")
             continue
         
@@ -936,6 +939,8 @@ def args_parser():
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
+    parser.add_argument('--conversion', type=str, help='Path to the conversion file')
+    parser.add_argument('--overwrite', action='store_true', help='Overwrite conversion table')
     args = parser.parse_args()
 
     return args
@@ -967,7 +972,7 @@ def main():
 
         create_dataset_description(config_dict['BIDS'], args.edit)
         
-        bidsify(config_dict, args.conversion)
+        bidsify(config_dict, args.conversion, args.overwrite)
         
         update_sidecars(config_dict['BIDS'])
 
