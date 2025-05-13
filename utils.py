@@ -4,12 +4,15 @@ from datetime import datetime
 import sys
 from tkinter.filedialog import askopenfilename, asksaveasfile
 import re
-from os.path import basename
+from os.path import basename, join, isdir
+from glob import glob
+import pandas as pd
 
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
+opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle']
 
 def log(
     message: str,
@@ -123,9 +126,12 @@ def extract_info_from_filename(file_name: str):
     split = re.search(r'(\-\d+\.fif)', basename(file_name))
     split = split.group(1).strip('.fif') if split else ''
     
-    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc  + [split] + ['\\+'] + ['\\-'] + desc)
+    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + desc)
     
-    if 'opm' in datatypes or 'kaptah' in file_name:
+    if file_contains(file_name, opm_exceptions_patterns):
+        datatypes.append('opm')
+    
+    if 'opm' in datatypes or 'kaptah' in file_name:    
         task = re.split('_', basename(file_name), flags=re.IGNORECASE)[-2].replace('file-', '')
         task = re.split('opm', task, flags=re.IGNORECASE)[0]
 
@@ -220,33 +226,33 @@ def generate_new_conversion_table(
     for mod in processing_modalities:
         if mod == 'triux':
             path = path_triux
-            participants = [p for p in glob('NatMEG*', root_dir=path) if os.path.isdir(os.path.join(path, p))]
+            participants = [p for p in glob('NatMEG*', root_dir=path) if isdir(join(path, p))]
         elif mod == 'hedscan':
             path = path_opm
-            participants = [p for p in glob('sub*', root_dir=path) if os.path.isdir(os.path.join(path, p))]
+            participants = [p for p in glob('sub*', root_dir=path) if isdir(join(path, p))]
 
         for participant in participants:
             
             if mod == 'triux':
-                sessions = [session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))]
+                sessions = [session for session in glob('*', root_dir=join(path, participant)) if isdir(join(path, participant, session))]
             elif mod == 'hedscan':
-                sessions = list(set([f.split('_')[0][2:] for f in glob('*', root_dir=os.path.join(path, participant))]))
+                sessions = list(set([f.split('_')[0][2:] for f in glob('*', root_dir=join(path, participant))]))
 
             for date_session in sessions:
                 
                 session = date_session
                 
                 if mod == 'triux':
-                    all_fifs = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')))
+                    all_fifs = sorted(glob('*.fif', root_dir=join(path, participant, date_session, 'meg')))
                 elif mod == 'hedscan':
-                    all_fifs = sorted(glob('*.fif', root_dir=os.path.join(path, participant)))
+                    all_fifs = sorted(glob('*.fif', root_dir=join(path, participant)))
 
                 for file in all_fifs:
                     
                     if mod == 'triux':
-                        full_file_name = os.path.join(path, participant, date_session, 'meg', file)
+                        full_file_name = join(path, participant, date_session, 'meg', file)
                     elif mod == 'hedscan':
-                        full_file_name = os.path.join(path, participant, file)
+                        full_file_name = join(path, participant, file)
                     
                     if exists(full_file_name):
                         info_dict = extract_info_from_filename(full_file_name)
@@ -329,19 +335,19 @@ def load_conversion_table(config_dict: dict,
                           conversion_file: str=None):
         # Load the most recent conversion table
     path_BIDS = config_dict.get('BIDS')
-    conversion_logs_path = os.path.join(path_BIDS, 'conversion_logs')
+    conversion_logs_path = join(path_BIDS, 'conversion_logs')
     if not os.path.exists(conversion_logs_path):
         print("No conversion logs directory found.")
         return None
         
     if not conversion_file:
         print(f"Loading most recent conversion table from {conversion_logs_path}")
-        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
+        conversion_files = sorted(glob(join(conversion_logs_path, '*_bids_conversion.tsv')))
         if not conversion_files:
             print("Creating new conversion table")
             generate_new_conversion_table(config_dict)
             
-        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
+        conversion_files = sorted(glob(join(conversion_logs_path, '*_bids_conversion.tsv')))
 
         latest_conversion_file = conversion_files[-1]
         print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
