@@ -36,7 +36,8 @@ from utils import (
     headpos_patterns,
     askForConfig,
     extract_info_from_filename,
-    file_contains
+    file_contains,
+    opm_exceptions_patterns
 )
 ###############################################################################
 # Global variables
@@ -211,6 +212,7 @@ def create_participants_files(
 
 def defaultBidsConfig():
     data = {
+            'Tasks': [''],
             'squidMEG': '/neuro/data/sinuhe/',
             'opmMEG': '',
             'BIDS': '',
@@ -566,6 +568,7 @@ def generate_new_conversion_table(
     new_subj_id = config_dict['New subjID name']
     old_session = config_dict['Original session name']
     new_session = config_dict['New session name']
+    tasks = config_dict['Tasks'] + opm_exceptions_patterns
     
     processing_modalities = []
     if path_triux != '' and str(path_triux) != '()':
@@ -612,23 +615,17 @@ def generate_new_conversion_table(
 
         for participant in participants:
             
-            print(participant)
             if mod == 'triux':
                 sessions = [session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))]
                 
-                print(sessions)
-                
             elif mod == 'hedscan':
                 sessions = list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))]))
-                
-                print(sessions)
 
             for date_session in sessions:
                 
                 session = date_session
                 
                 if mod == 'triux':
-                    print(all_files)
                     all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
                                       glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
                 elif mod == 'hedscan':
@@ -638,7 +635,6 @@ def generate_new_conversion_table(
                     
                     if mod == 'triux':
                         full_file_name = os.path.join(path, participant, date_session, 'meg', file)
-                        print(full_file_name)
                     elif mod == 'hedscan':
                         full_file_name = os.path.join(path, participant, file)
                     
@@ -669,7 +665,7 @@ def generate_new_conversion_table(
                             session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                     
                     if process_file and not file_contains(file, headpos_patterns):
-
+                        
                         try:
                             info = mne.io.read_raw_fif(full_file_name,
                                             allow_maxshield=True,
@@ -706,7 +702,7 @@ def generate_new_conversion_table(
                             extension=extension,
                             suffix=suffix
                         )
-                        
+
                         # Check if bids exist
                         run_conversion = 'yes'
                         if (find_matching_paths(bids_path.directory,
@@ -738,15 +734,17 @@ def generate_new_conversion_table(
 
     df = pd.DataFrame(processing_schema)
         
-    df.insert(2, 'task_count',
-              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description', 'session_to'])['task'].transform('count'))
+    # df.insert(2, 'task_count',
+    #           df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description', 'session_to'])['task'].transform('count'))
     
-    df.insert(3, 'task_flag', df.apply(
-                lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
-    print(df)
+    # df.insert(3, 'task_flag', df.apply(
+    #             lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
+    
+    df.insert(2, 'task_flag', df.apply(
+                lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
-    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False) 
+    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
 
 def load_conversion_table(config_dict: dict,
                           conversion_file: str=None, overwrite=False):
@@ -942,6 +940,7 @@ def args_parser():
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
     parser.add_argument('--overwrite', action='store_true', help='Overwrite conversion table')
+    parser.add_argument('--debug', action='store_true', help='Overwrite conversion table')
     args = parser.parse_args()
 
     return args
