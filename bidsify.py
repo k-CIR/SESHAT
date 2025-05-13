@@ -743,6 +743,9 @@ def generate_new_conversion_table(
     df.insert(2, 'task_flag', df.apply(
                 lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
     print(df['task_flag'].value_counts())
+    
+    # Sort according to task_flag
+    df = df.sort_values(by=['task_flag', 'participant_to', 'session_to', 'task', 'acquisition', 'split'])
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
