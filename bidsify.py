@@ -939,7 +939,6 @@ def args_parser():
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
     parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
     parser.add_argument('--conversion', type=str, help='Path to the conversion file')
-    parser.add_argument('--conversion', type=str, help='Path to the conversion file')
     parser.add_argument('--overwrite', action='store_true', help='Overwrite conversion table')
     args = parser.parse_args()
 
