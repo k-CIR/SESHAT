@@ -732,7 +732,6 @@ def generate_new_conversion_table(
                         processing_schema['bids_path'].append(bids_path.directory)
                         
                         processing_schema['bids_name'].append(bids_path.basename)
-                        
 
     df = pd.DataFrame(processing_schema)
         
@@ -797,7 +796,7 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     # overwrite = config_dict['Overwrite']
 
     df = load_conversion_table(config_dict, conversion_file, overwrite)
-    df = update_conversion_table(df, conversion_file)
+    # df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure
