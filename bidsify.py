@@ -654,9 +654,7 @@ def generate_new_conversion_table(
                         process_mapping = all(
                             [pmap[old_subj_id].values[0] == subject and 
                              pmap[old_session].values[0] == date_session])
-                        
-                        # Check if mapping is aligned with the file
-                        print(subject, date_session)
+
                         if process_mapping:
                             subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                             
@@ -733,7 +731,7 @@ def generate_new_conversion_table(
     df = pd.DataFrame(processing_schema)
     
     df.insert(2, 'task_count',
-              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description'])['task'].transform('count'))
+              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description', 'session_to'])['task'].transform('count'))
     
     df.insert(3, 'task_flag', df.apply(
                 lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
