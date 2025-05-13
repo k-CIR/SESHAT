@@ -628,6 +628,7 @@ def generate_new_conversion_table(
                 session = date_session
                 
                 if mod == 'triux':
+                    print(all_files)
                     all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
                                       glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
                 elif mod == 'hedscan':
@@ -637,6 +638,7 @@ def generate_new_conversion_table(
                     
                     if mod == 'triux':
                         full_file_name = os.path.join(path, participant, date_session, 'meg', file)
+                        print(full_file_name)
                     elif mod == 'hedscan':
                         full_file_name = os.path.join(path, participant, file)
                     
@@ -655,9 +657,10 @@ def generate_new_conversion_table(
 
                     if participant_mapping and mapping_found:
                         
-                        check_subj = subject == pmap[old_subj_id].values[0]
-                        check_date = date_session == pmap[old_session].values[0]
+                        check_subj = subject in pmap[old_subj_id].values
                         
+                        check_date = date_session in pmap.loc[pmap[old_subj_id] == subject, old_session].values
+
                         process_file = all([check_subj, check_date])
                         
                         if process_file:
