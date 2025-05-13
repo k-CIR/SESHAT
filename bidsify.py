@@ -742,6 +742,7 @@ def generate_new_conversion_table(
     
     df.insert(2, 'task_flag', df.apply(
                 lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
+    print(df['task_flag'].value_counts())
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
@@ -924,6 +925,8 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
         print(f'{raw_file} -> {bids_path}')
         
         df.at[i, 'run_conversion'] = 'no'
+        df.at[i, 'bids_path'] = bids_path
+        df.at[i, 'bids_name'] = bids_path.basename
     
     # Update the conversion table
     df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
