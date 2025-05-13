@@ -656,6 +656,9 @@ def generate_new_conversion_table(
                              pmap[old_session].values[0] == date_session])
 
                         if process_mapping:
+                            print(f'{pmap[old_subj_id].values[0]} -> {pmap[new_subj_id].values[0]}')
+                            print(f'{pmap[old_session].values[0]} -> {pmap[new_session].values[0]}')
+                            
                             subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                             
                             session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
