@@ -653,14 +653,13 @@ def generate_new_conversion_table(
                         pmap = pd.read_csv(participant_mapping, dtype=str)
                         
                         # Check if mapping is aligned with the file
-                        
-                        if pmap[old_subj_id] == subject and pmap[old_session] == date_session:
+                        print(subject, date_session)
+                        if all([pmap[old_subj_id].values[0] == subject and pmap[old_session].values[0] == date_session]):
                             
                             subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                             
                             session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                         else:
-                            print(subject, session)
                             continue
                     
                     if not file_contains(file, headpos_patterns):
