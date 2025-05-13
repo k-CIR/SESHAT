@@ -750,7 +750,7 @@ def load_conversion_table(config_dict: dict,
     if not os.path.exists(conversion_logs_path):
         os.makedirs(conversion_logs_path, exist_ok=True)
         print("No conversion logs directory found. Created new")
-        return None
+        conversion_file=None
         
     if not conversion_file:
         print(f"Loading most recent conversion table from {conversion_logs_path}")
