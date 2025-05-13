@@ -10,6 +10,7 @@ default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
+opm_exceptions_patterns = ['HPIbefore', 'HPIafter']
 
 def log(
     message: str,
@@ -125,7 +126,10 @@ def extract_info_from_filename(file_name: str):
     
     exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc  + [split] + ['\\+'] + ['\\-'] + desc)
     
-    if 'opm' in datatypes or 'kaptah' in file_name:
+    if file_contains(file_name, opm_exceptions_patterns):
+        datatypes.append('opm')
+    
+    if 'opm' in datatypes or 'kaptah' in file_name:    
         task = re.split('_', basename(file_name), flags=re.IGNORECASE)[-2].replace('file-', '')
         task = re.split('opm', task, flags=re.IGNORECASE)[0]
 
