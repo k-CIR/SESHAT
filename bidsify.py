@@ -733,19 +733,12 @@ def generate_new_conversion_table(
                         processing_schema['bids_name'].append(bids_path.basename)
 
     df = pd.DataFrame(processing_schema)
-        
-    # df.insert(2, 'task_count',
-    #           df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description', 'session_to'])['task'].transform('count'))
-    
-    # df.insert(3, 'task_flag', df.apply(
-    #             lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
     
     df.insert(2, 'task_flag', df.apply(
                 lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
-    print(df['task_flag'].value_counts())
     
-    # Sort according to task_flag
-    df = df.sort_values(by=['task_flag', 'participant_to', 'session_to', 'task', 'acquisition', 'split'])
+    # TODO: add more checks
+    
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
