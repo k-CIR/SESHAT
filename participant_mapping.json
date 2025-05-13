@@ -2,5 +2,5 @@
     "old_subject_id": "A four digit subject ID from the MEG aqcisition, must be same for OPM and SQUID ",
     "new_subject_id": "The new subject ID, must be numeric",
     "old_session_id": "Must be a date string in forma YYMMDD",
-    "new_session_id": "The new session ID, must be numeric",
+    "new_session_id": "The new session ID, must be numeric"
 }
