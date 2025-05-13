@@ -650,14 +650,18 @@ def generate_new_conversion_table(
                     suffix='meg'
 
                     if participant_mapping and mapping_found:
-                        pmap = pd.read_csv(participant_mapping, dtype=str)
-                        subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                         
-                        print(f"Mapping {pmap[old_session]} to {pmap[new_session]}")
-                        print(f'Date session: {date_session}')
-                        session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
+                        check_subj = subject == pmap[old_subj_id].values[0]
+                        check_date = date_session == pmap[old_session].values[0]
+                        
+                        process_file = all([check_subj, check_date])
+                        
+                        if process_file:
+                            subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
+
+                            session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                     
-                    if not file_contains(file, headpos_patterns):
+                    if process_file and not file_contains(file, headpos_patterns):
 
                         try:
                             info = mne.io.read_raw_fif(full_file_name,
@@ -680,55 +684,56 @@ def generate_new_conversion_table(
                             suffix = None
                     else:
                         datatype = 'meg'
+                    
+                    if process_file:   
+                        bids_path = BIDSPath(
+                            subject=subject,
+                            session=session,
+                            task=task,
+                            acquisition=mod,
+                            processing=None if proc == '' else proc,
+                            run=None if run == '' else run,
+                            datatype=datatype,
+                            description=None if desc == '' else desc,
+                            root=path_BIDS,
+                            extension=extension,
+                            suffix=suffix
+                        )
                         
-                    bids_path = BIDSPath(
-                        subject=subject,
-                        session=session,
-                        task=task,
-                        acquisition=mod,
-                        processing=None if proc == '' else proc,
-                        run=None if run == '' else run,
-                        datatype=datatype,
-                        description=None if desc == '' else desc,
-                        root=path_BIDS,
-                        extension=extension,
-                        suffix=suffix
-                    )
-                    
-                    # Check if bids exist
-                    run_conversion = 'yes'
-                    if (find_matching_paths(bids_path.directory,
-                                        tasks=task,
-                                        acquisitions=mod,
-                                        suffixes=suffix,
-                                        descriptions=None if desc == '' else desc,
-                                        extensions=extension)):
-                        run_conversion = 'no'
+                        # Check if bids exist
+                        run_conversion = 'yes'
+                        if (find_matching_paths(bids_path.directory,
+                                            tasks=task,
+                                            acquisitions=mod,
+                                            suffixes=suffix,
+                                            descriptions=None if desc == '' else desc,
+                                            extensions=extension)):
+                            run_conversion = 'no'
 
-                    processing_schema['time_stamp'].append(ts)
-                    processing_schema['run_conversion'].append(run_conversion)
-                    processing_schema['participant_from'].append(participant)
-                    processing_schema['participant_to'].append(subject)
-                    processing_schema['session_from'].append(date_session)
-                    processing_schema['session_to'].append(session)
-                    processing_schema['task'].append(task)
-                    processing_schema['split'].append(split)
-                    processing_schema['run'].append(run)
-                    processing_schema['datatype'].append(datatype)
-                    processing_schema['acquisition'].append(mod)
-                    processing_schema['processing'].append(proc)
-                    processing_schema['description'].append(desc)
-                    processing_schema['raw_path'].append(dirname(full_file_name))
-                    processing_schema['raw_name'].append(file)
-                    processing_schema['bids_path'].append(bids_path.directory)
-                    
-                    processing_schema['bids_name'].append(bids_path.basename)
-                    
+                        processing_schema['time_stamp'].append(ts)
+                        processing_schema['run_conversion'].append(run_conversion)
+                        processing_schema['participant_from'].append(participant)
+                        processing_schema['participant_to'].append(subject)
+                        processing_schema['session_from'].append(date_session)
+                        processing_schema['session_to'].append(session)
+                        processing_schema['task'].append(task)
+                        processing_schema['split'].append(split)
+                        processing_schema['run'].append(run)
+                        processing_schema['datatype'].append(datatype)
+                        processing_schema['acquisition'].append(mod)
+                        processing_schema['processing'].append(proc)
+                        processing_schema['description'].append(desc)
+                        processing_schema['raw_path'].append(dirname(full_file_name))
+                        processing_schema['raw_name'].append(file)
+                        processing_schema['bids_path'].append(bids_path.directory)
+                        
+                        processing_schema['bids_name'].append(bids_path.basename)
+                        
 
     df = pd.DataFrame(processing_schema)
     
     df.insert(2, 'task_count',
-              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description'])['task'].transform('count'))
+              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing', 'description', 'session_to'])['task'].transform('count'))
     
     df.insert(3, 'task_flag', df.apply(
                 lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
