@@ -651,18 +651,18 @@ def generate_new_conversion_table(
 
                     if participant_mapping and mapping_found:
                         pmap = pd.read_csv(participant_mapping, dtype=str)
+                        process_mapping = all(
+                            [pmap[old_subj_id].values[0] == subject and 
+                             pmap[old_session].values[0] == date_session])
                         
                         # Check if mapping is aligned with the file
                         print(subject, date_session)
-                        if all([pmap[old_subj_id].values[0] == subject and pmap[old_session].values[0] == date_session]):
-                            
+                        if process_mapping:
                             subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                             
                             session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
-                        else:
-                            continue
                     
-                    if not file_contains(file, headpos_patterns):
+                    if process_mapping and not file_contains(file, headpos_patterns):
 
                         try:
                             info = mne.io.read_raw_fif(full_file_name,
