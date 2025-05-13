@@ -653,11 +653,12 @@ def generate_new_conversion_table(
                         pmap = pd.read_csv(participant_mapping, dtype=str)
                         subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
                         
+                        print(f"Mapping {pmap[old_session]} to {pmap[new_session]}")
+                        print(f'Date session: {date_session}')
                         session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
                     
                     if not file_contains(file, headpos_patterns):
-                        # TODO: Test bypass if file broken
-                        print(full_file_name)
+
                         try:
                             info = mne.io.read_raw_fif(full_file_name,
                                             allow_maxshield=True,
