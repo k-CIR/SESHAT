@@ -616,10 +616,10 @@ def generate_new_conversion_table(
         for participant in participants:
             
             if mod == 'triux':
-                sessions = [session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))]
+                sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
                 
             elif mod == 'hedscan':
-                sessions = list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))]))
+                sessions = sorted(list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))])))
 
             for date_session in sessions:
                 
@@ -629,10 +629,10 @@ def generate_new_conversion_table(
                     all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
                                       glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
                 elif mod == 'hedscan':
-                    all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant)))
+                    all_files = sorted(glob(f'20{session}*.fif', root_dir=os.path.join(path, participant)))
 
                 for file in all_files:
-                    
+
                     if mod == 'triux':
                         full_file_name = os.path.join(path, participant, date_session, 'meg', file)
                     elif mod == 'hedscan':
