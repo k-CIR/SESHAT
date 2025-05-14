@@ -885,7 +885,16 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
                 # If write_raw_bids fails, try to save the raw file directly
                 # Fall back on raw.save if write_raw_bids fails
                 fname = bids_path.copy().update(suffix=datatype, extension = '.fif').fpath
-                raw.save(fname, overwrite=True)
+                try:
+                    raw.save(fname, overwrite=True)
+                except Exception as e:
+                    print(f"Error saving raw file: {e}")
+                    log( 
+                        f'{fname} not bidsified',
+                        level='error',
+                        logfile='log.tsv',
+                        logpath=path_BIDS
+                        )
 
             # Copy EEG to MEG
             if datatype == 'eeg':
