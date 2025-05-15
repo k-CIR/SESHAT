@@ -803,15 +803,17 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     # Start by creating the BIDS directory structure
     unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
     for _, row in unique_participants_sessions.iterrows():
+        subject_padded = str(row['participant_to']).zfill(3)
+        session_padded = str(row['session_to']).zfill(2)
         bids_path = BIDSPath(
-            subject=row['participant_to'],
-            session=row['session_to'],
+            subject=subject_padded,
+            session=session_padded,
             datatype=row['datatype'],
             root=path_BIDS
         ).mkdir()
         if row['datatype'] == 'meg':
             if not bids_path.meg_calibration_fpath:
-                    write_meg_calibration(calibration, bids_path)
+                write_meg_calibration(calibration, bids_path)
             if not bids_path.meg_crosstalk_fpath:
                 write_meg_crosstalk(crosstalk, bids_path)
     
@@ -850,8 +852,9 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
                 extension = None
                 suffix = None
             
-            subject = d['participant_to']
-            session = d['session_to']
+            # Added leading zero-padding to subject and session
+            subject = str(d['participant_to']).zfill(3)
+            session = str(d['session_to']).zfill(2)
             task = d['task']
             acquisition = d['acquisition']
             processing = d['processing']
