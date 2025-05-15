@@ -551,10 +551,10 @@ def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
                 if not exists(new_cap):
                     copy2(old_cap, new_cap)
 
-def generate_new_conversion_table(
+def generate_conversion_table(
     config_dict: dict,
-    overwrite=False):
-    
+    mode: str='new'):
+
     """
     For each participant and session within MEG folder, move the files to BIDS correspondent folder
     or create a new one if the session does not match. Change the name of the files into BIDS format.
@@ -706,6 +706,7 @@ def generate_new_conversion_table(
 
                         # Check if bids exist
                         run_conversion = 'yes'
+
                         if (find_matching_paths(bids_path.directory,
                                             tasks=task,
                                             acquisitions=mod,
@@ -738,9 +739,20 @@ def generate_new_conversion_table(
     df.insert(2, 'task_flag', df.apply(
                 lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
     
+    if mode == 'update':
+        df = df[df['run_conversion'] == 'yes']
+    
     # TODO: add more checks
     # TODO: add event file option based on tasks
+    
+    return df
 
+
+def save_conversion_table(df: pd.DataFrame, config_dict: dict):
+
+    ts = datetime.now().strftime('%Y%m%d')
+    path_BIDS = config_dict.get('BIDS')
+    
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
 
@@ -757,8 +769,8 @@ def load_conversion_table(config_dict: dict,
         conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
         if overwrite or not conversion_files:
             print("Creating new conversion table")
-            generate_new_conversion_table(config_dict, overwrite)
-
+            conversion_table = generate_conversion_table(config_dict, 'new')
+            save_conversion_table(conversion_table, config_dict)
     conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
 
     latest_conversion_file = conversion_files[-1]
@@ -766,26 +778,16 @@ def load_conversion_table(config_dict: dict,
 
     conversion_table = pd.read_csv(latest_conversion_file, sep='\t', dtype=str)
     
-    print(conversion_table)
-    return conversion_table
-
-def update_conversion_table(conversion_table: pd.DataFrame, 
-                            conversion_file: str=None):
-    for i, row in conversion_table.iterrows():
-        
-        path = os.path.dirname(row['bids_path'])
-        datatype = basename(path)
-        file = basename(row['bids_name']).split(datatype)[0]
-        files = glob(f'{file}*', root_dir=path)
-        if not files:
-            conversion_table.at[i, 'run_conversion'] = 'yes'
-            print(f'Running conversion on {row['raw_name']}')
-        
-        # TODO: Add argument for update if file exists
+    print(f"Updating conversion table with new files")
+    conversion_table_updates = generate_conversion_table(
+        config_dict, mode = 'update')
     
-    conversion_table.to_csv(conversion_file, sep='\t', index=False)
-    return conversion_table
+    # Merge the new conversion table with the existing one
+    conversion_table = pd.concat([conversion_table, conversion_table_updates], ignore_index=True)
+    # Remove duplicates
+    conversion_table = conversion_table.drop_duplicates(subset=['raw_name'], keep='last')
 
+    return conversion_table
         
 def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     
@@ -794,10 +796,8 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     path_BIDS = config_dict.get('BIDS')
     calibration = config_dict['Calibration']
     crosstalk = config_dict['Crosstalk']
-    # overwrite = config_dict['Overwrite']
-
+    
     df = load_conversion_table(config_dict, conversion_file, overwrite)
-    df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure
