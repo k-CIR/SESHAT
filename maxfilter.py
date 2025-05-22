@@ -761,6 +761,8 @@ class MaxFilter:
                                  task))
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
+                        log(f'{file} --> {clean}')
+                        
                     else:
                         print(self.command_mxf)
 
@@ -789,13 +791,13 @@ class MaxFilter:
                                root_dir=data_root))
         
         skip_subjects = parameters.get('subjects_to_skip')
+        
+        
 
         print(f'Skipping {", ".join(skip_subjects)}')
 
         subjects = [s for s in subjects if s not in skip_subjects]
 
-
-        # TODO: include only folders
         for subject in [s for s in subjects if isdir(f'{data_root}/{s}')]:
             sessions = [s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')]
             for session in sessions:
