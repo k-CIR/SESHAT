@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter.filedialog import askopenfilename, asksaveasfile
 import argparse
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 from mne_bids import (
@@ -610,125 +611,136 @@ def generate_new_conversion_table(
     path = path_triux if 'triux' in processing_modalities else path_opm
     participants = glob('sub-*', root_dir=path)
 
+    def process_file_entry(args):
+        participant, date_session, mod, file = args
+        full_file_name = os.path.join(path, participant, date_session, mod, file)
+        info_dict = {}
+        if exists(full_file_name):
+            info_dict = extract_info_from_filename(full_file_name)
+        task = info_dict.get('task')
+        proc = '+'.join(info_dict.get('processing'))
+        datatypes = '+'.join([d for d in info_dict.get('datatypes') if d != ''])
+        subject = info_dict.get('participant')
+        split = info_dict.get('split')
+        run = ''
+        desc = '+'.join(info_dict.get('description'))
+        extension = info_dict.get('extension')
+        suffix = 'meg'
+        event_file = glob(f'{task}_event_id.json', root_dir=f'{path_BIDS}/..')
+        if event_file:
+            event_file = event_file[0]
+        else:
+            event_file = None
+
+        process_file = True
+        subj_out = subject
+        session_out = date_session
+
+        if participant_mapping and mapping_found:
+            check_subj = subject in pmap[old_subj_id].values
+            check_date = date_session in pmap.loc[pmap[old_subj_id] == subject, old_session].values
+            process_file = all([check_subj, check_date])
+            if process_file:
+                subj_out = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
+                session_out = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
+
+        if process_file and not file_contains(file, headpos_patterns):
+            try:
+                info = mne.io.read_raw_fif(full_file_name, allow_maxshield=True, verbose='error')
+                ch_types = set(info.get_channel_types())
+            except Exception as e:
+                print(f"Error reading file {full_file_name}: {e}")
+                ch_types = ['']
+            if 'mag' in ch_types:
+                datatype = 'meg'
+            elif 'eeg' in ch_types:
+                datatype = 'eeg'
+                extension = None
+                suffix = 'eeg'
+            else:
+                datatype = 'meg'
+                extension = None
+                suffix = None
+        else:
+            datatype = 'meg'
+
+        if process_file:
+            bids_path = BIDSPath(
+                subject=subj_out,
+                session=session_out,
+                task=task,
+                acquisition=mod,
+                processing=None if proc == '' else proc,
+                run=None if run == '' else run,
+                datatype=datatype,
+                description=None if desc == '' else desc,
+                root=path_BIDS,
+                extension=extension,
+                suffix=suffix
+            )
+            # Check if bids exist
+            run_conversion = 'yes'
+            if (find_matching_paths(bids_path.directory,
+                                   tasks=task,
+                                   acquisitions=mod,
+                                   suffixes=suffix,
+                                   descriptions=None if desc == '' else desc,
+                                   extensions=extension)):
+                run_conversion = 'no'
+
+            return {
+                'time_stamp': ts,
+                'run_conversion': run_conversion,
+                'participant_from': participant,
+                'participant_to': subj_out,
+                'session_from': date_session,
+                'session_to': session_out,
+                'task': task,
+                'split': split,
+                'run': run,
+                'datatype': datatype,
+                'acquisition': mod,
+                'processing': proc,
+                'description': desc,
+                'raw_path': dirname(full_file_name),
+                'raw_name': file,
+                'bids_path': bids_path.directory,
+                'bids_name': bids_path.basename,
+                'event_id': event_file
+            }
+        return None
+
+    # Prepare all jobs
+    jobs = []
     for participant in participants:
         sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
-        
         for date_session in sessions:
-            session = date_session
             for mod in processing_modalities:
-                all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, mod)) + 
-                                      glob('*.pos', root_dir=os.path.join(path, participant, date_session, mod)))
-
+                all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, mod)) +
+                                   glob('*.pos', root_dir=os.path.join(path, participant, date_session, mod)))
                 for file in all_files:
-                    
-                    full_file_name = os.path.join(path, participant, date_session, mod, file)
-                    
-                    if exists(full_file_name):
-                        info_dict = extract_info_from_filename(full_file_name)
-                    
-                    task = info_dict.get('task')
-                    proc = '+'.join(info_dict.get('processing'))
-                    datatypes = '+'.join([d for d in info_dict.get('datatypes') if d != ''])
-                    subject = info_dict.get('participant')
-                    split = info_dict.get('split')
-                    run = ''
-                    desc = '+'.join(info_dict.get('description'))
-                    extension = info_dict.get('extension')
-                    suffix='meg'
-                    event_file = glob(f'{task}_event_id.json', root_dir=f'{path_BIDS}/..')
-                    if event_file:
-                        event_file = event_file[0]
-                    else:
-                        event_file = None
+                    jobs.append((participant, date_session, mod, file))
 
-                    if participant_mapping and mapping_found:
-                        
-                        check_subj = subject in pmap[old_subj_id].values
-                        
-                        check_date = date_session in pmap.loc[pmap[old_subj_id] == subject, old_session].values
+    results = []
+    with ThreadPoolExecutor() as executor:
+        future_to_job = {executor.submit(process_file_entry, job): job for job in jobs}
+        for future in as_completed(future_to_job):
+            res = future.result()
+            if res is not None:
+                results.append(res)
 
-                        process_file = all([check_subj, check_date])
-                        
-                        if process_file:
-                            subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
+    df = pd.DataFrame(results)
 
-                            session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
-                    
-                    if process_file and not file_contains(file, headpos_patterns):
-                        
-                        try:
-                            info = mne.io.read_raw_fif(full_file_name,
-                                            allow_maxshield=True,
-                                            verbose='error')
-                            ch_types = set(info.get_channel_types())
-                        except Exception as e:
-                            print(f"Error reading file {full_file_name}: {e}")
-                            ch_types = ['']
-
-                        if 'mag' in ch_types:
-                            datatype = 'meg'
-                        elif 'eeg' in ch_types:
-                            datatype = 'eeg'
-                            extension = None
-                            suffix = 'eeg'
-                        else:
-                            datatype = 'meg'
-                            extension = None
-                            suffix = None
-                    else:
-                        datatype = 'meg'
-                    
-                    if process_file:   
-                        bids_path = BIDSPath(
-                            subject=subject,
-                            session=session,
-                            task=task,
-                            acquisition=mod,
-                            processing=None if proc == '' else proc,
-                            run=None if run == '' else run,
-                            datatype=datatype,
-                            description=None if desc == '' else desc,
-                            root=path_BIDS,
-                            extension=extension,
-                            suffix=suffix
-                        )
-
-                        # Check if bids exist
-                        run_conversion = 'yes'
-                        if (find_matching_paths(bids_path.directory,
-                                            tasks=task,
-                                            acquisitions=mod,
-                                            suffixes=suffix,
-                                            descriptions=None if desc == '' else desc,
-                                            extensions=extension)):
-                            run_conversion = 'no'
-
-                        processing_schema['time_stamp'].append(ts)
-                        processing_schema['run_conversion'].append(run_conversion)
-                        processing_schema['participant_from'].append(participant)
-                        processing_schema['participant_to'].append(subject)
-                        processing_schema['session_from'].append(date_session)
-                        processing_schema['session_to'].append(session)
-                        processing_schema['task'].append(task)
-                        processing_schema['split'].append(split)
-                        processing_schema['run'].append(run)
-                        processing_schema['datatype'].append(datatype)
-                        processing_schema['acquisition'].append(mod)
-                        processing_schema['processing'].append(proc)
-                        processing_schema['description'].append(desc)
-                        processing_schema['raw_path'].append(dirname(full_file_name))
-                        processing_schema['raw_name'].append(file)
-                        processing_schema['bids_path'].append(bids_path.directory)
-                        
-                        processing_schema['bids_name'].append(bids_path.basename)
-                        processing_schema['event_id'].append(event_file)
-
-    df = pd.DataFrame(processing_schema)
-    
-    df.insert(2, 'task_flag', df.apply(
-                lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
-    # TODO: add more checks
-    # TODO: add event file option based on tasks
+    if not df.empty:
+        df.insert(2, 'task_flag', df.apply(
+            lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
+    else:
+        df = pd.DataFrame(columns=[
+            'time_stamp', 'run_conversion', 'participant_from', 'participant_to',
+            'session_from', 'session_to', 'task', 'split', 'run', 'datatype',
+            'acquisition', 'processing', 'description', 'raw_path', 'raw_name',
+            'bids_path', 'bids_name', 'event_id', 'task_flag'
+        ])
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
@@ -916,7 +928,6 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
         # If the file is a head position file, copy it to the BIDS directory
         # and rename it to the BIDS format
         else:
-            print(d)
             bids_path = f"{d['bids_path']}/{d['bids_name']}"
 
             if 'headpos' in d['description']:
