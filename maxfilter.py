@@ -707,7 +707,6 @@ class MaxFilter:
                 ''')
 
             # Average head position
-            # TODO: make transname absolute path, or try relative path?
             if task in trans_files:
                 self.create_task_headpos(subj_in, subj_out, task, files, overwrite=False)
 
