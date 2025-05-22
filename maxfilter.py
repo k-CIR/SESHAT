@@ -54,7 +54,6 @@ debug = True
 ###############################################################################
 
 # TODO:
-# - Read data from sinuhe, write to cerberos
 # - Integrate with Bids?
 
 def match_task_files(files, task: str):
