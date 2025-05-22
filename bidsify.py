@@ -29,6 +29,7 @@ from mne_bids import (
     )
 from mne_bids.utils import _write_json
 import mne
+from concurrent.futures import ThreadPoolExecutor
 
 from utils import (
     log,
@@ -551,10 +552,10 @@ def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
                 if not exists(new_cap):
                     copy2(old_cap, new_cap)
 
-def generate_new_conversion_table(
+def generate_conversion_table(
     config_dict: dict,
-    overwrite=False):
-    
+    mode: str='new'):
+
     """
     For each participant and session within MEG folder, move the files to BIDS correspondent folder
     or create a new one if the session does not match. Change the name of the files into BIDS format.
@@ -610,22 +611,50 @@ def generate_new_conversion_table(
     path = path_triux if 'triux' in processing_modalities else path_opm
     participants = glob('sub-*', root_dir=path)
 
-    for participant in participants:
-        sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
-        
-        for date_session in sessions:
-            session = date_session
-            for mod in processing_modalities:
-                all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, mod)) + 
-                                      glob('*.pos', root_dir=os.path.join(path, participant, date_session, mod)))
+        def process_participant(participant, mod, path, participant_mapping, mapping_found, pmap, old_subj_id, old_session, new_subj_id, new_session, tasks, path_BIDS, ts):
+            participant_schema = {
+                'time_stamp': [],
+                'run_conversion': [],
+                'participant_from': [],
+                'participant_to': [],
+                'session_from': [],
+                'session_to': [],
+                'task': [],
+                'split': [],
+                'run': [],
+                'datatype': [],
+                'acquisition': [],
+                'processing': [],
+                'description': [],
+                'raw_path': [],
+                'raw_name': [],
+                'bids_path': [],
+                'bids_name': []
+            }
+
+            if mod == 'triux':
+                sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
+            elif mod == 'hedscan':
+                sessions = sorted(list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))])))
+
+            for date_session in sessions:
+                session = date_session
+
+                if mod == 'triux':
+                    all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
+                                       glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
+                elif mod == 'hedscan':
+                    all_files = sorted(glob(f'20{session}*.fif', root_dir=os.path.join(path, participant)))
 
                 for file in all_files:
-                    
-                    full_file_name = os.path.join(path, participant, date_session, mod, file)
-                    
+                    if mod == 'triux':
+                        full_file_name = os.path.join(path, participant, date_session, 'meg', file)
+                    elif mod == 'hedscan':
+                        full_file_name = os.path.join(path, participant, file)
+
                     if exists(full_file_name):
                         info_dict = extract_info_from_filename(full_file_name)
-                    
+
                     task = info_dict.get('task')
                     proc = '+'.join(info_dict.get('processing'))
                     datatypes = '+'.join([d for d in info_dict.get('datatypes') if d != ''])
@@ -634,7 +663,7 @@ def generate_new_conversion_table(
                     run = ''
                     desc = '+'.join(info_dict.get('description'))
                     extension = info_dict.get('extension')
-                    suffix='meg'
+                    suffix = 'meg'
                     event_file = glob(f'{task}_event_id.json', root_dir=f'{path_BIDS}/..')
                     if event_file:
                         event_file = event_file[0]
@@ -642,24 +671,17 @@ def generate_new_conversion_table(
                         event_file = None
 
                     if participant_mapping and mapping_found:
-                        
                         check_subj = subject in pmap[old_subj_id].values
-                        
                         check_date = date_session in pmap.loc[pmap[old_subj_id] == subject, old_session].values
-
                         process_file = all([check_subj, check_date])
-                        
+
                         if process_file:
                             subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
-
                             session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
-                    
+
                     if process_file and not file_contains(file, headpos_patterns):
-                        
                         try:
-                            info = mne.io.read_raw_fif(full_file_name,
-                                            allow_maxshield=True,
-                                            verbose='error')
+                            info = mne.io.read_raw_fif(full_file_name, allow_maxshield=True, verbose='error')
                             ch_types = set(info.get_channel_types())
                         except Exception as e:
                             print(f"Error reading file {full_file_name}: {e}")
@@ -677,8 +699,8 @@ def generate_new_conversion_table(
                             suffix = None
                     else:
                         datatype = 'meg'
-                    
-                    if process_file:   
+
+                    if process_file:
                         bids_path = BIDSPath(
                             subject=subject,
                             session=session,
@@ -693,43 +715,70 @@ def generate_new_conversion_table(
                             suffix=suffix
                         )
 
-                        # Check if bids exist
                         run_conversion = 'yes'
-                        if (find_matching_paths(bids_path.directory,
-                                            tasks=task,
-                                            acquisitions=mod,
-                                            suffixes=suffix,
-                                            descriptions=None if desc == '' else desc,
-                                            extensions=extension)):
+                        if (find_matching_paths(bids_path.directory, tasks=task, acquisitions=mod, suffixes=suffix, descriptions=None if desc == '' else desc, extensions=extension)):
                             run_conversion = 'no'
 
-                        processing_schema['time_stamp'].append(ts)
-                        processing_schema['run_conversion'].append(run_conversion)
-                        processing_schema['participant_from'].append(participant)
-                        processing_schema['participant_to'].append(subject)
-                        processing_schema['session_from'].append(date_session)
-                        processing_schema['session_to'].append(session)
-                        processing_schema['task'].append(task)
-                        processing_schema['split'].append(split)
-                        processing_schema['run'].append(run)
-                        processing_schema['datatype'].append(datatype)
-                        processing_schema['acquisition'].append(mod)
-                        processing_schema['processing'].append(proc)
-                        processing_schema['description'].append(desc)
-                        processing_schema['raw_path'].append(dirname(full_file_name))
-                        processing_schema['raw_name'].append(file)
-                        processing_schema['bids_path'].append(bids_path.directory)
-                        
-                        processing_schema['bids_name'].append(bids_path.basename)
+                        participant_schema['time_stamp'].append(ts)
+                        participant_schema['run_conversion'].append(run_conversion)
+                        participant_schema['participant_from'].append(participant)
+                        participant_schema['participant_to'].append(subject)
+                        participant_schema['session_from'].append(date_session)
+                        participant_schema['session_to'].append(session)
+                        participant_schema['task'].append(task)
+                        participant_schema['split'].append(split)
+                        participant_schema['run'].append(run)
+                        participant_schema['datatype'].append(datatype)
+                        participant_schema['acquisition'].append(mod)
+                        participant_schema['processing'].append(proc)
+                        participant_schema['description'].append(desc)
+                        participant_schema['raw_path'].append(dirname(full_file_name))
+                        participant_schema['raw_name'].append(file)
+                        participant_schema['bids_path'].append(bids_path.directory)
+                        participant_schema['bids_name'].append(bids_path.basename)
                         processing_schema['event_id'].append(event_file)
 
-    df = pd.DataFrame(processing_schema)
-    
-    df.insert(2, 'task_flag', df.apply(
-                lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
-    # TODO: add more checks
-    # TODO: add event file option based on tasks
+            return pd.DataFrame(participant_schema)
 
+        # Parallelize the processing
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    process_participant,
+                    participant,
+                    mod,
+                    path,
+                    participant_mapping,
+                    mapping_found,
+                    pmap,
+                    old_subj_id,
+                    old_session,
+                    new_subj_id,
+                    new_session,
+                    tasks,
+                    path_BIDS,
+                    ts
+                )
+                for participant in participants
+            ]
+
+            results = [future.result() for future in futures]
+
+        df = pd.concat(results, ignore_index=True)
+
+        df.insert(2, 'task_flag', df.apply(lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
+
+        if mode == 'update':
+            df = df[df['run_conversion'] == 'yes']
+
+        return df
+
+
+def save_conversion_table(df: pd.DataFrame, config_dict: dict):
+
+    ts = datetime.now().strftime('%Y%m%d')
+    path_BIDS = config_dict.get('BIDS')
+    
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
 
@@ -749,8 +798,8 @@ def load_conversion_table(config_dict: dict,
         conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
         if overwrite or not conversion_files:
             print("Creating new conversion table")
-            generate_new_conversion_table(config_dict, overwrite)
-
+            conversion_table = generate_conversion_table(config_dict, 'new')
+            save_conversion_table(conversion_table, config_dict)
     conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
 
     latest_conversion_file = conversion_files[-1]
@@ -758,26 +807,16 @@ def load_conversion_table(config_dict: dict,
 
     conversion_table = pd.read_csv(latest_conversion_file, sep='\t', dtype=str)
     
-    print(conversion_table)
-    return conversion_table
-
-def update_conversion_table(conversion_table: pd.DataFrame, 
-                            conversion_file: str=None):
-    for i, row in conversion_table.iterrows():
-        
-        path = os.path.dirname(row['bids_path'])
-        datatype = basename(path)
-        file = basename(row['bids_name']).split(datatype)[0]
-        files = glob(f'{file}*', root_dir=path)
-        if not files:
-            conversion_table.at[i, 'run_conversion'] = 'yes'
-            print(f'Running conversion on {row['raw_name']}')
-        
-        # TODO: Add argument for update if file exists
+    print(f"Updating conversion table with new files")
+    conversion_table_updates = generate_conversion_table(
+        config_dict, mode = 'update')
     
-    conversion_table.to_csv(conversion_file, sep='\t', index=False)
-    return conversion_table
+    # Merge the new conversion table with the existing one
+    conversion_table = pd.concat([conversion_table, conversion_table_updates], ignore_index=True)
+    # Remove duplicates
+    conversion_table = conversion_table.drop_duplicates(subset=['raw_name'], keep='last')
 
+    return conversion_table
         
 def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     
@@ -786,10 +825,8 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     path_BIDS = config_dict.get('BIDS')
     calibration = config_dict['Calibration']
     crosstalk = config_dict['Crosstalk']
-    # overwrite = config_dict['Overwrite']
-
+    
     df = load_conversion_table(config_dict, conversion_file, overwrite)
-    df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure

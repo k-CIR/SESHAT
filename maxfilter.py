@@ -29,6 +29,7 @@ from mne.chpi import (compute_chpi_amplitudes, compute_chpi_locs,
                       write_head_pos,
                       read_head_pos)
 import matplotlib.patches as mpatches
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils import (
     log,
@@ -763,6 +764,7 @@ class MaxFilter:
                                  task))
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
+                        log(f'{file} -> {clean}')
                     else:
                         print(self.command_mxf)
 
@@ -774,34 +776,32 @@ class MaxFilter:
 
         # os.chdir(default_base_path)
 
-    def loop_dirs(self):
-        """Iterates over the subject and session directories and maxfilter.
-
-        This method loops through the subject and session directories in the specified data root directory.
-        It performs specific tasks on the files found in each directory.
-
-        Returns:
-            None
-        """
+    def loop_dirs(self, max_workers=4):
+        """Iterates over the subject and session directories and runs maxfilter in parallel."""
         parameters = self.parameters
         data_root = os.path.join(parameters.get('data_path'),
                                  parameters.get('project_name'))
         
-        subjects = sorted(glob('NatMEG*',
-                               root_dir=data_root))
-        
+        subjects = sorted(glob('NatMEG*', root_dir=data_root))
         skip_subjects = parameters.get('subjects_to_skip')
-
         print(f'Skipping {", ".join(skip_subjects)}')
-
         subjects = [s for s in subjects if s not in skip_subjects]
 
-
-        # TODO: include only folders
+        # Collect all (subject, session) pairs
+        tasks = []
         for subject in [s for s in subjects if isdir(f'{data_root}/{s}')]:
             sessions = [s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')]
             for session in sessions:
-                self.run_command(subject, session)
+                tasks.append((subject, session))
+
+        # Run in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self.run_command, subject, session) for subject, session in tasks]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in parallel task: {e}")
 
 def args_parser():
     parser = argparse.ArgumentParser(description=

@@ -8,6 +8,8 @@ from os.path import basename, join, isdir, exists
 import os
 from glob import glob
 import pandas as pd
+from os.path import exists, dirname
+import os
 
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
