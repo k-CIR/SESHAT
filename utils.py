@@ -4,7 +4,8 @@ from datetime import datetime
 import sys
 from tkinter.filedialog import askopenfilename, asksaveasfile
 import re
-from os.path import basename, join, isdir
+from os.path import basename, join, isdir, exists
+import os
 from glob import glob
 import pandas as pd
 
@@ -12,12 +13,13 @@ default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
-opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle']
+opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
+                           'HPIpre', 'HPIpost']
 
 def log(
     message: str,
     level: str='info',
-    logfile: str='log.tsv',
+    logfile: str='log.log',
     logpath: str='.'):
     """
     Print a message to the console and write it to a log file.
@@ -54,6 +56,14 @@ def log(
     {message}\033[0m
      """
 
+    if not exists(logpath):
+        os.makedirs(logpath, exist_ok=True)
+    # Create the log file if it doesn't exist
+    if not exists(f'{logpath}/{logfile}'):
+        with open(f'{logpath}/{logfile}', 'w') as f:
+            f.write('Level\tTimestamp\tMessage\n')
+            f.write('-----\t---------\t-------\n')
+    
     # Write the message to the log file
     with open(f'{logpath}/{logfile}', 'a') as f:
         f.write(f"[{level.upper()}]\t{timestamp}\t{message}\n")
