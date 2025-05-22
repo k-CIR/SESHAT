@@ -595,7 +595,8 @@ def generate_new_conversion_table(
         'raw_path': [],
         'raw_name': [],
         'bids_path': [],
-        'bids_name': []
+        'bids_name': [],
+        'event_id': []
     }
     
     if participant_mapping:
@@ -605,39 +606,22 @@ def generate_new_conversion_table(
         except FileExistsError as e:
             mapping_found=False
             print('Participant file not found, skipping')
+    
+    path = path_triux if 'triux' in processing_modalities else path_opm
+    participants = glob('sub-*', root_dir=path)
 
-    for mod in processing_modalities:
-        if mod == 'triux':
-            path = path_triux
-            participants = sorted([p for p in glob('NatMEG*', root_dir=path) if os.path.isdir(os.path.join(path, p))])
-        elif mod == 'hedscan':
-            path = path_opm
-            participants = sorted([p for p in glob('sub*', root_dir=path) if os.path.isdir(os.path.join(path, p))])
-
-        for participant in participants:
-            
-            if mod == 'triux':
-                sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
-                
-            elif mod == 'hedscan':
-                sessions = sorted(list(set([f.split('_')[0][2:] for f in glob('*.fif', root_dir=os.path.join(path, participant))])))
-
-            for date_session in sessions:
-                
-                session = date_session
-                
-                if mod == 'triux':
-                    all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, 'meg')) + 
-                                      glob('*.pos', root_dir=os.path.join(path, participant, date_session, 'meg')))
-                elif mod == 'hedscan':
-                    all_files = sorted(glob(f'20{session}*.fif', root_dir=os.path.join(path, participant)))
+    for participant in participants:
+        sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
+        
+        for date_session in sessions:
+            session = date_session
+            for mod in processing_modalities:
+                all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, mod)) + 
+                                      glob('*.pos', root_dir=os.path.join(path, participant, date_session, mod)))
 
                 for file in all_files:
-
-                    if mod == 'triux':
-                        full_file_name = os.path.join(path, participant, date_session, 'meg', file)
-                    elif mod == 'hedscan':
-                        full_file_name = os.path.join(path, participant, file)
+                    
+                    full_file_name = os.path.join(path, participant, date_session, mod, file)
                     
                     if exists(full_file_name):
                         info_dict = extract_info_from_filename(full_file_name)
@@ -651,6 +635,11 @@ def generate_new_conversion_table(
                     desc = '+'.join(info_dict.get('description'))
                     extension = info_dict.get('extension')
                     suffix='meg'
+                    event_file = glob(f'{task}_event_id.json', root_dir=f'{path_BIDS}/..')
+                    if event_file:
+                        event_file = event_file[0]
+                    else:
+                        event_file = None
 
                     if participant_mapping and mapping_found:
                         
@@ -732,17 +721,20 @@ def generate_new_conversion_table(
                         processing_schema['bids_path'].append(bids_path.directory)
                         
                         processing_schema['bids_name'].append(bids_path.basename)
+                        processing_schema['event_id'].append(event_file)
 
     df = pd.DataFrame(processing_schema)
     
     df.insert(2, 'task_flag', df.apply(
                 lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
-    
     # TODO: add more checks
     # TODO: add event file option based on tasks
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
+
+# TODO: continue check here
+
 
 def load_conversion_table(config_dict: dict,
                           conversion_file: str=None, overwrite=False):
@@ -859,6 +851,16 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
             acquisition = d['acquisition']
             processing = d['processing']
             run = d['run']
+            event_id = d['event_id']
+            
+            if event_id:
+                with open(f"{path_BIDS}/../{event_id}", 'r') as f:
+                    event_id = json.load(f)
+                events = mne.find_events(raw)
+                
+            else:
+                event_id = None
+                events = None
 
             # Create BIDS path
             bids_path = BIDSPath(
@@ -879,7 +881,8 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
                     raw=raw,
                     bids_path=bids_path,
                     empty_room=None,
-                    events=None,
+                    event_id=event_id,
+                    events=events,
                     overwrite=True,
                     verbose='error'
                 )
