@@ -1,6 +1,10 @@
 {
-  "OPM-benchmarking": {
-    "sinuhe": "opm",
-    "kaptah": "OPMbenchmarking1"
+  "wmeyetracking": {
+    "sinuhe": "",
+    "kaptah": "wmeyetracking"
+  },
+  "OPMBCI": {
+    "sinuhe": "opmbci",
+    "kaptah": "OPMBCI"
   }
 }
