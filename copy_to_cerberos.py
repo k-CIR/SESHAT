@@ -18,7 +18,16 @@ from utils import (
     file_contains
 )
 
+global local_dir
+
+with open('projects_to_sync.json', 'r') as f:
+    # Load the list of projects to sync from the JSON file
+    projects_to_sync = json.load(f)
+
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+log_file = f'{timestamp}_copy.log'
+
+
 def copy_if_newer_or_larger(source, destination):
     """
     Copy file from source to destination if source is newer or larger than destination.
@@ -29,32 +38,68 @@ def copy_if_newer_or_larger(source, destination):
         os.path.getsize(source) > os.path.getsize(destination)):
         copy2(source, destination)
 
+def check_fif(source, destination):
+
+    info_src = mne.io.read_info(source, verbose='error')
+    info_dst = mne.io.read_info(destination, verbose='error')
+
+    # for key in info_src:
+    #     print(f'{key}: {info_src[key]}')
+    # for key in info_dst:
+    #     print(f'{key}: {info_dst[key]}')
+    
+    checks = {
+        # 'times': (raw_src.times == raw_dst.times).all(),
+        'file_id': info_src['meas_id']['version'] == info_dst['meas_id']['version'],
+        'secs': info_src['meas_id']['secs'] == info_dst['meas_id']['secs'],
+        'size': info_src.__sizeof__() == info_dst.__sizeof__(),
+        'date': info_src['meas_date'] == info_dst['meas_date'],
+        'sfreq': info_src['sfreq'] == info_dst['sfreq'],
+    }
+
+    not_compare = [c for c in checks if not checks[c]]
+
+    if all(checks.values()) and not not_compare:
+        return True
+
+    else:
+        print(f'The following checks failed: {not_compare}')
+        return False
+
+def check_size_fif(source):
+    raw_src = mne.io.read_raw(source, allow_maxshield=True, verbose='error')
+    raw_size = raw_src._size
+    print(f'{os.path.basename(source)}: {raw_size / 10000} GB')
+    if raw_size > 20000:
+        return True
+    else:
+        return False
+
+
+
 def is_binary(file_path):
     """Check if a file is binary by reading a chunk of it."""
     with open(file_path, 'rb') as f:
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
 
-with open('projects_to_sync.json', 'r') as f:
-    # Load the list of projects to sync from the JSON file
-    projects_to_sync = json.load(f)
+def copy_from_sinuhe(project):
     
-# Create local directories for each project
-for project in projects_to_sync:
+    if not f"{projects_to_sync[project]['sinuhe']}":
+        print('No TRIUX directory defined')
+        pass
     
-    log_file = f'{timestamp}_copy.log'
-    log_path = f'{local_path}/{project}/log'
-    
-    # Create the local directory if it doesn't exist
-    
-    local_dir = f'{local_path}/{project}/raw'
-    if not os.path.exists(local_dir):
-        os.makedirs(local_dir, exist_ok=True)
-    
-    if f"{projects_to_sync[project]['sinuhe']}":
+    else:
+        # Create the local directory if it doesn't exist
+        local_dir = f'{local_path}/{project}/raw'
+        if not os.path.exists(local_dir):
+            os.makedirs(local_dir, exist_ok=True)
+
+        log_path = f'{local_path}/{project}/log'
+
         sinuhe = f"{sinuhe_path}/{projects_to_sync[project]['sinuhe']}"
-        triux_subjects  = glob(f'NatMEG_*', root_dir=sinuhe)
-        triux_subjects = [s.split('_')[-1] for s in triux_subjects]
+        subjects  = glob(f'NatMEG_*', root_dir=sinuhe)
+        subjects = sorted(list(set([s.split('_')[-1] for s in subjects])))
         
         non_dirs = [f for f in glob(f'*', root_dir=sinuhe) if not os.path.isdir(f'{sinuhe}/{f}')]
         
@@ -69,38 +114,8 @@ for project in projects_to_sync:
                     copy_if_newer_or_larger(source, destination)
             else:
                 copy_if_newer_or_larger(source, destination)
-        
-    else:
-        triux_subjects = []
-        
-    if f"{projects_to_sync[project]['kaptah']}":
-        kaptah = f"{kaptah_path}/{projects_to_sync[project]['kaptah']}"
-        hedscan_subjects  = glob(f'sub-*', root_dir=kaptah)
-        hedscan_subjects = [s.split('-')[-1] for s in hedscan_subjects]
-        
-        non_dirs = [f for f in glob(f'*', root_dir=kaptah) if not os.path.isdir(f'{kaptah}/{f}')]
-        
-        for non_dir in non_dirs:
-            source = f'{kaptah}/{non_dir}'
-            destination = f'{local_dir}/{non_dir}'
-            if os.path.exists(destination):
-                check = filecmp.cmp(source, destination, shallow=True)
-                if check:
-                    continue
-                else:
-                    copy_if_newer_or_larger(source, destination)
-            else:
-                copy_if_newer_or_larger(source, destination)
-        
-    else:
-        hedscan_subjects = []
-    
-    subjects = list(set(triux_subjects) & set(hedscan_subjects))
-
-    for subject in subjects:
-        # Get the list of all files in the project directory
-        if sinuhe:
-            triux_sessions = glob(f'*', root_dir=f'{sinuhe}/NatMEG_{subject}')
+        for subject in subjects:
+            sessions = sorted(glob(f'*', root_dir=f'{sinuhe}/NatMEG_{subject}'))
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
             if not os.path.exists(sinuhe_subject_dir):
                 os.makedirs(sinuhe_subject_dir, exist_ok=True)
@@ -122,27 +137,9 @@ for project in projects_to_sync:
                         copy_if_newer_or_larger(source, destination)
                 else:
                     copy_if_newer_or_larger(source, destination)
+            
+            for session in sessions:
 
-        else:
-            triux_sessions = []
-        if kaptah:
-            hedscan_sessions = glob(f'*', root_dir=f'{kaptah}/sub-{subject}')
-            # Extract unique dates from session folder names (assuming date format in session name, e.g., '20240607')
-            hedscan_dates = set()
-            for session in hedscan_sessions:
-                match = re.search(r'(\d{8})', session)
-                if match:
-                    hedscan_dates.add(match.group(1)[2:])
-
-        else:
-            hedscan_dates = []
-        
-        sessions = list(set(triux_sessions) & hedscan_dates)
-        
-        for session in sessions:
-
-            # Get the list of all files in the session directory
-            if sinuhe:
                 triux_src_path = f'{sinuhe}/NatMEG_{subject}/{session}/meg'
                 triux_files = glob('*', root_dir=triux_src_path)
                 triux_fif = [f for f in triux_files if re.search(r'\.fif$|\.fif\.gz$', f)]
@@ -154,136 +151,154 @@ for project in projects_to_sync:
                 
                 triux_compare = filecmp.dircmp(triux_src_path, triux_dst_path, ignore=['.DS_Store'])
                 new_triux_files = [f"{f.split('file-')[-1]}" for f in triux_compare.left_only]
-            else:
-                triux_fif = []
-                triux_other = []
-                triux_dst_path = None
 
-            if kaptah:
+                # First copy files that dont exist:
+                for file in new_triux_files:
+                    source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
+                    destination = f'{triux_dst_path}/{file}'
+                    print(f'Trying {source} --> {destination}')
+
+                    if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
+                        # Check fif file size and split if > 2GB
+                        try:
+                            copy2(source, destination)
+                            log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
+                        
+                        except Exception as e:
+                            print(f'{e}')
+                            # Check if split
+                            if not file_contains(file, [r'-\d+.fif']):
+                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw.save(destination, overwrite=True, verbose='error')
+                                log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
+                            else:
+                                continue
+
+                # Check files that exist in both source and destination
+                for file in triux_files:
+                    source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
+                    destination = f'{triux_dst_path}/{file}'
+                    print(f'Checking if {source} == {destination}')
+                    check = filecmp.cmp(source, destination, shallow=True)
+                    if check:
+                        print('Nothing to update')
+                        continue
+                    else:
+                        copy_if_newer_or_larger(source, destination)
+                        log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+
+def copy_from_kaptah(project):
+
+    if not f"{projects_to_sync[project]['kaptah']}":
+        print('No Hedscan directory defined')
+        pass
+
+    else:
+
+        # Create the local directory if it doesn't exist
+        local_dir = f'{local_path}/{project}/raw'
+        if not os.path.exists(local_dir):
+            os.makedirs(local_dir, exist_ok=True)
+        
+        log_path = f'{local_path}/{project}/log'
+
+        kaptah = f"{kaptah_path}/{projects_to_sync[project]['kaptah']}"
+        subjects  = glob(f'sub-*', root_dir=kaptah)
+        subjects = sorted(list(set([s.split('-')[-1] for s in subjects])))
+        
+        non_dirs = [f for f in glob(f'*', root_dir=kaptah) if not os.path.isdir(f'{kaptah}/{f}')]
+        
+        for non_dir in non_dirs:
+            source = f'{kaptah}/{non_dir}'
+            destination = f'{local_dir}/{non_dir}'
+            if os.path.exists(destination):
+                check = filecmp.cmp(source, destination, shallow=True)
+                if check:
+                    continue
+                else:
+                    copy_if_newer_or_larger(source, destination)
+            else:
+                copy_if_newer_or_larger(source, destination)
+        
+        for subject in subjects:
+
+            all_files = glob(f'*', root_dir=f'{kaptah}/sub-{subject}')
+            # Extract unique dates from session folder names (assuming date format in session name, e.g., '20240607')
+            hedscan_dates = set()
+            for session in all_files:
+                match = re.search(r'(\d{8})', session)
+                if match:
+                    hedscan_dates.add(match.group(1)[2:])
+            sessions = sorted(list(hedscan_dates))
+
+            for session in sessions:
+
                 hedscan_src_path = f'{kaptah}/sub-{subject}'
-                hedscan_files = glob('*', root_dir = hedscan_src_path)
-                hedscan_fif = [f for f in hedscan_files if re.search(r'\.fif$|\.fif\.gz$', f)]
-                
-                    # Other files are copied as they are
-                hedscan_other = [f for f in hedscan_files if f not in hedscan_fif]
+                hedscan_files = glob(f'20{session}*', root_dir = hedscan_src_path)
                 hedscan_dst_path = f'{local_dir}/sub-{subject}/{session}/hedscan'
                 if not os.path.exists(hedscan_dst_path):
                     os.makedirs(hedscan_dst_path, exist_ok=True)
-                
-                hedscan_compare = filecmp.dircmp(hedscan_src_path, hedscan_dst_path, ignore=['.DS_Store'])
-                new_hedscan_files = [f"{f.split('file-')[-1]}" for f in hedscan_compare.left_only]
-                # Check if files in new_hedscan_files already exist in the destination
-                existing_files = set(glob('*', root_dir=hedscan_dst_path))
-                new_hedscan_files = [f for f in new_hedscan_files if f not in existing_files]
 
-            else:
-                hedscan_fif = []
-                hedscan_other = []
-            
-            # Destination directory for the subject and session
-            if new_triux_files:
-                for file in triux_files:
-                    # Copy the file to the local directory
-                        
-                    source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
-                    destination = f'{triux_dst_path}/{file}'
-                    
-                    if os.path.isdir(source):
-                        copytree(source, destination, dirs_exist_ok=True)
-                        continue
 
-                    if file.endswith('.fif') and not file_contains(file, headpos_patterns):
-                        
-                        # If the file is a .fif file, use mne to read and write it
-                        # Check if the destination file already exists
-                        if os.path.exists(destination):
-                            # Compare the files using mne
-                            # This will check if the files are identical
-                            
-                            # check = mne.viz.compare_fiff(source, destination,
-                            #                              show=False)
+                source_files_renamed = [f.split('file-') for f in hedscan_files]
+                files_in_dst = glob('*', root_dir=hedscan_dst_path)
 
-                            check = subprocess.run(f'mne compare_fiff {source} {destination}', shell=True, capture_output=True)
+                new_hedscan_files = ['file-'.join(f) for f in source_files_renamed if f[-1] not in files_in_dst]
 
-                            if check.returncode == 0:
-                                continue
-
-                            else:
-                                # raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                                
-                                # raw.save(destination, overwrite=True, verbose='error')
-                                
-                                copy_if_newer_or_larger(source, destination)
-                                
-                                log(f'Update {source} --> {destination}', logfile=log_file, logpath=log_path)
-                                
-
-                        # Save the file to the destination  
-                        else:
-                            # raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                            # raw.save(destination, overwrite=True, verbose='error')
-                            copy_if_newer_or_larger(source, destination)
-
-                            log(f'Copy {source} --> {destination}', logfile=log_file, logpath=log_path)
-                    else:
-                        if os.path.exists(destination):
-                            check = filecmp.cmp(source, destination, shallow=True)
-
-                            if check:
-                                continue
-                            else:
-                                # For other files, just copy them
-                                copy_if_newer_or_larger(source, destination)
-                                log(f'Update {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        else:
-                            copy_if_newer_or_larger(source, destination)
-                            log(f'Copy {source} --> {destination}', logfile=log_file, logpath=log_path)
-            
-            if new_hedscan_files: 
-                        
-                for file in hedscan_files:
-                    # Copy the file to the local directory
+                # First copy files that dont exist:
+                for file in new_hedscan_files:
                     source = f'{kaptah}/sub-{subject}/{file}'
-                    file
                     new_file = f"{file.split('file-')[-1]}"
                     destination = f'{hedscan_dst_path}/{new_file}'
-                    
-                    if os.path.isdir(source):
-                        copytree(source, destination, dirs_exist_ok=True)
-                        continue
-                    
-                    if '.fif' in file and not file_contains(file, headpos_patterns):    
-                        
-                        # If the file is a .fif file, use mne to read and write it
-                        # Check if the destination file already exists
-                        if os.path.exists(destination):
-                            # Compare the files using mne
-                            # This will check if the files are identical
-                            check = subprocess.run(f'mne compare_fiff {source} {destination}', shell=True, capture_output=True)
-                            if check.returncode == 0:
-                                continue
-                            else:
-                                
-                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                                
-                                raw.save(destination, overwrite=True, verbose='error')
-                                log(f'Update {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        # Save the file to the destination  
-                        else:
-                            raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                            raw.save(destination, overwrite=True, verbose='error')
-                            log(f'Copy {source} --> {destination}', logfile=log_file, logpath=log_path)
-                    else:
-                        if os.path.exists(destination):
-                            check = filecmp.cmp(source, destination, shallow=True)
-                        
-                            if check:
-                                continue
-                            else:
-                                # For other files, just copy them
-                                copy_if_newer_or_larger(source, destination)
-                                log(f'Update {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        else:
-                            copy_if_newer_or_larger(source, destination)
-                            log(f'Copy {source} --> {destination}', logfile=log_file, logpath=log_path)
+                    print(f'Trying {source} --> {destination}')
 
+                    if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
+                        # Check fif file size and split if > 2GB
+                        try:
+                            copy2(source, destination)
+                            log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
+                        
+                        except Exception as e:
+                            print(f'{e}')
+                            # Check if split
+                            if not file_contains(file, [r'-\d+.fif']):
+                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw.save(destination, overwrite=True, verbose='error')
+                                log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
+                            else:
+                                continue
+                
+                # Check files that exist in both source and destination
+                for file in hedscan_files:
+                    source = f'{kaptah}/sub-{subject}/{file}'
+                    new_file = f"{file.split('file-')[-1]}"
+                    destination = f'{hedscan_dst_path}/{new_file}'
+
+                    print(f'Checkin {source} == {destination}')
+                    if file.endswith('.fif') and not file_contains(file, headpos_patterns):
+                        check = check_fif(source, destination)
+                    else:
+                        check = filecmp.cmp(source, destination, shallow=True)
+                    if check:
+                        print('Nothing to update')
+                        continue
+                    else:
+                        copy_if_newer_or_larger(source, destination)
+                        log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+                
+
+
+
+# Create local directories for each project
+
+def main():
+
+    for project in projects_to_sync:
+
+        print(project)
+        copy_from_sinuhe(project)
+        copy_from_kaptah(project)
+
+if __name__ == "__main__":
+    main()
+            
