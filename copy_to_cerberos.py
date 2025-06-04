@@ -50,7 +50,7 @@ def check_fif(source, destination):
     
     checks = {
         # 'times': (raw_src.times == raw_dst.times).all(),
-        'file_id': info_src['meas_id']['version'] == info_dst['meas_id']['version'],
+        'meas_id_version': info_src['meas_id']['version'] == info_dst['meas_id']['version'],
         'secs': info_src['meas_id']['secs'] == info_dst['meas_id']['secs'],
         'size': info_src.__sizeof__() == info_dst.__sizeof__(),
         'date': info_src['meas_date'] == info_dst['meas_date'],
