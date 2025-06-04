@@ -159,20 +159,13 @@ def copy_from_sinuhe(project):
                     print(f'Trying {source} --> {destination}')
 
                     if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
-                        # Check fif file size and split if > 2GB
-                        try:
-                            copy2(source, destination)
-                            log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        
-                        except Exception as e:
-                            print(f'{e}')
-                            # Check if split
-                            if not file_contains(file, [r'-\d+.fif']):
-                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                                raw.save(destination, overwrite=True, verbose='error')
-                                log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
-                            else:
-                                continue
+                        # Check if split
+                        if not file_contains(file, [r'-\d+.fif']):
+                            raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                            raw.save(destination, overwrite=True, verbose='error')
+                            log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
+                        else:
+                            continue
                     else:
                         copy_if_newer_or_larger(source, destination)
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
@@ -256,20 +249,13 @@ def copy_from_kaptah(project):
                     print(f'Trying {source} --> {destination}')
 
                     if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
-                        # Check fif file size and split if > 2GB
-                        try:
-                            copy2(source, destination)
-                            log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        
-                        except Exception as e:
-                            print(f'{e}')
-                            # Check if split
-                            if not file_contains(file, [r'-\d+.fif']):
-                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                                raw.save(destination, overwrite=True, verbose='error')
-                                log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
-                            else:
-                                continue
+                        # Check if split
+                        if not file_contains(file, [r'-\d+.fif']):
+                            raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                            raw.save(destination, overwrite=True, verbose='error')
+                            log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
+                        else:
+                            continue
                     else:
                         copy_if_newer_or_larger(source, destination)
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
