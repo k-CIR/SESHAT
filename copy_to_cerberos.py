@@ -150,7 +150,7 @@ def copy_from_sinuhe(project):
                     os.makedirs(triux_dst_path, exist_ok=True)
                 
                 triux_compare = filecmp.dircmp(triux_src_path, triux_dst_path, ignore=['.DS_Store'])
-                new_triux_files = [f"{f.split('file-')[-1]}" for f in triux_compare.left_only]
+                new_triux_files = triux_compare.left_only
 
                 # First copy files that dont exist:
                 for file in new_triux_files:
@@ -173,6 +173,9 @@ def copy_from_sinuhe(project):
                                 log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
                             else:
                                 continue
+                    else:
+                        copy_if_newer_or_larger(source, destination)
+                        log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
 
                 # Check files that exist in both source and destination
                 for file in triux_files:
@@ -267,6 +270,9 @@ def copy_from_kaptah(project):
                                 log(f'Copied + split {source} --> {destination}', logfile=log_file, logpath=log_path)
                             else:
                                 continue
+                    else:
+                        copy_if_newer_or_larger(source, destination)
+                        log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
                 # Check files that exist in both source and destination
                 for file in hedscan_files:
@@ -286,8 +292,6 @@ def copy_from_kaptah(project):
                         copy_if_newer_or_larger(source, destination)
                         log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
-
-
 
 # Create local directories for each project
 
