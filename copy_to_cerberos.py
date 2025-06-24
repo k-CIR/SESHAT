@@ -171,17 +171,17 @@ def copy_from_sinuhe(project):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
 
                 # Check files that exist in both source and destination
-                for file in triux_files:
-                    source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
-                    destination = f'{triux_dst_path}/{file}'
-                    print(f'Checking if {source} == {destination}')
-                    check = filecmp.cmp(source, destination, shallow=True)
-                    if check:
-                        print('Nothing to update')
-                        continue
-                    else:
-                        copy_if_newer_or_larger(source, destination)
-                        log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+                # for file in triux_files:
+                #     source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
+                #     destination = f'{triux_dst_path}/{file}'
+                #     print(f'Checking if {source} == {destination}')
+                #     check = filecmp.cmp(source, destination, shallow=True)
+                #     if check:
+                #         print('Nothing to update')
+                #         continue
+                #     else:
+                #         copy_if_newer_or_larger(source, destination)
+                #         log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
 
 def copy_from_kaptah(project):
 
@@ -261,22 +261,22 @@ def copy_from_kaptah(project):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
                 # Check files that exist in both source and destination
-                for file in hedscan_files:
-                    source = f'{kaptah}/sub-{subject}/{file}'
-                    new_file = f"{file.split('file-')[-1]}"
-                    destination = f'{hedscan_dst_path}/{new_file}'
+                # for file in hedscan_files:
+                #     source = f'{kaptah}/sub-{subject}/{file}'
+                #     new_file = f"{file.split('file-')[-1]}"
+                #     destination = f'{hedscan_dst_path}/{new_file}'
 
-                    print(f'Checkin {source} == {destination}')
-                    if file.endswith('.fif') and not file_contains(file, headpos_patterns):
-                        check = check_fif(source, destination)
-                    else:
-                        check = filecmp.cmp(source, destination, shallow=True)
-                    if check:
-                        print('Nothing to update')
-                        continue
-                    else:
-                        copy_if_newer_or_larger(source, destination)
-                        log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+                #     print(f'Checkin {source} == {destination}')
+                #     if file.endswith('.fif') and not file_contains(file, headpos_patterns):
+                #         check = check_fif(source, destination)
+                #     else:
+                #         check = filecmp.cmp(source, destination, shallow=True)
+                #     if check:
+                #         print('Nothing to update')
+                #         continue
+                #     else:
+                #         copy_if_newer_or_larger(source, destination)
+                #         log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
 
 # Create local directories for each project
