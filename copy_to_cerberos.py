@@ -83,7 +83,7 @@ def is_binary(file_path):
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
 
-def copy_from_sinuhe(project):
+def copy_from_sinuhe(project, check=False):
     
     if not f"{projects_to_sync[project]['sinuhe']}":
         print('No TRIUX directory defined')
@@ -171,19 +171,20 @@ def copy_from_sinuhe(project):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
 
                 # Check files that exist in both source and destination
-                # for file in triux_files:
-                #     source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
-                #     destination = f'{triux_dst_path}/{file}'
-                #     print(f'Checking if {source} == {destination}')
-                #     check = filecmp.cmp(source, destination, shallow=True)
-                #     if check:
-                #         print('Nothing to update')
-                #         continue
-                #     else:
-                #         copy_if_newer_or_larger(source, destination)
-                #         log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+                if check:
+                    for file in triux_files:
+                        source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
+                        destination = f'{triux_dst_path}/{file}'
+                        print(f'Checking if {source} == {destination}')
+                        check = filecmp.cmp(source, destination, shallow=True)
+                        if check:
+                            print('Nothing to update')
+                            continue
+                        else:
+                            copy_if_newer_or_larger(source, destination)
+                            log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
 
-def copy_from_kaptah(project):
+def copy_from_kaptah(project, check=False):
 
     if not f"{projects_to_sync[project]['kaptah']}":
         print('No Hedscan directory defined')
@@ -261,22 +262,23 @@ def copy_from_kaptah(project):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
                 # Check files that exist in both source and destination
-                # for file in hedscan_files:
-                #     source = f'{kaptah}/sub-{subject}/{file}'
-                #     new_file = f"{file.split('file-')[-1]}"
-                #     destination = f'{hedscan_dst_path}/{new_file}'
+                if check:
+                    for file in hedscan_files:
+                        source = f'{kaptah}/sub-{subject}/{file}'
+                        new_file = f"{file.split('file-')[-1]}"
+                        destination = f'{hedscan_dst_path}/{new_file}'
 
-                #     print(f'Checkin {source} == {destination}')
-                #     if file.endswith('.fif') and not file_contains(file, headpos_patterns):
-                #         check = check_fif(source, destination)
-                #     else:
-                #         check = filecmp.cmp(source, destination, shallow=True)
-                #     if check:
-                #         print('Nothing to update')
-                #         continue
-                #     else:
-                #         copy_if_newer_or_larger(source, destination)
-                #         log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
+                        print(f'Checkin {source} == {destination}')
+                        if file.endswith('.fif') and not file_contains(file, headpos_patterns):
+                            check = check_fif(source, destination)
+                        else:
+                            check = filecmp.cmp(source, destination, shallow=True)
+                        if check:
+                            print('Nothing to update')
+                            continue
+                        else:
+                            copy_if_newer_or_larger(source, destination)
+                            log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
 
 # Create local directories for each project
@@ -286,8 +288,8 @@ def main():
     for project in projects_to_sync:
 
         print(project)
-        copy_from_sinuhe(project)
-        copy_from_kaptah(project)
+        copy_from_sinuhe(project, check=False)
+        copy_from_kaptah(project, check=False)
 
 if __name__ == "__main__":
     main()
