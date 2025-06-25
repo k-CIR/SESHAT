@@ -94,17 +94,17 @@ def askForConfig():
             sys.exit(1)
 
     else:
-        json_name = askopenfilename(
+        config_file = askopenfilename(
             title='Select config file',
-            filetypes=[('JSON files', '*.json')],
+            filetypes=[('YAML files', '*.yml'), ('JSON files', '*.json')],
             initialdir=default_output_path)
 
-        if not json_name:
+        if not config_file:
             print('No configuration file selected. Exiting opening dialog')
             sys.exit(1)
         
-        print(f'{json_name} selected')
-        return json_name
+        print(f'{config_file} selected')
+        return config_file
 
 def extract_info_from_filename(file_name: str):
     
