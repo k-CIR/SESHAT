@@ -7,22 +7,26 @@ from shutil import copy2, copytree
 import subprocess
 from datetime import datetime
 import filecmp
+import time
+import pandas as pd
 
-sinuhe_path = '/neuro/data/sinuhe'
-kaptah_path = '/neuro/data/kaptah'
-local_path = '/neuro/data/local'
+sinuhe_root = '/neuro/data/sinuhe'
+kaptah_root = '/neuro/data/kaptah'
+local_root = '/neuro/data/local'
 
 from utils import (
     log,
     headpos_patterns,
+    proc_patterns,
     file_contains
 )
 
 global local_dir
 
 with open('projects_to_sync.json', 'r') as f:
-    # Load the list of projects to sync from the JSON file
-    projects_to_sync = json.load(f)
+        # Load the list of projects to sync from the JSON file
+        projects_to_sync = json.load(f)
+
 
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 log_file = f'{timestamp}_copy.log'
@@ -91,13 +95,13 @@ def copy_from_sinuhe(project, check=False):
     
     else:
         # Create the local directory if it doesn't exist
-        local_dir = f'{local_path}/{project}/raw'
+        local_dir = f'{local_root}/{project}/raw'
         if not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
 
-        log_path = f'{local_path}/{project}/log'
+        log_path = f'{local_root}/{project}/log'
 
-        sinuhe = f"{sinuhe_path}/{projects_to_sync[project]['sinuhe']}"
+        sinuhe = f"{sinuhe_root}/{projects_to_sync[project]['sinuhe']}"
         subjects  = glob(f'NatMEG_*', root_dir=sinuhe)
         subjects = sorted(list(set([s.split('_')[-1] for s in subjects])))
         
@@ -158,13 +162,15 @@ def copy_from_sinuhe(project, check=False):
                     destination = f'{triux_dst_path}/{file}'
                     print(f'Trying {source} --> {destination}')
 
-                    if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
+                    if '.fif' in file and not file_contains(file, headpos_patterns + ['ave.fif']) and check_size_fif:
                         # Check if split
-                        if not file_contains(file, [r'-\d+.fif']):
-                            raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                            raw.save(destination, overwrite=True, verbose='error')
-                            log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
-                        else:
+                        if not file_contains(file, [r'-\d+.fif'] + [r'-\d+_' + p for p in proc_patterns]):
+                            try:
+                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw.save(destination, overwrite=True, verbose='error')
+                                log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
+                            except Exception as e:
+                                log(f'{source} !!! {destination} {e}', 'error',logfile=log_file, logpath=log_path)
                             continue
                     else:
                         copy_if_newer_or_larger(source, destination)
@@ -193,13 +199,13 @@ def copy_from_kaptah(project, check=False):
     else:
 
         # Create the local directory if it doesn't exist
-        local_dir = f'{local_path}/{project}/raw'
+        local_dir = f'{local_root}/{project}/raw'
         if not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
         
-        log_path = f'{local_path}/{project}/log'
+        log_path = f'{local_root}/{project}/log'
 
-        kaptah = f"{kaptah_path}/{projects_to_sync[project]['kaptah']}"
+        kaptah = f"{kaptah_root}/{projects_to_sync[project]['kaptah']}"
         subjects  = glob(f'sub-*', root_dir=kaptah)
         subjects = sorted(list(set([s.split('-')[-1] for s in subjects])))
         
@@ -236,25 +242,46 @@ def copy_from_kaptah(project, check=False):
                 if not os.path.exists(hedscan_dst_path):
                     os.makedirs(hedscan_dst_path, exist_ok=True)
 
-
-                source_files_renamed = [f.split('file-') for f in hedscan_files]
                 files_in_dst = glob('*', root_dir=hedscan_dst_path)
 
-                new_hedscan_files = ['file-'.join(f) for f in source_files_renamed if f[-1] not in files_in_dst]
+                
+                source_files_renamed = [f.split('file-') for f in hedscan_files]
+                
+                df = pd.DataFrame(source_files_renamed)
+
+                df['run'] = df.groupby(1).cumcount() + 1
+                df['old_name'] = df[0] + 'file-' + df[1]
+                df[['pre', 'post']] = df[1].str.split('_', expand=True)
+                
+
+                df['new_name'] = df.apply(
+                    lambda row: row['pre'] + '_' + ('dup' + str(row['run']) + '_' if row['run'] != 1 else '') + row['post'], axis=1)
+
+                df['in_dst'] = df.apply(
+                    lambda row: row['new_name'] in files_in_dst, axis=1
+                )
+
+                new_hedscan_files = df[df['in_dst'] == False]['old_name'].tolist()
 
                 # First copy files that dont exist:
                 for file in new_hedscan_files:
                     source = f'{kaptah}/sub-{subject}/{file}'
-                    new_file = f"{file.split('file-')[-1]}"
+                    
+                    new_file = df[df['old_name'] == file]['new_name'].values[0]
+
+                    #new_file = f"{file.split('file-')[-1]}"
                     destination = f'{hedscan_dst_path}/{new_file}'
                     print(f'Trying {source} --> {destination}')
 
                     if '.fif' in file and not file_contains(file, headpos_patterns) and check_size_fif:
                         # Check if split
                         if not file_contains(file, [r'-\d+.fif']):
-                            raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
-                            raw.save(destination, overwrite=True, verbose='error')
-                            log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
+                            try:
+                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw.save(destination, overwrite=True, verbose='error')
+                                log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
+                            except Exception as e:
+                                log(f'{source} !!! {destination} {e}', 'error', logfile=log_file, logpath=log_path)
                         else:
                             continue
                     else:
@@ -281,14 +308,54 @@ def copy_from_kaptah(project, check=False):
                             log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
 
-# Create local directories for each project
+def check_file_size(project, wait_time=30):
+    previous_triux_sizes = {}
+    previous_hedscan_sizes = {}
+    size_triux_changed = False
+    size_hedscan_changed = False
 
+    if f"{projects_to_sync[project]['sinuhe']}":
+        sinuhe_path = f"{sinuhe_root}/{projects_to_sync[project]['sinuhe']}"
+        full_s_paths = [os.path.join(root, file) for root, dirs, files in 
+                      os.walk(sinuhe_path, topdown=True) for file in files]
+    if f"{projects_to_sync[project]['kaptah']}":
+        kaptah_path = f"{kaptah_root}/{projects_to_sync[project]['kaptah']}"
+        full_k_paths = [os.path.join(root, file) for root, dirs, files in 
+                       os.walk(kaptah_path, topdown=True) for file in files]
+
+    print(f'Checking for new files to sync in {project}...')
+    time.sleep(wait_time)
+    current_s_sizes = {full_path: os.path.getsize(full_path) for full_path in full_s_paths}
+    current_k_sizes = {full_path: os.path.getsize(full_path) for full_path in full_k_paths}
+    
+    for file, size in current_s_sizes.items():
+        if file in previous_triux_sizes:
+            if size != previous_triux_sizes[file]:
+                print(f'File size changed: {file} (New size: {size} bytes)')
+                size_triux_changed = False
+        previous_triux_sizes[file] = size
+    
+    for file, size in current_k_sizes.items():
+        if file in previous_hedscan_sizes:
+            if size != previous_hedscan_sizes[file]:
+                print(f'File size changed: {file} (New size: {size} bytes)')
+                size_hedscan_unchanged = False
+        previous_hedscan_sizes[file] = size
+
+    return size_triux_changed, size_hedscan_changed
+
+# Create local directories for each project
 def main():
+    # Start monitoring file size changes in the local directory
 
     for project in projects_to_sync:
 
-        print(project)
+        #triux_changed, hedscan_changed = check_file_size(project, 15)
+
+        
+        print(f'TRIUX files changed for {project}, copying from Sinuhe...')
         copy_from_sinuhe(project, check=False)
+        print(f'Hedscan files changed for {project}, copying from Kaptah...')
         copy_from_kaptah(project, check=False)
 
 if __name__ == "__main__":
