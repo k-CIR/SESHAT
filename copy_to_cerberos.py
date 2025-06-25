@@ -10,9 +10,9 @@ import filecmp
 import time
 import pandas as pd
 
-sinuhe_root = '/neuro/data/sinuhe'
-kaptah_root = '/neuro/data/kaptah'
-local_root = '/neuro/data/local'
+sinuhe_root = 'neuro/data/sinuhe'
+kaptah_root = 'neuro/data/kaptah'
+local_root = 'neuro/data/local'
 
 from utils import (
     log,
@@ -87,7 +87,7 @@ def is_binary(file_path):
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
 
-def copy_from_sinuhe(project, check=False):
+def copy_from_sinuhe(project, check_existing=False):
     
     if not f"{projects_to_sync[project]['sinuhe']}":
         print('No TRIUX directory defined')
@@ -119,7 +119,9 @@ def copy_from_sinuhe(project, check=False):
             else:
                 copy_if_newer_or_larger(source, destination)
         for subject in subjects:
-            sessions = sorted(glob(f'*', root_dir=f'{sinuhe}/NatMEG_{subject}'))
+            sessions = sorted([ session for session in glob('*', root_dir = f'{sinuhe}/NatMEG_{subject}')
+            if os.path.isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
+            ])
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
             if not os.path.exists(sinuhe_subject_dir):
                 os.makedirs(sinuhe_subject_dir, exist_ok=True)
@@ -177,7 +179,7 @@ def copy_from_sinuhe(project, check=False):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
 
                 # Check files that exist in both source and destination
-                if check:
+                if check_existing:
                     for file in triux_files:
                         source = f'{sinuhe}/NatMEG_{subject}/{session}/meg/{file}'
                         destination = f'{triux_dst_path}/{file}'
@@ -190,7 +192,7 @@ def copy_from_sinuhe(project, check=False):
                             copy_if_newer_or_larger(source, destination)
                             log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
 
-def copy_from_kaptah(project, check=False):
+def copy_from_kaptah(project, check_existing=False):
 
     if not f"{projects_to_sync[project]['kaptah']}":
         print('No Hedscan directory defined')
@@ -250,10 +252,10 @@ def copy_from_kaptah(project, check=False):
                 df = pd.DataFrame(source_files_renamed)
 
                 df['run'] = df.groupby(1).cumcount() + 1
-                df['old_name'] = df[0] + 'file-' + df[1]
-                df[['pre', 'post']] = df[1].str.split('_', expand=True)
                 
-
+                df['old_name'] = df[0] + 'file-' + df[1]
+                df[['pre', 'post']] = df[1].str.rsplit('_', n=1, expand=True)
+                
                 df['new_name'] = df.apply(
                     lambda row: row['pre'] + '_' + ('dup' + str(row['run']) + '_' if row['run'] != 1 else '') + row['post'], axis=1)
 
@@ -289,7 +291,7 @@ def copy_from_kaptah(project, check=False):
                         log(f'Copied {source} --> {destination}', logfile=log_file, logpath=log_path)
                 
                 # Check files that exist in both source and destination
-                if check:
+                if check_existing:
                     for file in hedscan_files:
                         source = f'{kaptah}/sub-{subject}/{file}'
                         new_file = f"{file.split('file-')[-1]}"
@@ -305,8 +307,7 @@ def copy_from_kaptah(project, check=False):
                             continue
                         else:
                             copy_if_newer_or_larger(source, destination)
-                            log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
-                
+                            log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)           
 
 def check_file_size(project, wait_time=30):
     previous_triux_sizes = {}
@@ -351,12 +352,11 @@ def main():
     for project in projects_to_sync:
 
         #triux_changed, hedscan_changed = check_file_size(project, 15)
-
         
         print(f'TRIUX files changed for {project}, copying from Sinuhe...')
-        copy_from_sinuhe(project, check=False)
+        copy_from_sinuhe(project, check_existing=False)
         print(f'Hedscan files changed for {project}, copying from Kaptah...')
-        copy_from_kaptah(project, check=False)
+        copy_from_kaptah(project, check_existing=False)
 
 if __name__ == "__main__":
     main()
