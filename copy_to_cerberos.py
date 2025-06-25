@@ -79,8 +79,6 @@ def check_size_fif(source):
     else:
         return False
 
-
-
 def is_binary(file_path):
     """Check if a file is binary by reading a chunk of it."""
     with open(file_path, 'rb') as f:
@@ -352,7 +350,7 @@ def main():
     for project in projects_to_sync:
 
         #triux_changed, hedscan_changed = check_file_size(project, 15)
-        
+
         print(f'TRIUX files changed for {project}, copying from Sinuhe...')
         copy_from_sinuhe(project, check_existing=False)
         print(f'Hedscan files changed for {project}, copying from Kaptah...')
