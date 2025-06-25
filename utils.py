@@ -96,7 +96,7 @@ def askForConfig():
     else:
         config_file = askopenfilename(
             title='Select config file',
-            filetypes=[('YAML files', '*.yml'), ('JSON files', '*.json')],
+            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
             initialdir=default_output_path)
 
         if not config_file:
