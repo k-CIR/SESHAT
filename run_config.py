@@ -64,7 +64,8 @@ def create_default_config():
                 'apply_linefreq': False,
                 'linefreq_Hz': '50',
                 'maxfilter_version': '/neuro/bin/util/maxfilter',
-                'MaxFilter_commands': ''
+                'MaxFilter_commands': '',
+                'debug': False
             }
         },
         'bids': {
@@ -437,6 +438,7 @@ Set the parameters for MaxFilter processing.
 • linefreq_Hz: Line frequency in Hz to apply filtering
 • maxfilter_version: Path to MaxFilter executable
 • MaxFilter_commands: Additional MaxFilter commands to run, e.g. '-v' for verbose output
+• debug: Enable debug mode for MaxFilter (if true will print command instead of running it, headpos will still be applied)
 
 """
     mf_adv_info_label = ttk.Label(mf_adv_info_frame, text=mf_adv_info_text, 
@@ -505,7 +507,7 @@ Set the parameters for Bidsification.
         for key, var in run_vars.items():
             config['RUN'][key] = var.get()
         
-        messagebox.showinfo("Execute", "Executing pipeline with current configuration...")
+        # messagebox.showinfo("Execute", "Executing pipeline with current configuration...")
         
         # Close the GUI and return the config
         root.destroy()
@@ -523,14 +525,33 @@ Set the parameters for Bidsification.
         
         # Update config with GUI values
         for key, var in project_vars.items():
-            config['project'][key] = var.get()
+            value = var.get()
+            if key == 'tasks':
+                # Convert comma-separated string to list, remove blanks
+                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
+            else:
+                config['project'][key] = value
+    
         for key, var in opm_vars.items():
-            config['opm'][key] = var.get()
+            value = var.get()
+            if key in ['hpi_names', 'polhemus']:
+                # Convert comma-separated string to list, remove blanks
+                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
+            else:
+                config['opm'][key] = value
+    
         for section in ['standard_settings', 'advanced_settings']:
             for key, var in maxfilter_vars[section].items():
-                config['maxfilter'][section][key] = var.get()
+                value = var.get()
+                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
+                    # Convert comma-separated string to list, remove blanks
+                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
+                else:
+                    config['maxfilter'][section][key] = value
+    
         for key, var in bids_vars.items():
             config['bids'][key] = var.get()
+    
         for key, var in run_vars.items():
             config['RUN'][key] = var.get()
 
@@ -541,7 +562,6 @@ Set the parameters for Bidsification.
         
         # Re-enable save button after any variable changes
         def enable_save_button(*args):
-            
             save_button.config(state='normal', text='Save Configuration')
             # Disable execute button when changes are made
             execute_button.config(state='disabled', text='Save to execute', style='C.TButton')
@@ -644,4 +664,3 @@ Set the parameters for Bidsification.
 
 if __name__ == "__main__":
     config = config_UI()
-    print(config)
