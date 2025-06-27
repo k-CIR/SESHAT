@@ -1,4 +1,11 @@
+"""
+Utility Functions for NatMEG Processing Pipeline
 
+Common helper functions used across the MEG processing workflow including
+logging, file handling, configuration management, and filename parsing.
+
+Author: Andreas Gerhardsson
+"""
 
 from datetime import datetime
 import sys
@@ -11,7 +18,7 @@ import pandas as pd
 from os.path import exists, dirname
 import os
 
-default_output_path = '/neuro/data/local'
+default_output_path = 'neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
@@ -24,18 +31,37 @@ def log(
     logfile: str='log.log',
     logpath: str='.'):
     """
-    Print a message to the console and write it to a log file.
-    Parameters
-    ----------
-    message : str
-        The message to print and write to the log file.
-    level : str
-        The log level. Can be 'info', 'warning', or 'error'.
-    logfile : str
-        The name of the log file.
-    logpath : str
-        The path to the log file.
-    """ 
+    Print colored messages to console and append to structured log file.
+    
+    Provides standardized logging with:
+    - Color-coded console output (blue=info, yellow=warning, red=error)
+    - Timestamped log file entries in tab-separated format
+    - Automatic log directory and file creation
+    - Console and file output synchronization
+    
+    Args:
+        message (str): Message content to log
+        level (str): Log severity ('info', 'warning', 'error')
+        logfile (str): Log filename (default: 'log.log')
+        logpath (str): Directory path for log file (default: current dir)
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Creates log directory if it doesn't exist
+        - Creates log file with header if first use
+        - Appends timestamped entry to log file
+        - Prints color-coded message to console
+        
+    Log File Format:
+        Level    Timestamp           Message
+        -----    ---------           -------
+        [INFO]   2025-01-27 14:30:15 Processing started
+    
+    Note:
+        Uses ANSI color codes for terminal output formatting
+    """
 
     # Define colors for different log levels
     level_colors = {
@@ -71,58 +97,109 @@ def log(
         f.write(f"[{level.upper()}]\t{timestamp}\t{message}\n")
     print(formatted_message)
 
+
+###############################################################################
+# File pattern matching and filename parsing
+###############################################################################
+
 def file_contains(file: str, pattern: list):
+    """
+    Check if filename contains any of the specified patterns using regex.
+    
+    Performs case-sensitive pattern matching against filename using compiled
+    regular expressions for efficient multi-pattern searching.
+    
+    Args:
+        file (str): Filename or path to check
+        pattern (list): List of regex patterns to match against
+    
+    Returns:
+        bool: True if any pattern matches, False otherwise
+        
+    Examples:
+        >>> file_contains('test_tsss_mc.fif', proc_patterns)
+        True
+        >>> file_contains('empty_room.fif', noise_patterns)
+        True
+        >>> file_contains('regular_data.fif', headpos_patterns)
+        False
+    
+    Note:
+        Patterns are joined with '|' (OR) operator for single regex compilation
+    """
     return bool(re.compile('|'.join(pattern)).search(file))
 
-def askForConfig():
-    """_summary_
-
-    Args:
-        file_config (str, optional): _description_. Defaults
-            to None.
-
-    Returns:
-        dict: dictionary with the configuration parameters
-    """
-    option = input("Do you want to open an existing config file or create a new? ([open]/new/cancel): ").strip().lower()
-    # Check if the file is defined or ask for it
-    if option not in ['o', 'open']:
-        if option in ['n', 'new']:
-            return 'new'
-        elif option in ['c', 'cancel']:
-            print('User cancelled')
-            sys.exit(1)
-
-    else:
-        config_file = askopenfilename(
-            title='Select config file',
-            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-            initialdir=default_output_path)
-
-        if not config_file:
-            print('No configuration file selected. Exiting opening dialog')
-            sys.exit(1)
-        
-        print(f'{config_file} selected')
-        return config_file
-
 def extract_info_from_filename(file_name: str):
+    """
+    Parse MEG filenames to extract standardized metadata components.
     
-    """_summary_
+    Comprehensive filename parser that handles both TRIUX (NatMEG_) and 
+    BIDS (sub-) naming conventions. Extracts participant IDs, task names,
+    processing stages, data types, and file structure information using
+    regex pattern matching.
     
-    Function to clean up filenames and extract
+    Supported Filename Formats:
+    - TRIUX: NatMEG_001_TaskName_proc-options_meg.fif
+    - BIDS: sub-001_ses-01_task-TaskName_proc-options_meg.fif
+    - OPM: Various Kaptah-specific patterns
+    
+    Parsing Features:
+    - Participant ID extraction (zero-padded numbers)
+    - Task name identification with intelligent filtering
+    - Processing stage detection (tSSS, SSS, movement correction, etc.)
+    - Data type classification (MEG, EEG, OPM, behavioral)
+    - Split file detection (-1.fif, -2.fif, etc.)
+    - Head position file identification (trans, headpos)
+    - Noise recording classification (empty room variants)
     
     Args:
-        file_name (str, required): _description_
-        
+        file_name (str): Full path or filename to parse
+    
     Returns:
-        dict: 
-            filename (str): _description_
-            participant (str): _description_
-            task (str): _description_
-            processing (list): _description_
-            datatypes (list): _description_
-            extension (str): _description_
+        dict: Parsed filename components with keys:
+            - filename (str): Original input filename
+            - participant (str): Participant ID (e.g., '001')
+            - task (str): Task name (e.g., 'Phalanges', 'AudOdd')
+            - split (str): Split file suffix (e.g., '-1', '-2') or empty
+            - processing (list): Processing steps applied (e.g., ['tsss', 'mc'])
+            - description (list): File type descriptors (e.g., ['trans', 'headpos'])
+            - datatypes (list): Data modalities (e.g., ['meg', 'opm'])
+            - extension (str): File extension (e.g., '.fif')
+    
+    Special Handling:
+    - OPM files: Uses position-based task extraction
+    - Noise files: Standardizes to 'Noise', 'NoiseBefore', 'NoiseAfter'
+    - Multi-word tasks: Converts to CamelCase (e.g., 'aud_odd' → 'AudOdd')
+    - Split files: Preserves original numbering scheme
+    
+    Examples:
+        >>> extract_info_from_filename('NatMEG_001_Phalanges_tsss_mc_meg.fif')
+        {
+            'filename': 'NatMEG_001_Phalanges_tsss_mc_meg.fif',
+            'participant': '001',
+            'task': 'Phalanges',
+            'split': '',
+            'processing': ['tsss', 'mc'],
+            'description': [],
+            'datatypes': ['meg'],
+            'extension': '.fif'
+        }
+        
+        >>> extract_info_from_filename('sub-001_task-empty_room_after.fif')
+        {
+            'filename': 'sub-001_task-empty_room_after.fif',
+            'participant': '001', 
+            'task': 'NoiseAfter',
+            'split': '',
+            'processing': [],
+            'description': [],
+            'datatypes': ['meg'],
+            'extension': '.fif'
+        }
+    
+    Note:
+        Function handles edge cases and various naming inconsistencies
+        commonly found in MEG datasets across different acquisition systems
     """
     
     # Extract participant, task, processing, datatypes and extension
@@ -174,197 +251,47 @@ def extract_info_from_filename(file_name: str):
     
     return info_dict
 
+###############################################################################
+# Configuration Management
+###############################################################################
 
-#### Not in use ####
-def get_desc_from_raw(file_name):
-    info = mne.io.read_info(file_name, verbose='error')
-    
-    update_dict = {
-        
-    }
-
-def generate_new_conversion_table(
-    config_dict: dict,
-    overwrite=False):
-    
+def askForConfig():
     """
-    For each participant and session within MEG folder, move the files to BIDS correspondent folder
-    or create a new one if the session does not match. Change the name of the files into BIDS format.
+    Open GUI file dialog for configuration file selection.
+    
+    Presents user with file browser dialog filtered for YAML and JSON
+    configuration files. Provides fallback when no config file is specified
+    via command line or programmatic interface.
+    
+    Supported Formats:
+    - YAML files: .yml, .yaml extensions
+    - JSON files: .json extension
+    
+    Args:
+        None
+    
+    Returns:
+        str: Full path to selected configuration file
+        
+    Side Effects:
+        - Opens tkinter file dialog window
+        - Prints selected file path to console
+        - Exits program with code 1 if no file selected
+        
+    Raises:
+        SystemExit: If user cancels dialog without selecting file
+        
+    Initial Directory:
+        Defaults to 'neuro/data/local' for convenient navigation
     """
-    ts = datetime.now().strftime('%Y%m%d')
-    path_triux = config_dict['squidMEG']
-    path_opm = config_dict['opmMEG']
-    path_BIDS = config_dict['BIDS']
-    participant_mapping = config_dict['Participants mapping file']
-    old_subj_id = config_dict['Original subjID name']
-    new_subj_id = config_dict['New subjID name']
-    old_session = config_dict['Original session name']
-    new_session = config_dict['New session name']
+    config_file = askopenfilename(
+        title='Select config file',
+        filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
+        initialdir=default_output_path)
+
+    if not config_file:
+        print('No configuration file selected. Exiting opening dialog')
+        sys.exit(1)
     
-    processing_modalities = []
-    if path_triux != '' and str(path_triux) != '()':
-        processing_modalities.append('triux')
-    if path_opm != '' and str(path_opm) != '()':
-        processing_modalities.append('hedscan')
-    
-    processing_schema = {
-        'time_stamp': [],
-        'run_conversion': [],
-        'participant_from': [],
-        'participant_to': [],
-        'session_from': [],
-        'session_to': [],
-        'task': [],
-        'split': [],
-        'run': [],
-        'datatype': [],
-        'acquisition': [],
-        'processing': [],
-        'raw_path': [],
-        'raw_name': [],
-        'bids_path': [],
-        'bids_name': []
-    }
-    
-    if participant_mapping:
-        mapping_found=True
-        try:
-            pmap = pd.read_csv(participant_mapping, dtype=str)
-        except FileExistsError as e:
-            mapping_found=False
-            print('Participant file not found, skipping')
-    
-    
-    for mod in processing_modalities:
-        if mod == 'triux':
-            path = path_triux
-            participants = [p for p in glob('NatMEG*', root_dir=path) if isdir(join(path, p))]
-        elif mod == 'hedscan':
-            path = path_opm
-            participants = [p for p in glob('sub*', root_dir=path) if isdir(join(path, p))]
-
-        for participant in participants:
-            
-            if mod == 'triux':
-                sessions = [session for session in glob('*', root_dir=join(path, participant)) if isdir(join(path, participant, session))]
-            elif mod == 'hedscan':
-                sessions = list(set([f.split('_')[0][2:] for f in glob('*', root_dir=join(path, participant))]))
-
-            for date_session in sessions:
-                
-                session = date_session
-                
-                if mod == 'triux':
-                    all_fifs = sorted(glob('*.fif', root_dir=join(path, participant, date_session, 'meg')))
-                elif mod == 'hedscan':
-                    all_fifs = sorted(glob('*.fif', root_dir=join(path, participant)))
-
-                for file in all_fifs:
-                    
-                    if mod == 'triux':
-                        full_file_name = join(path, participant, date_session, 'meg', file)
-                    elif mod == 'hedscan':
-                        full_file_name = join(path, participant, file)
-                    
-                    if exists(full_file_name):
-                        info_dict = extract_info_from_filename(full_file_name)
-                    
-                    task = info_dict.get('task')
-                    proc = '+'.join(info_dict.get('processing'))
-                    datatypes = '+'.join([d for d in info_dict.get('datatypes') if d != ''])
-                    subject = info_dict.get('participant')
-                    split = info_dict.get('split')
-                    run = ''
-                    
-                    if participant_mapping and mapping_found:
-                        pmap = pd.read_csv(participant_mapping, dtype=str)
-                        subject = pmap.loc[pmap[old_subj_id] == subject, new_subj_id].values[0].zfill(3)
-                        
-                        session = pmap.loc[pmap[old_session] == date_session, new_session].values[0].zfill(2)
-                    
-                    info = mne.io.read_raw_fif(full_file_name,
-                                    allow_maxshield=True,
-                                    verbose='error')
-                    ch_types = set(info.get_channel_types())
-
-                    if 'mag' in ch_types:
-                        datatype = 'meg'
-                        extension = '.fif'
-                    elif 'eeg' in ch_types:
-                        datatype = 'eeg'
-
-                    bids_path = BIDSPath(
-                        subject=subject,
-                        session=session,
-                        task=task,
-                        acquisition=mod,
-                        processing=None if proc == '' else proc,
-                        run=None if run == '' else run,
-                        datatype=datatype,
-                        root=path_BIDS
-                    )
-                    
-                    # Check if bids exist
-                    run_conversion = 'yes'
-                    if (find_matching_paths(bids_path.directory,
-                                        tasks=task,
-                                        acquisitions=mod,
-                                        extensions='.fif')):
-                        run_conversion = 'no'
-
-                    processing_schema['time_stamp'].append(ts)
-                    processing_schema['run_conversion'].append(run_conversion)
-                    processing_schema['participant_from'].append(participant)
-                    processing_schema['participant_to'].append(subject)
-                    processing_schema['session_from'].append(date_session)
-                    processing_schema['session_to'].append(session)
-                    processing_schema['task'].append(task)
-                    processing_schema['split'].append(split)
-                    processing_schema['run'].append(run)
-                    processing_schema['datatype'].append(datatype)
-                    processing_schema['acquisition'].append(mod)
-                    processing_schema['processing'].append(proc)
-                    processing_schema['raw_path'].append(dirname(full_file_name))
-                    processing_schema['raw_name'].append(file)
-                    processing_schema['bids_path'].append(bids_path.directory)
-                    
-                    processing_schema['bids_name'].append(bids_path.basename)
-                    
-
-    df = pd.DataFrame(processing_schema)
-    
-    df.insert(2, 'task_count',
-              df.groupby(['participant_to', 'acquisition', 'datatype', 'split', 'task', 'processing'])['task'].transform('count'))
-    
-    df.insert(3, 'task_flag', df.apply(
-                lambda x: 'check' if x['task_count'] != df['task_count'].max() else 'ok', axis=1))
-    
-
-    os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
-    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
-
-def load_conversion_table(config_dict: dict,
-                          conversion_file: str=None):
-        # Load the most recent conversion table
-    path_BIDS = config_dict.get('BIDS')
-    conversion_logs_path = join(path_BIDS, 'conversion_logs')
-    if not os.path.exists(conversion_logs_path):
-        print("No conversion logs directory found.")
-        return None
-        
-    if not conversion_file:
-        print(f"Loading most recent conversion table from {conversion_logs_path}")
-        conversion_files = sorted(glob(join(conversion_logs_path, '*_bids_conversion.tsv')))
-        if not conversion_files:
-            print("Creating new conversion table")
-            generate_new_conversion_table(config_dict)
-            
-        conversion_files = sorted(glob(join(conversion_logs_path, '*_bids_conversion.tsv')))
-
-        latest_conversion_file = conversion_files[-1]
-        print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
-        conversion_table = pd.read_csv(latest_conversion_file, sep='\t', dtype=str)
-    else: 
-        conversion_table = pd.read_csv(conversion_file, sep='\t', dtype=str)
-        
-    return conversion_table
+    print(f'{config_file} selected')
+    return config_file
