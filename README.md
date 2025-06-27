@@ -6,13 +6,14 @@ title: NatMEG Processing Pipeline Utility Scripts
 
 Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including BIDS conversion, MaxFilter processing, HPI coregistration, and data synchronization utilities.
 
+Note: The last step, to push project to the CIR-server, is not yet included. Also everything is in devlopment mode so feedback and improvements are welcome.
+
 ## Overview
 
 This pipeline provides end-to-end processing for:
 - **TRIUX/SQUID MEG** data from Elekta systems
 - **OPM MEG** data from Kaptah/OPM systems  
 - **EEG** data collected through TRIUX
-- **Multi-modal** datasets with synchronized acquisition
 
 ## Prerequisites
 
@@ -39,6 +40,10 @@ This opens a tabbed GUI for setting up all pipeline components with integrated e
 Run the entire pipeline programmatically:
 ```bash
 python run_pipeline.py --config config.yml
+```
+Or use the GUI to first edit the configuration and then execute the pipeline.
+```bash
+python run_pipeline.py
 ```
 
 ### 3. Individual Components
@@ -79,6 +84,8 @@ bids:
   Dataset_description: dataset_description.json
   Participants: participants.tsv
   Participants_mapping_file: participant_mapping.csv
+  Conversion_file: bids_conversion.tsv
+  Overwrite_conversion: false
   Original_subjID_name: old_subject_id
   New_subjID_name: new_subject_id
   Original_session_name: old_session_id
@@ -109,8 +116,8 @@ maxfilter:
 
 # OPM HPI coregistration
 opm:
+  polhemus: ["RestinState.fif"]
   hpi_names: ["HPI01", "HPI02", "HPI03", "HPI04", "HPI05"]
-  polhemus: ["*pol*.txt", "*dig*.txt"]
   hpifreq: 33.0
   downsample_freq: 1000
   overwrite: false
@@ -137,8 +144,7 @@ Synchronizes raw data between storage systems (Sinuhe/Kaptah → Cerberos).
 
 **Features:**
 - Intelligent file comparison (size, timestamp, content)
-- FIF-specific validation using MNE compare_fiff
-- Binary vs text file handling
+- FIF-specific handling for MEG/EEG data to split large files into 2GB chunks
 - Parallel processing for large datasets
 - Comprehensive logging and error handling
 
@@ -174,7 +180,7 @@ python add_hpi.py --config config.yml
 Applies Elekta MaxFilter with Signal Space Separation (SSS) and temporal extension (tSSS).
 
 **Features:**
-- Head position tracking and movement compensation
+- Continous head position averaging and movement compensation
 - Temporal SSS for interference suppression
 - Bad channel detection and correction
 - Empty room processing for noise estimation
@@ -182,7 +188,7 @@ Applies Elekta MaxFilter with Signal Space Separation (SSS) and temporal extensi
 - Parallel processing across subjects/sessions
 
 **Key Processing Steps:**
-1. **Head Position Tracking**: Continuous HPI-based localization
+1. **Head Position Averaging**: Continuous HPI-based localization
 2. **Movement Compensation**: Correction of head movement artifacts
 3. **Temporal SSS**: Removal of external interference
 4. **Bad Channel Handling**: Detection and interpolation of bad channels
@@ -202,7 +208,7 @@ Converts NatMEG data to BIDS format and organizes it into a BIDS-compliant folde
 - Generation of BIDS metadata files (e.g., `dataset_description.json`, `participants.tsv`)
 - Flexible configuration for file mapping and naming
 - Integration with MNE-BIDS for robust BIDS compliance
-- Conversion table for tracking and managing file conversions
+- Conversion table for tracking and managing file conversions define comprehensive task names and identify runs
 
 **Usage:**
 ```bash
