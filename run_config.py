@@ -99,7 +99,8 @@ def save_config(config, filename=None):
     if filename:
         save_path = filename
     elif filename is None:
-        save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path).name
+        save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
+        save_path = save_path.name if save_path else None
 
     if save_path:
         if save_path.endswith('.yml') or save_path.endswith('.yaml'):
