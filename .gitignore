@@ -3,7 +3,10 @@ neuro
 data
 
 # Ignore config files
-*config*
+*yml
+*yaml
+*json
+*projects_to_sync*
 
 # Ignore test files
 *test*
