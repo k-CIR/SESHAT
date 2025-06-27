@@ -1,13 +1,14 @@
 from glob import glob
-import mne
+from mne.io import read_raw, read_info
 import re
 import json
+import argparse
+import yaml
+from copy import deepcopy
 import os
 from shutil import copy2, copytree
-import subprocess
 from datetime import datetime
 import filecmp
-import time
 import pandas as pd
 
 sinuhe_root = 'neuro/data/sinuhe'
@@ -18,34 +19,58 @@ from utils import (
     log,
     headpos_patterns,
     proc_patterns,
-    file_contains
+    file_contains,
+    askForConfig
 )
 
 global local_dir
 
-with open('projects_to_sync.json', 'r') as f:
-        # Load the list of projects to sync from the JSON file
-        projects_to_sync = json.load(f)
-
-
+# Define the projects to sync
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 log_file = f'{timestamp}_copy.log'
 
+def get_parameters(config):
+    """Reads a configuration file and returns a dictionary with the parameters.
+    
+    Or extracts the parameters from a configuration dict.
+    
+    """
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config_dict = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config_dict = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    elif isinstance(config, dict):
+        config_dict = deepcopy(config)
+    
+    copy_config = deepcopy(config_dict['project'])
+    
+    return copy_config
 
 def copy_if_newer_or_larger(source, destination):
     """
     Copy file from source to destination if source is newer or larger than destination.
     """
     if not os.path.exists(destination):
-        copy2(source, destination)
+        if os.path.isdir(source):
+            copytree(source, destination)
+        else:
+            copy2(source, destination)
     elif (os.path.getmtime(source) > os.path.getmtime(destination) or
-        os.path.getsize(source) > os.path.getsize(destination)):
-        copy2(source, destination)
+    os.path.getsize(source) > os.path.getsize(destination)):
+        if os.path.isdir(source):
+            copytree(source, destination, dirs_exist_ok=True)
+        else:
+            copy2(source, destination)
 
 def check_fif(source, destination):
 
-    info_src = mne.io.read_info(source, verbose='error')
-    info_dst = mne.io.read_info(destination, verbose='error')
+    info_src = read_info(source, verbose='error')
+    info_dst = read_info(destination, verbose='error')
 
     # for key in info_src:
     #     print(f'{key}: {info_src[key]}')
@@ -71,7 +96,7 @@ def check_fif(source, destination):
         return False
 
 def check_size_fif(source):
-    raw_src = mne.io.read_raw(source, allow_maxshield=True, verbose='error')
+    raw_src = read_raw(source, allow_maxshield=True, verbose='error')
     raw_size = raw_src._size
     print(f'{os.path.basename(source)}: {raw_size / 10000} GB')
     if raw_size > 20000:
@@ -85,29 +110,30 @@ def is_binary(file_path):
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
 
-def copy_from_sinuhe(project, check_existing=False):
+def copy_from_sinuhe(config, check_existing=False):
     
-    if not f"{projects_to_sync[project]['sinuhe']}":
+    if not config['sinuhe_raw']:
         print('No TRIUX directory defined')
         pass
     
     else:
         # Create the local directory if it doesn't exist
-        local_dir = f'{local_root}/{project}/raw'
+        local_dir = config['squidMEG']
         if not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
 
-        log_path = f'{local_root}/{project}/log'
+        log_path = f'{local_dir}/log'
 
-        sinuhe = f"{sinuhe_root}/{projects_to_sync[project]['sinuhe']}"
-        subjects  = glob(f'NatMEG_*', root_dir=sinuhe)
-        subjects = sorted(list(set([s.split('_')[-1] for s in subjects])))
+        sinuhe = config['sinuhe_raw']
+        natmeg_subjects  = [s for s in glob(f'NatMEG_*', root_dir=sinuhe) if os.path.isdir(f'{sinuhe}/{s}')]
         
-        non_dirs = [f for f in glob(f'*', root_dir=sinuhe) if not os.path.isdir(f'{sinuhe}/{f}')]
+        other_files_and_dirs = [f for f in glob(f'*', root_dir=sinuhe) if f not in natmeg_subjects]
         
-        for non_dir in non_dirs:
-            source = f'{sinuhe}/{non_dir}'
-            destination = f'{local_dir}/{non_dir}'
+        subjects = sorted(list(set([s.split('_')[-1] for s in natmeg_subjects])))
+        
+        for item in other_files_and_dirs:
+            source = f'{sinuhe}/{item}'
+            destination = f'{local_dir}/{item}'
             if os.path.exists(destination):
                 check = filecmp.cmp(source, destination, shallow=True)
                 if check:
@@ -117,22 +143,20 @@ def copy_from_sinuhe(project, check_existing=False):
             else:
                 copy_if_newer_or_larger(source, destination)
         for subject in subjects:
-            sessions = sorted([ session for session in glob('*', root_dir = f'{sinuhe}/NatMEG_{subject}')
+            sessions = sorted([session for session in glob('*', root_dir = f'{sinuhe}/NatMEG_{subject}')
             if os.path.isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
             ])
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
-            if not os.path.exists(sinuhe_subject_dir):
-                os.makedirs(sinuhe_subject_dir, exist_ok=True)
             
-            non_dirs = [f for f in glob(f'*', root_dir=sinuhe_subject_dir) if not os.path.isdir(f'{sinuhe_subject_dir}/{f}')]
+            other_files_and_dirs = [f for f in glob(f'*', root_dir=sinuhe_subject_dir) if f not in sessions]
             
             local_subject_dir = f'{local_dir}/sub-{subject}'
             if not os.path.exists(local_subject_dir):
                 os.makedirs(local_subject_dir, exist_ok=True)
         
-            for non_dir in non_dirs:
-                source = f'{sinuhe_subject_dir}/{non_dir}'
-                destination = f'{local_subject_dir}/{non_dir}'
+            for item in other_files_and_dirs:
+                source = f'{sinuhe_subject_dir}/{item}'
+                destination = f'{local_subject_dir}/{item}'
                 if os.path.exists(destination):
                     check = filecmp.cmp(source, destination, shallow=True)
                     if check:
@@ -155,6 +179,10 @@ def copy_from_sinuhe(project, check_existing=False):
                 
                 triux_compare = filecmp.dircmp(triux_src_path, triux_dst_path, ignore=['.DS_Store'])
                 new_triux_files = triux_compare.left_only
+                
+                if not new_triux_files:
+                    print(f'No new files to copy for subject {subject} session {session}')
+                    continue
 
                 # First copy files that dont exist:
                 for file in new_triux_files:
@@ -166,7 +194,7 @@ def copy_from_sinuhe(project, check_existing=False):
                         # Check if split
                         if not file_contains(file, [r'-\d+.fif'] + [r'-\d+_' + p for p in proc_patterns]):
                             try:
-                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw = read_raw(source, allow_maxshield=True, verbose='error')
                                 raw.save(destination, overwrite=True, verbose='error')
                                 log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
                             except Exception as e:
@@ -190,30 +218,31 @@ def copy_from_sinuhe(project, check_existing=False):
                             copy_if_newer_or_larger(source, destination)
                             log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
 
-def copy_from_kaptah(project, check_existing=False):
-
-    if not f"{projects_to_sync[project]['kaptah']}":
+def copy_from_kaptah(config, check_existing=False):
+    
+    if not config['kaptah_raw']:
         print('No Hedscan directory defined')
         pass
 
     else:
 
         # Create the local directory if it doesn't exist
-        local_dir = f'{local_root}/{project}/raw'
+        local_dir = config['opmMEG']
         if not os.path.exists(local_dir):
             os.makedirs(local_dir, exist_ok=True)
         
-        log_path = f'{local_root}/{project}/log'
+        log_path = f'{local_root}/log'
 
-        kaptah = f"{kaptah_root}/{projects_to_sync[project]['kaptah']}"
-        subjects  = glob(f'sub-*', root_dir=kaptah)
-        subjects = sorted(list(set([s.split('-')[-1] for s in subjects])))
+        kaptah = config['kaptah_raw']
+        kaptah_subjects  = [s for s in glob(f'sub-*', root_dir=kaptah) if os.path.isdir(f'{kaptah}/{s}')]
         
-        non_dirs = [f for f in glob(f'*', root_dir=kaptah) if not os.path.isdir(f'{kaptah}/{f}')]
+        other_files_and_dirs = [f for f in glob(f'*', root_dir=kaptah) if f not in kaptah_subjects]
         
-        for non_dir in non_dirs:
-            source = f'{kaptah}/{non_dir}'
-            destination = f'{local_dir}/{non_dir}'
+        subjects = sorted(list(set([s.split('-')[-1] for s in kaptah_subjects])))
+        
+        for item in other_files_and_dirs:
+            source = f'{kaptah}/{item}'
+            destination = f'{local_dir}/{item}'
             if os.path.exists(destination):
                 check = filecmp.cmp(source, destination, shallow=True)
                 if check:
@@ -262,6 +291,10 @@ def copy_from_kaptah(project, check_existing=False):
                 )
 
                 new_hedscan_files = df[df['in_dst'] == False]['old_name'].tolist()
+                
+                if not new_hedscan_files:
+                    print(f'No new files to copy for subject {subject} session {session}')
+                    continue
 
                 # First copy files that dont exist:
                 for file in new_hedscan_files:
@@ -277,7 +310,7 @@ def copy_from_kaptah(project, check_existing=False):
                         # Check if split
                         if not file_contains(file, [r'-\d+.fif']):
                             try:
-                                raw = mne.io.read_raw_fif(source, allow_maxshield=True, verbose='error')
+                                raw = read_raw(source, allow_maxshield=True, verbose='error')
                                 raw.save(destination, overwrite=True, verbose='error')
                                 log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=log_file, logpath=log_path)
                             except Exception as e:
@@ -307,54 +340,38 @@ def copy_from_kaptah(project, check_existing=False):
                             copy_if_newer_or_larger(source, destination)
                             log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)           
 
-def check_file_size(project, wait_time=30):
-    previous_triux_sizes = {}
-    previous_hedscan_sizes = {}
-    size_triux_changed = False
-    size_hedscan_changed = False
 
-    if f"{projects_to_sync[project]['sinuhe']}":
-        sinuhe_path = f"{sinuhe_root}/{projects_to_sync[project]['sinuhe']}"
-        full_s_paths = [os.path.join(root, file) for root, dirs, files in 
-                      os.walk(sinuhe_path, topdown=True) for file in files]
-    if f"{projects_to_sync[project]['kaptah']}":
-        kaptah_path = f"{kaptah_root}/{projects_to_sync[project]['kaptah']}"
-        full_k_paths = [os.path.join(root, file) for root, dirs, files in 
-                       os.walk(kaptah_path, topdown=True) for file in files]
-
-    print(f'Checking for new files to sync in {project}...')
-    time.sleep(wait_time)
-    current_s_sizes = {full_path: os.path.getsize(full_path) for full_path in full_s_paths}
-    current_k_sizes = {full_path: os.path.getsize(full_path) for full_path in full_k_paths}
-    
-    for file, size in current_s_sizes.items():
-        if file in previous_triux_sizes:
-            if size != previous_triux_sizes[file]:
-                print(f'File size changed: {file} (New size: {size} bytes)')
-                size_triux_changed = False
-        previous_triux_sizes[file] = size
-    
-    for file, size in current_k_sizes.items():
-        if file in previous_hedscan_sizes:
-            if size != previous_hedscan_sizes[file]:
-                print(f'File size changed: {file} (New size: {size} bytes)')
-                size_hedscan_unchanged = False
-        previous_hedscan_sizes[file] = size
-
-    return size_triux_changed, size_hedscan_changed
+def args_parser():
+    parser = argparse.ArgumentParser(description=
+                                     '''Maxfilter
+                                     
+                                     Will use a configuation file to run MaxFilter on the data.
+                                     Select to open an existing configuration file or create a new one.
+                                     
+                                     ''',
+                                     add_help=True,
+                                     usage='maxfilter [-h] [-c CONFIG]')
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
+    args = parser.parse_args()
+    return args
 
 # Create local directories for each project
-def main():
-    # Start monitoring file size changes in the local directory
-
-    for project in projects_to_sync:
-
-        #triux_changed, hedscan_changed = check_file_size(project, 15)
-
-        print(f'TRIUX files changed for {project}, copying from Sinuhe...')
-        copy_from_sinuhe(project, check_existing=False)
-        print(f'Hedscan files changed for {project}, copying from Kaptah...')
-        copy_from_kaptah(project, check_existing=False)
+def main(config=None):
+    if config is None:
+        args = args_parser()
+        config_file = args.config
+        if not config_file or not os.path.exists(config_file):
+            config_file = askForConfig()
+        if config_file:
+            config = get_parameters(config_file)
+            print(f'Using configuration file: {config_file}')
+            
+        else:
+            print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
+            return
+    
+    copy_from_sinuhe(config_file, check_existing=False)
+    copy_from_kaptah(config_file, check_existing=False)
 
 if __name__ == "__main__":
     main()

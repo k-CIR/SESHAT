@@ -2,15 +2,14 @@
 # #!/home/natmeg/miniforge3/envs/mne/bin/python
 import pandas as pd
 import json
-import re
+import yaml
 import os
 from shutil import copy2
+from copy import deepcopy
 from os.path import exists, basename, dirname
 import sys
 from glob import glob
 import numpy as np
-import tkinter as tk
-from tkinter.filedialog import askopenfilename, asksaveasfile
 import argparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,148 +40,93 @@ from utils import (
     opm_exceptions_patterns
 )
 ###############################################################################
-# Global variables
+# Variables
 ###############################################################################
 exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
 
-InstitutionName = 'Karolinska Institutet'
-InstitutionAddress = 'Nobels vag 9, 171 77, Stockholm, Sweden'
-InstitutionDepartmentName = 'Department of Clinical Neuroscience (CNS)'
-global data
 ###############################################################################
 # Functions: Create or fill templates: dataset description, participants info
 ###############################################################################
 
-def create_dataset_description(
-    path_BIDS: str='.',
-    edit=False):
-    """_summary_
-
+def create_dataset_description(config: dict):
+    """
+    Create or update BIDS dataset_description.json file with metadata.
+    
+    Creates the BIDS root directory if it doesn't exist and generates a 
+    dataset_description.json file with project metadata according to BIDS 
+    specification.
+    
     Args:
-        path_BIDS (str, required): _description_. Defaults to '.'.
-        overwrite (bool, required): _description_. Defaults to False.
+        config (dict): Configuration dictionary containing BIDS parameters
+                      including dataset name, authors, funding, etc.
+    
     Returns:
         None
+    
+    Side Effects:
+        - Creates BIDS directory structure
+        - Writes dataset_description.json file
+        - Loads existing description data into memory
     """
     
     # Make sure the BIDS directory exists and create it if it doesn't
-    os.makedirs(path_BIDS, exist_ok=True)
+    os.makedirs(config['BIDS'], exist_ok=True)
     
     # Define the path to the dataset_description.json file
-    file_bids = f'{path_BIDS}/dataset_description.json'
+    
+    file_bids = f"{config['BIDS']}/{config['Dataset_description']}"
 
     # Create empty dataset description if not exists
     if not exists(file_bids):
         make_dataset_description(
-            path = path_BIDS,
-            name = '',
-            dataset_type = 'raw',
-            data_license = '',
-            authors = '',
-            acknowledgements = '',
-            how_to_acknowledge = '',
-            funding = '',
-            ethics_approvals = '',
-            references_and_links = '',
-            doi = 'doi:<insert_doi>',
-            overwrite = True
+            path = config['BIDS'],
+            name = config['name'],
+            dataset_type = config['dataset_type'],
+            data_license = config['data_license'],
+            authors = config['authors'],
+            acknowledgements = config['acknowledgements'],
+            how_to_acknowledge = config['how_to_acknowledge'],
+            funding = config['funding'],
+            ethics_approvals = config['ethics_approvals'],
+            references_and_links = config['references_and_links'],
+            doi = config['doi'],
+            overwrite = config['overwrite']
         )
-    with open(file_bids, 'r') as f:
-        desc_data_bids = json.load(f)
 
-    # Open UI to fill the dataset description if not exists or overwrite is True
-    if edit:
-        
-        # Create a new Tkinter window
-        root = tk.Tk()
-        root.title('BIDSify Dataset Description')
-        root.geometry('750x500')
-        
-        # Main frame
-        frame = tk.LabelFrame(root, text='Dataset description')
-        frame.grid(row=0, column=0,
-                    ipadx=5, ipady=5, sticky='e')
-        
-        # Buttons frame
-        button_frame = tk.LabelFrame(root, text="", padx=10, pady=10, border=0)
-        button_frame.grid(row=1, column=0, columnspan=2, sticky='nsew', padx=5, pady=5)
-
-        # Create labels and entries for each field in the dataset description
-        keys = []
-        entries = []
-        for i, key in enumerate(desc_data_bids):
-            val = desc_data_bids[key]
-            # Add doi: if not present, MNE-BIDS requires it
-            if 'DatasetDOI' in key:
-                if 'doi:' not in val:
-                    val = 'doi:' + val
-            label = tk.Label(frame, text=key).grid(row=i, column=0, sticky='e')
-            entry = tk.Entry(frame, width=30)
-            entry.grid(row=i, column=1)
-            entry.insert(0, val)
-            keys.append(key)
-            entries.append(entry)
-
-        # Create buttons to save or cancel the dataset description
-        def cancel():
-            root.destroy()
-            print('Closed')
-            sys.exit(1)
-
-        def save():
-            desc_data = {key: entry.get() for key, entry
-                         in zip(keys, entries)}
-            make_dataset_description(
-            path=path_BIDS,
-            name=desc_data['Name'],
-            dataset_type=desc_data['DatasetType'],
-            data_license=desc_data['License'],
-            authors=desc_data['Authors'],
-            acknowledgements=desc_data['Acknowledgements'],
-            how_to_acknowledge=desc_data['HowToAcknowledge'],
-            funding=desc_data['Funding'],
-            ethics_approvals=desc_data['EthicsApprovals'],
-            references_and_links=desc_data['ReferencesAndLinks'],
-            doi=desc_data['DatasetDOI'],
-            overwrite=True
-            )
-            print(f'Saving BIDS parameters to {file_bids}')
-
-            root.destroy()
-
-        save_button = tk.Button(
-            button_frame,
-            text="Save and run", command=save)
-        save_button.grid(row=0, column=0)
-
-        cancel_button = tk.Button(
-            button_frame,
-            text="Cancel", command=cancel)
-        cancel_button.grid(row=0, column=2)
-
-        # Start GUI loop
-        root.mainloop()
-
-def create_participants_files(
-    path_BIDS: str='.',
-    overwrite=False):
-    # check if participants.tsv and participants.json files is available or create a new one with default fields
-    output_path = os.path.join(path_BIDS)
-    os.makedirs(output_path, exist_ok=True)
+def create_participants_files(config: dict):
+    """
+    Create BIDS participants.tsv and participants.json files with default structure.
     
-    tsv_file = f'{output_path}/participants.tsv'
-    if not exists(tsv_file) or overwrite:
+    Generates template participant files with standard columns (participant_id, 
+    sex, age, group) and corresponding JSON metadata file describing each field.
+    
+    Args:
+        config (dict): Configuration dictionary with BIDS path and settings
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Creates participants.tsv with empty participant table
+        - Creates participants.json with field descriptions
+        - Prints creation messages
+    """
+    # check if participants.tsv and participants.json files is available or create a new one with default fields
+    os.makedirs(config['BIDS'], exist_ok=True)
+    
+    tsv_file = os.path.join(config['BIDS'], config['Participants'])
+    if not exists(tsv_file) or config['overwrite']:
         # create default fields participants.tsv
-        participants = glob('NatMEG*', root_dir=output_path)
+        participants = glob('sub*', root_dir=config['BIDS'])
         # create empty table with 4 columns (participant_id, sex, age)
         df = pd.DataFrame(columns=['participant_id', 'sex', 'age', 'group'])
         
-        df.to_csv(f'{output_path}/participants.tsv', sep='\t', index=False)
-        print(f'Writing {output_path}/participants.tsv')
+        df.to_csv(f'{config['BIDS']}/participants.tsv', sep='\t', index=False)
+        print(f'Writing {config['BIDS']}/participants.tsv')
 
-    json_file = os.path.join(output_path, 'participants.json')
+    json_file = os.path.join(config['BIDS'], 'participants.json')
 
-    if not exists(json_file) or overwrite:
+    if not exists(json_file) or config['overwrite']:
         participants_json = {
             "participant_id": {
                 "Description": "Unique participant identifier"
@@ -203,145 +147,69 @@ def create_participants_files(
             }
         }
 
-        with open(f'{output_path}/participants.json', 'w') as f:
+        with open(f'{config['BIDS']}/participants.json', 'w') as f:
             json.dump(participants_json, f, indent=4)
-        print(f'Writing {output_path}/participants.json')
+        print(f'Writing {config['BIDS']}/participants.json')
 
 ###############################################################################
 # Help functions
 ###############################################################################
 
-def defaultBidsConfig():
-    data = {
-            'Tasks': [''],
-            'squidMEG': '/neuro/data/sinuhe/',
-            'opmMEG': '',
-            'BIDS': '',
-            'Calibration': '/neuro/databases/sss/sss_cal.dat',
-            'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
-            'Dataset_description': '',
-            'Participants': '',
-            'Participants mapping file': '',
-            'Original subjID name': '',
-            'New subjID name': '',
-            'Original session name': '',
-            'New session name': '',
-            'Overwrite': 'off'  
-        }
-    return data
-
-def openBidsConfigUI(json_name: str = None):
-    """_summary_
-    Creates or opens a JSON file with MaxFilter parameters using a GUI.
-
-    Parameters
-    ----------
-    default_data : dict, optional
-        Default data to populate the GUI fields.
-
-    Returns
-    -------
-    None
-    
+def get_parameters(config):
     """
-
-    # Check if the configuration file exists and if so load
-    if not(json_name):
-        data = defaultBidsConfig()
-    else:
-        with open(json_name, 'r') as f:
-            data = json.load(f)
+    Extract and merge BIDS configuration parameters from file or dictionary.
     
-    # Create default configuration file
-
-    # Create a new Tkinter window
-    root = tk.Tk()
-    root.title('BIDSify Configuration')
-    root.geometry('500x500')
+    Reads configuration from JSON/YAML file or processes existing dictionary,
+    combining project and BIDS-specific parameters into a unified configuration.
     
-    # Main frame
-    frame = tk.LabelFrame(root, text='BIDSify Configuration')
-    frame.grid(row=0, column=0,
-                ipadx=5, ipady=5, sticky='e')
-    
-    # Buttons frame
-    button_frame = tk.LabelFrame(root, text="", padx=10, pady=10, border=0)
-    button_frame.grid(row=1, column=0, columnspan=2, sticky='nsew', padx=5, pady=5)
-    
-    # Create labels and entries for each field in the configuration
-    chb = {}
-    keys = []
-    entries = []
-    for i, key in enumerate(data):
-        val = data[key]
-        
-        label = tk.Label(frame, text=key).grid(row=i, column=0, sticky='e')
-
-        if val in ['on', 'off']:
-            chb[key] = tk.StringVar()
-            chb[key].set(val)
-            check_box = tk.Checkbutton(frame,
-                                       variable=chb[key], onvalue='on', offvalue='off',
-                                       text='')
-            
-            check_box.grid(row=i, column=1, padx=2, pady=2, sticky='w')
-            entry = chb[key]
-        else:
-            entry = tk.Entry(frame, width=30)
-            entry.grid(row=i, column=1)
-            entry.insert(0, val)
-        
-        keys.append(key)
-        entries.append(entry)
-    
-    # Create buttons to save or cancel the configuration
-    def cancel():
-            root.destroy()
-            print('Closed')
-            sys.exit(1)
-
-    def save():
-        data = {}
-
-        for key, entry in zip(keys, entries):
-            if ', ' in entry.get():
-                data[key] = [x.strip() for x in entry.get().split(', ') if x.strip()]
-            else:
-                data[key] = entry.get()
-            
-        # Replace with save data
-        save_path = asksaveasfile(defaultextension=".json", filetypes=[("JSON files", "*.json")],
-                                  initialdir='/neuro/data/local')
-        if save_path:
-            with open(save_path.name, 'w') as f:
-                json.dump(data, f, indent=4, default=list)
-            print(f"Settings saved to {save_path.name}")
-
-        root.destroy()
-        print(f'Saving BIDS parameters to {json_name}')
-
-    save_button = tk.Button(button_frame,
-                            text="Save", command=save)
-    save_button.grid(row=0, column=0)
-
-    cancel_button = tk.Button(button_frame,
-                            text="Cancel", command=cancel)
-    cancel_button.grid(row=0, column=2)
-
-    # Start GUI loop
-    root.mainloop()
-    return data
-
-def update_sidecars(bids_root):
-    
-    """_summary_
-
     Args:
-        bids_root (str): _description_
+        config (str or dict): Path to config file (.json/.yml/.yaml) or 
+                             configuration dictionary
+    
+    Returns:
+        dict: Merged configuration dictionary combining project and BIDS settings
+        
+    Raises:
+        ValueError: If unsupported file format is provided
+    """
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config_dict = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config_dict = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    elif isinstance(config, dict):
+        config_dict = deepcopy(config)
+    
+    bids_dict = deepcopy(config_dict['project']) | deepcopy(config_dict['bids'])
+    return bids_dict
+
+def update_sidecars(config: dict):
+    """
+    Update BIDS sidecar JSON files with institutional and acquisition metadata.
+    
+    Finds all MEG files in BIDS structure and updates their JSON sidecars with:
+    - Institution information (name, department, address)
+    - Associated empty room recordings
+    - Head position and movement data
+    - MaxFilter processing parameters
+    - Dewar position and HPI coil frequencies
+    
+    Args:
+        config (dict): Configuration dictionary with BIDS root path and 
+                      institution details
+    
     Returns:
         None
+        
+    Side Effects:
+        - Modifies existing JSON sidecar files
+        - Adds metadata fields to comply with BIDS specification
     """
-    # bids_root = config_dict.get('BIDS')
+    bids_root = config['BIDS']
     # Find all meg files in the BIDS folder, ignore EEG for now
     bids_paths = find_matching_paths(bids_root,
                                      suffixes='meg',
@@ -351,9 +219,9 @@ def update_sidecars(bids_root):
                                      extensions='.fif')
     # Add institution name, department and address
     institution = {
-            'InstitutionName': InstitutionAddress,
-            'InstitutionDepartmentName': InstitutionDepartmentName,
-            'InstitutionAddress': InstitutionName
+            'InstitutionName': config['InstitutionName'],
+            'InstitutionDepartmentName': config['InstitutionDepartmentName'],
+            'InstitutionAddress': config['InstitutionName']
             }
     
     for bp in bids_paths:
@@ -449,64 +317,27 @@ def update_sidecars(bids_root):
             with open(str(bp_json.fpath), 'w') as f:
                 json.dump(new_sidecar, f, indent=4)
 
-
-def update_sidecar(bids_path: BIDSPath):
-    """_summary_
-
-    Args:
-        bids_path (BIDSPath): _description_
-    Returns:
-        None
-    """
-    # Find associated sidecar file
-    sidecar_path = bids_path.copy().update(
-        check=True,
-        split=None,
-        suffix ='meg',
-        extension='.json')
-
-    # Add institution name, department and address
-    sidecar_updates = {
-            'InstitutionName': InstitutionAddress,
-            'InstitutionDepartmentName': InstitutionDepartmentName,
-            'InstitutionAddress': InstitutionName
-            }
-    
-    # Add Dewar position and associated empty room
-    if bids_path.datatype == 'meg' and bids_path.acquisition == 'triux':
-        
-        info = mne.io.read_info(bids_path.fpath, verbose='error')
-        if info['gantry_angle'] > 0:
-            dewar_pos = f'upright ({int(info["gantry_angle"])} degrees)'
-        else:
-            dewar_pos = f'supine ({int(info["gantry_angle"])} degrees)'
-        sidecar_updates['DewarPosition'] = dewar_pos
-
-    if file_contains(bids_path.task.lower(), noise_patterns): 
-        find_matching_paths(bids_path.directory)
-        match_paths = find_matching_paths(
-                        bids_path.directory,
-                        acquisitions = bids_path.acquisition,
-                        suffixes='meg',
-                        extensions='.fif')
-        noise_paths = [p for p in match_paths if 'noise' in p.task.lower()]
-
-        sidecar_updates['AssociatedEmptyRoom'] = [basename(er) for er in noise_paths]
-    
-    # Update Manufacturer FieldLine for OPM data
-    if bids_path.datatype == 'meg' and bids_path.acquisition == 'hedscan':
-        sidecar_updates["Manufacturer"] = "FieldLine"
-        
-    update_sidecar_json(bids_path=sidecar_path, 
-                        entries=sidecar_updates)
-
-    message = f'{sidecar_path.basename} updated'
-    print(message)
-
 def add_channel_parameters(
     bids_tsv: str,
     opm_tsv: str):
 
+    """
+    Merge additional channel parameters from OPM source file into BIDS channels.tsv.
+    
+    Compares OPM-specific channel file with BIDS channels file and adds any
+    missing columns or parameters to ensure complete channel documentation.
+    
+    Args:
+        bids_tsv (str): Path to BIDS channels.tsv file
+        omp_tsv (str): Path to source OPM channels.tsv with additional parameters
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Updates BIDS channels.tsv file with merged data
+        - Prints confirmation message
+    """
     if exists(opm_tsv):
         orig_df = pd.read_csv(opm_tsv, sep='\t')
         bids_df = pd.read_csv(bids_tsv, sep='\t')
@@ -525,7 +356,24 @@ def add_channel_parameters(
     print(f'Adding channel parameters to {basename(bids_tsv)}')
 
 def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
+    """
+    Copy EEG data files to MEG datatype directory in BIDS structure.
     
+    For files containing only EEG channels, copies the data and metadata
+    to the MEG directory and includes associated CapTrak digitization files.
+    
+    Args:
+        file_name (str): Path to source EEG file
+        bids_path (BIDSPath): BIDS path object for target location
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Saves EEG data as MEG datatype
+        - Copies JSON metadata files
+        - Copies associated CapTrak digitization files
+    """
     if not file_contains(file_name, headpos_patterns):
         raw = mne.io.read_raw_fif(file_name, allow_maxshield=True, verbose='error')
         ch_types = set(raw.info.get_channel_types())
@@ -748,10 +596,29 @@ def generate_new_conversion_table(
 # TODO: continue check here
 
 
-def load_conversion_table(config_dict: dict,
+def load_conversion_table(config: dict,
                           conversion_file: str=None, overwrite=False):
+    """
+    Load or generate conversion table for BIDS conversion process.
+    
+    Loads the most recent conversion table from logs directory, or generates
+    a new one if none exists or if overwrite is requested.
+    
+    Args:
+        config (dict): Configuration dictionary with BIDS path
+        conversion_file (str, optional): Specific conversion file to load
+        overwrite (bool): Force regeneration of conversion table
+    
+    Returns:
+        pd.DataFrame: Conversion table with file mappings and metadata
+        
+    Side Effects:
+        - Creates conversion_logs directory if missing
+        - May generate new conversion table
+        - Prints table loading information
+    """
         # Load the most recent conversion table
-    path_BIDS = config_dict.get('BIDS')
+    path_BIDS = config['BIDS']
     conversion_logs_path = os.path.join(path_BIDS, 'conversion_logs')
     if not os.path.exists(conversion_logs_path):
         os.makedirs(conversion_logs_path, exist_ok=True)
@@ -761,7 +628,7 @@ def load_conversion_table(config_dict: dict,
         conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
         if overwrite or not conversion_files:
             print("Creating new conversion table")
-            generate_new_conversion_table(config_dict, overwrite)
+            generate_new_conversion_table(config, overwrite)
 
     conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
 
@@ -775,6 +642,24 @@ def load_conversion_table(config_dict: dict,
 
 def update_conversion_table(conversion_table: pd.DataFrame, 
                             conversion_file: str=None):
+    """
+    Update conversion table to reflect current BIDS directory state.
+    
+    Checks which files have already been converted by examining the BIDS
+    directory and updates the 'run_conversion' flag accordingly.
+    
+    Args:
+        conversion_table (pd.DataFrame): Current conversion table
+        conversion_file (str, optional): Path to save updated table
+    
+    Returns:
+        pd.DataFrame: Updated conversion table with current conversion status
+        
+    Side Effects:
+        - Modifies conversion table in place
+        - Saves updated table to file if path provided
+        - Prints conversion status updates
+    """
     for i, row in conversion_table.iterrows():
         
         path = os.path.dirname(row['bids_path'])
@@ -791,16 +676,55 @@ def update_conversion_table(conversion_table: pd.DataFrame,
     return conversion_table
 
         
-def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
+def bidsify(config: dict, conversion_file: str=None, overwrite=False):
+    """
+    Main function to convert raw MEG/EEG data to BIDS format.
+    
+    Comprehensive conversion process that:
+    1. Loads/updates conversion table
+    2. Creates BIDS directory structure
+    3. Processes each file according to conversion table
+    4. Handles MEG, EEG, head position, and transformation files
+    5. Associates event files with task data
+    6. Manages calibration and crosstalk files
+    7. Logs all conversion activities
+    
+    Conversion Features:
+    - Supports both TRIUX (SQUID) and OPM MEG systems
+    - Handles split files automatically
+    - Zero-pads subject and session IDs
+    - Associates event files with tasks
+    - Copies head position and transformation files
+    - Manages channel parameter files for OPM data
+    - Robust error handling with fallback options
+    
+    Args:
+        config (dict): Complete configuration with paths and parameters
+        conversion_file (str, optional): Specific conversion table to use
+        overwrite (bool): Whether to overwrite existing BIDS files
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Creates complete BIDS directory structure
+        - Converts all eligible raw files to BIDS format
+        - Writes calibration and crosstalk files
+        - Updates conversion table with completion status
+        - Logs all conversion activities
+        
+    Raises:
+        SystemExit: If task validation fails (unknown tasks found)
+    """
     
     # TODO: parallelize the conversion
     
-    path_BIDS = config_dict.get('BIDS')
-    calibration = config_dict['Calibration']
-    crosstalk = config_dict['Crosstalk']
-    # overwrite = config_dict['Overwrite']
+    path_BIDS = config['BIDS']
+    calibration = config['Calibration']
+    crosstalk = config['Crosstalk']
+    # overwrite = config['Overwrite']
 
-    df = load_conversion_table(config_dict, conversion_file, overwrite)
+    df = load_conversion_table(config, conversion_file, overwrite)
     df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
@@ -954,57 +878,78 @@ def bidsify(config_dict: dict, conversion_file: str=None, overwrite=False):
     df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
 
 def args_parser():
-    parser = argparse.ArgumentParser(description='''BIDSify
-                                     
-                                     Will use a configuation file to create a BIDS structure of the data. Select to open an existing configuration file or create a new one. A conversion table will be used where manual edits can be done.
-                                     
+    """
+    Parse command-line arguments for bidsify script.
+    
+    Defines command-line interface for standalone script execution with
+    options for configuration file, conversion table, and overwrite settings.
+    
+    Returns:
+        argparse.Namespace: Parsed command-line arguments
+    """
+    parser = argparse.ArgumentParser(description=
+                                     '''
+BIDS Conversion Pipeline
+This script runs the complete BIDS conversion pipeline for MEG/EEG data.
+It includes:
+- Loading configuration from file or command-line
+- Creating dataset description
+- Running BIDS conversion process
+- Updating JSON sidecars with metadata
+- Displaying final BIDS directory tree                  
                                      ''',
-                                     add_help=True,
-                                     usage='bidsify [-h] [-c CONFIG] [-e] [--conversion CONVERSION]',)
-    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
-    parser.add_argument('-e', '--edit', action='store_true', help='Launch the UI for configuration file')
-    parser.add_argument('--conversion', type=str, help='Path to the conversion file')
-    parser.add_argument('--overwrite', action='store_true', help='Overwrite conversion table')
-    parser.add_argument('--debug', action='store_true', help='Overwrite conversion table')
+                                     add_help=True)
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     args = parser.parse_args()
-
     return args
 
-def main():
+def main(config=None):
+    """
+    Main entry point for BIDS conversion pipeline.
     
-    # Parse command line arguments
-    args = args_parser()
+    Orchestrates the complete BIDS conversion process:
+    1. Loads configuration (from file or parameter)
+    2. Creates dataset description
+    3. Runs main bidsification process
+    4. Updates JSON sidecars with metadata
+    5. Displays final BIDS directory tree
     
-    if args.config:
-        file_config = args.config
-    else:
-        file_config = askForConfig()
-    # Select BIDS configuration file dialog
+    Args:
+        config (dict, optional): Configuration dictionary. If None, loads from
+                                command-line arguments or user selection.
     
-    if file_config == 'new':
-        config_dict = openBidsConfigUI()
-    elif file_config != 'new' and args.edit:
-        config_dict = openBidsConfigUI(file_config)
-    else:
-        with open(file_config, 'r') as f:
-            config_dict = json.load(f)
-
-    if config_dict:
-        for key, value in config_dict.items():
-            print(f"{key}: {value}")
+    Returns:
+        None
         
-        # create dataset description file if the file does not exist or overwrite_bids is True
-
-        create_dataset_description(config_dict['BIDS'], args.edit)
+    Side Effects:
+        - Executes complete BIDS conversion pipeline
+        - Prints directory tree of final BIDS structure
         
-        bidsify(config_dict, args.conversion, args.overwrite)
+    Raises:
+        SystemExit: If no configuration file is provided
+    """
+    
+    if config is None:
+        # Parse command line arguments
+        args = args_parser()
         
-        update_sidecars(config_dict['BIDS'])
+        if args.config:
+            config_file = args.config
+        else:
+            config_file = askForConfig()
+        
+        if config_file:
+            config = get_parameters(config_file)
+        
+        else:
+            print('No configuration file selected')
+            sys.exit(1)
 
-        print_dir_tree(config_dict['BIDS'])
-    else:
-        print('No configuration file selected')
-        sys.exit(1)
+    create_dataset_description(config)
+    bidsify(config, args.conversion, args.overwrite)
+    update_sidecars(config)
+    print_dir_tree(config['BIDS'])
+    
 
 if __name__ == "__main__":
     main()

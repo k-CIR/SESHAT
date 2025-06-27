@@ -2,9 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-Created on Thu Jan 25 14:16:49 2024
+MaxFilter Signal Space Separation (SSS) Processing Pipeline
 
-@author: andger
+This module provides a comprehensive interface for applying Elekta MaxFilter
+to MEG data, including temporal Signal Space Separation (tSSS), movement
+compensation, and head position tracking.
+
+Author: Andreas Gerhardsson
+Created: Friday, 26 June 2025
+
+Based on an original MaxFilter shell script by Mikkel Vinding and Lau Møller Andersen
+
 """
 #%%
 from glob import glob
@@ -37,7 +45,8 @@ from utils import (
     log,
     proc_patterns,
     noise_patterns,
-    file_contains
+    file_contains,
+    askForConfig
 )
 
 ###############################################################################
@@ -45,15 +54,31 @@ from utils import (
 ###############################################################################
 
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
-global data
 
+###############################################################################
+# Configuration and Parameter Functions
 ###############################################################################
 
 def get_parameters(config):
-    """Reads a configuration file and returns a dictionary with the parameters.
+    """
+    Extract and validate MaxFilter configuration parameters.
     
-    Or extracts the parameters from a configuration dict.
+    Processes configuration from file (JSON/YAML) or dictionary, extracting
+    MaxFilter-specific settings and merging with project parameters for
+    calibration files, data paths, and processing options.
     
+    Args:
+        config (str or dict): Path to config file or configuration dictionary
+                             containing 'maxfilter' and 'project' sections
+    
+    Returns:
+        dict: Merged MaxFilter configuration with keys:
+            - standard_settings: Basic processing parameters
+            - advanced_settings: Expert-level options
+            - Includes calibration/crosstalk file paths from project config
+    
+    Raises:
+        ValueError: If unsupported configuration file format provided
     """
     if isinstance(config, str):
         if config.endswith('.json'):
@@ -77,10 +102,46 @@ def get_parameters(config):
     return maxfilter_dict
 
 def match_task_files(files, task: str):
+    """
+    Filter file list to match specific task while excluding processed files.
+    
+    Identifies raw files for a given task by matching task name in filename
+    and excluding already processed files, split files, and other derivatives.
+    
+    Args:
+        files (list): List of FIF filenames to filter
+        task (str): Task name to match (e.g., 'Phalanges', 'AudOdd')
+    
+    Returns:
+        list: Filtered filenames containing task name, excluding processed files
+        
+    Note:
+        Excludes files matching exclude_patterns and proc_patterns from utils
+    """
     matched_files = [f for f in files if not file_contains(basename(f).lower(), exclude_patterns + proc_patterns) and task in f]
     return matched_files
 
 def plot_movement(raw, head_pos, mean_trans):
+    """
+    Generate head movement visualization for quality assessment.
+    
+    Creates movement trace plots comparing original head position with
+    average position transformation, useful for assessing subject movement
+    and transformation quality.
+    
+    Args:
+        raw (mne.io.Raw): Raw MEG data with device-head transformation
+        head_pos (str or array): Head position file path or position array
+        mean_trans (str or dict): Mean transformation file path or transform
+    
+    Returns:
+        matplotlib.Figure: Movement trace plot with original and average positions
+        
+    Side Effects:
+        - Displays translation traces in mm
+        - Shows original position (red) vs average (green)
+        - Includes legend and tight layout
+    """
 
     if isinstance(head_pos, str):
         head_pos = read_head_pos(head_pos)
@@ -106,16 +167,63 @@ def plot_movement(raw, head_pos, mean_trans):
     fig.tight_layout()
     return fig
 
+###############################################################################
+# Parameter Setting Classes
+###############################################################################
+
 class set_parameter:
+    """
+    Container for MaxFilter parameter strings in multiple formats.
+    
+    Stores parameter values for both Elekta MaxFilter command-line interface
+    and MNE-Python equivalents, along with descriptive strings for file naming.
+    
+    Attributes:
+        mxf (str): Elekta MaxFilter command-line parameter
+        mne_mxf (str): MNE-Python equivalent parameter  
+        string (str): Descriptive string for output file naming
+    """
     def __init__(self, mxf, mne_mxf, string):
         self.mxf = mxf
         self.mne_mxf = mne_mxf
         self.string = string
 
 class MaxFilter:
+    """
+    Comprehensive MaxFilter processing pipeline for MEG data.
+    
+    Handles complete Signal Space Separation workflow including:
+    - Head position tracking and movement compensation
+    - Temporal SSS for interference suppression
+    - Bad channel detection and correction
+    - Coordinate system transformations
+    - Parallel processing of multiple subjects/sessions
+    
+    Key Features:
+    - Automatic parameter validation and setting
+    - Task-specific processing configurations
+    - Empty room recording handling
+    - Movement compensation with head position files
+    - Quality control and logging
+    - BIDS-compatible output naming
+    """
     
     def __init__(self, config_dict: dict, **kwargs):
+        """
+        Initialize MaxFilter processor with configuration parameters.
         
+        Processes configuration dictionary and converts string flags ('on'/'off')
+        to boolean values for internal parameter handling.
+        
+        Args:
+            config_dict (dict): Complete configuration including maxfilter settings
+            **kwargs: Additional parameters (currently unused)
+        
+        Side Effects:
+            - Merges standard and advanced settings into self.parameters
+            - Converts 'on'/'off' strings to True/False booleans
+        """
+
         config_dict = get_parameters(config_dict)
         
         parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
@@ -136,6 +244,43 @@ class MaxFilter:
                             files: list | str,
                             overwrite=False,
                             **kwargs):
+        """
+        Generate average head position and transformation for task runs.
+        
+        Computes HPI-based head position tracking across multiple runs of the
+        same task, creating average head position file and coordinate transformation
+        for movement compensation during MaxFilter processing.
+        
+        Processing Steps:
+        1. Load raw data files for the task
+        2. Optionally merge runs with consistent head position
+        3. Compute HPI amplitudes and locations
+        4. Calculate continuous head position estimates
+        5. Generate average transformation matrix
+        6. Create movement visualization plot
+        
+        Args:
+            data_path (str): Input directory containing raw files
+            out_path (str): Output directory for head position files
+            task (str): Task name for file naming
+            files (list or str): Raw file(s) for head position calculation
+            overwrite (bool): Whether to regenerate existing files
+            **kwargs: Additional parameters passed to computation functions
+        
+        Returns:
+            None
+            
+        Side Effects:
+            - Creates {task}_headpos.pos file with continuous head positions
+            - Creates {task}_trans.fif file with average transformation
+            - Saves {task}_movement.png plot for quality control
+            - Logs processing steps and file creation
+        
+        Notes:
+            - Requires HPI coils active during recording
+            - Merges runs if merge_runs parameter enabled
+            - Uses compute_chpi_* functions from MNE for localization
+        """
 
         parameters = self.parameters
 
@@ -202,14 +347,41 @@ class MaxFilter:
             plot_movement(raw, headpos_name, trans_file).savefig(fig_name)
 
     def set_params(self, subject, session, task):
-        
-        parameters = self.parameters
-        """_summary_
-
-        Args:
-            subject (str): _description_
-            task (str): _description_
         """
+        Configure MaxFilter parameters for specific subject/session/task.
+        
+        Dynamically sets all MaxFilter command-line parameters based on
+        configuration settings, task type, and file availability. Handles
+        special cases like empty room recordings and task-specific options.
+        
+        Parameter Categories:
+        - Transformation: Head position correction and coordinate transforms
+        - SSS/tSSS: Signal space separation and temporal extension
+        - Movement compensation: HPI-based head tracking
+        - Bad channel handling: Automatic and manual bad channel specification
+        - Filtering: Line frequency and correlation thresholds
+        - Calibration: Cal/ctc files and system-specific corrections
+        
+        Args:
+            subject (str): Subject identifier (e.g., 'sub-001')
+            session (str): Session identifier (e.g., '20250127')
+            task (str): Task name affecting parameter selection
+        
+        Returns:
+            None
+            
+        Side Effects:
+            - Sets instance attributes for all MaxFilter parameters
+            - Configures command strings for both Elekta and MNE interfaces
+            - Adapts parameters based on task type (e.g., disables movement
+              compensation for empty room recordings)
+            - Generates BIDS-compatible processing suffix string
+        
+        Parameter Attributes Set:
+            _trans, _force, _cal, _ctc, _ds, _tsss, _corr, _mc, 
+            _autobad, _bad_channels, _linefreq, _proc, _merge_runs, _additional_cmd
+        """
+        parameters = self.parameters
             
         data_root = parameters.get('data_path')
         output_path = parameters.get('out_path')
@@ -439,6 +611,48 @@ class MaxFilter:
         self._additional_cmd = _additional_cmd
 
     def run_command(self, subject, session):
+        """
+        Execute MaxFilter processing for all tasks in a subject/session.
+        
+        Main processing function that handles complete MaxFilter workflow:
+        1. Identifies eligible files and organizes by task
+        2. Creates head position files for transformation tasks
+        3. Configures task-specific parameters
+        4. Executes MaxFilter commands with proper logging
+        5. Manages file naming and output organization
+        
+        Processing Features:
+        - Task-based file organization and processing
+        - Automatic head position file generation
+        - BIDS-compatible output naming with processing suffixes
+        - Comprehensive logging with individual file logs
+        - Skip processing for existing output files
+        - Handles both standard and expert parameter sets
+        
+        Args:
+            subject (str): Subject directory name
+            session (str): Session directory name
+        
+        Returns:
+            None
+            
+        Side Effects:
+            - Creates processed FIF files with descriptive suffixes
+            - Generates individual log files for each processed file
+            - Creates head position and transformation files
+            - Executes system calls to Elekta MaxFilter
+            - Logs all processing steps and file operations
+        
+        File Naming Convention:
+            Input: {task}_raw.fif
+            Output: {task}_proc-{processing_string}_meg.fif
+            Where processing_string describes applied corrections
+        
+        Error Handling:
+            - Skips missing files with informative messages
+            - Continues processing if individual files fail
+            - Logs all subprocess calls and outputs
+        """
 
         parameters = self.parameters
         
@@ -568,7 +782,44 @@ class MaxFilter:
                         ''' % clean)
 
     def loop_dirs(self, max_workers=4):
-        """Iterates over the subject and session directories and runs maxfilter in parallel."""
+        """
+        Process multiple subjects and sessions in parallel.
+        
+        Orchestrates MaxFilter processing across entire dataset using parallel
+        execution for efficiency. Handles subject filtering, session discovery,
+        and error management for large-scale processing.
+        
+        Processing Workflow:
+        1. Scan data directory for subjects (sub-* or NatMEG*)
+        2. Filter subjects based on skip list
+        3. Discover sessions within each subject directory
+        4. Create (subject, session) task pairs
+        5. Execute processing in parallel using ThreadPoolExecutor
+        6. Handle exceptions and continue processing on failures
+        
+        Args:
+            max_workers (int): Maximum number of parallel processes (default: 4)
+        
+        Returns:
+            None
+            
+        Side Effects:
+            - Processes entire dataset in parallel
+            - Creates all output files and logs
+            - Prints progress and error messages
+            - Continues processing despite individual failures
+        
+        Performance Notes:
+            - Uses ThreadPoolExecutor for I/O-bound MaxFilter calls
+            - Scales processing to available CPU cores
+            - Memory usage scales with max_workers
+            - Network/disk I/O may be bottleneck for large datasets
+        
+        Error Handling:
+            - Captures and reports exceptions for individual sessions
+            - Continues processing remaining sessions on failure
+            - Logs all subprocess errors and completion status
+        """
         parameters = self.parameters
         data_root = parameters.get('data_path')
         
@@ -599,6 +850,15 @@ class MaxFilter:
                     print(f"Error in parallel task: {e}")
 
 def args_parser():
+    """
+    Parse command-line arguments for MaxFilter script execution.
+    
+    Defines command-line interface with configuration file option for
+    standalone script usage outside of pipeline integration.
+    
+    Returns:
+        argparse.Namespace: Parsed arguments containing config file path
+    """
     parser = argparse.ArgumentParser(description=
                                      '''Maxfilter
                                      
@@ -608,19 +868,58 @@ def args_parser():
                                      ''',
                                      add_help=True,
                                      usage='maxfilter [-h] [-c CONFIG]')
-    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file')
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     args = parser.parse_args()
     return args
 
 # %%
-def main():
+def main(config=None):
+    """
+    Main entry point for MaxFilter processing pipeline.
     
-    args = args_parser()
+    Coordinates complete MaxFilter workflow:
+    1. Loads configuration from file or parameter
+    2. Initializes MaxFilter processor with validated parameters
+    3. Executes parallel processing across all subjects/sessions
+    4. Handles configuration file selection and validation
+    
+    Args:
+        config (dict, optional): Configuration dictionary. If None, loads
+                                from command-line arguments or GUI selection
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Executes complete MaxFilter processing pipeline
+        - Creates all processed files with SSS/tSSS corrections
+        - Generates head position and transformation files
+        - Produces movement plots for quality control
+        
+    Raises:
+        SystemExit: If no configuration file provided or invalid config
+    
+    Usage Examples:
+        # Command line with config file
+        python maxfilter.py -c config.yml
+        
+        # Programmatic usage
+        from maxfilter import main
+        main(config_dict)
+    """
+    if config is None:
+        args = args_parser()
+        config_file = args.config
+        if not config_file or not os.path.exists(config_file):
+            config_file = askForConfig()
+        if config_file:
+            config = get_parameters(config_file)
+            print(f'Using configuration file: {config_file}')
+        else:
+            print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
+            return
 
-    if args.config:
-        file_config = args.config
-    
-    mf = MaxFilter(file_config)
+    mf = MaxFilter(config)
     mf.loop_dirs()
 
 if __name__ == "__main__":

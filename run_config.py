@@ -1,9 +1,10 @@
 import yaml
 import json
 import sys
+from os.path import exists
 import argparse
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 from tkinter.filedialog import asksaveasfile, askopenfile
 
 default_path = '/neuro/data/local/'
@@ -21,6 +22,7 @@ def create_default_config():
         },
         'project': {
             'name': '',
+            'CIR-ID': '',
             'InstitutionName': 'Karolinska Institutet',
             'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
             'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
@@ -51,7 +53,7 @@ def create_default_config():
                 'sss_files': [''],
                 'autobad': True,
                 'badlimit': '7',
-                'bad_channels': '',
+                'bad_channels': [''],
                 'tsss_default': True,
                 'correlation': '0.98',
                 'movecomp_default': True,
@@ -76,8 +78,17 @@ def create_default_config():
             'New_subjID_name': 'new_subject_id',
             'Original_session_name': 'old_session_id',
             'New_session_name': 'new_session_id',
-            'Overwrite': False
-        }
+            'overwrite': True,
+            'dataset_type': 'raw',
+            'data_license': '',
+            'authors': '',
+            'acknowledgements': '',
+            'how_to_acknowledge': '',
+            'funding': '',
+            'ethics_approvals': '',
+            'references_and_links': '',
+            'doi': 'doi:<insert_doi>'
+                }
     }
     return config
 
@@ -192,7 +203,7 @@ def config_UI(config_file=None):
     project_vars = {}
     
     # Standard project settings
-    standard_keys = ['name', 'description', 'tasks',
+    standard_keys = ['name', 'CIR-ID', 'description', 'tasks',
                      'sinuhe_raw', 'kaptah_raw']
     row = 0
     for key in standard_keys:
@@ -217,6 +228,7 @@ def config_UI(config_file=None):
 This tab allows you to set the basic project information and paths for the project.
 
 • name: Name of project directory on local disk
+• CIR-ID: CIR ID of the project, used for data management
 • description: Brief description of the project
 • tasks: Comma-separated list in square brackets of experimental tasks (e.g. [rest, oddball, memory])
 • sinuhe_raw: Path to Sinuhe raw data directory
@@ -450,25 +462,41 @@ Set the parameters for MaxFilter processing.
     bids_frame = ttk.Frame(notebook)
     notebook.add(bids_frame, text="BIDS")
     
-    bids_vars = {}
-    row = 0
-    for key, value in config['bids'].items():
-        ttk.Label(bids_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(bids_frame, variable=var)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(bids_frame, textvariable=var, width=50)
-        bids_vars[key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
-        row += 1
+    # Create notebook for BIDS sub-tabs
+    bids_notebook = ttk.Notebook(bids_frame)
+    bids_notebook.pack(fill='both', expand=True, padx=3, pady=3)
     
-    # BIDS information frame (in BIDS tab)
-    bids_info_frame = ttk.Frame(bids_frame)
+    # Standard settings tab
+    bids_standard_frame = ttk.Frame(bids_notebook)
+    bids_notebook.add(bids_standard_frame, text="Standard Settings")
+    
+    bids_vars = {}
+    
+    # Standard BIDS settings (matching default config keys)
+    standard_bids_keys = ['Dataset_description', 'Participants', 'Participants_mapping_file', 
+                          'Original_subjID_name', 'New_subjID_name', 'Original_session_name', 
+                          'New_session_name', 'dataset_type', 'overwrite']
+    
+    row = 0
+    for key in standard_bids_keys:
+        if key in config['bids']:
+            value = config['bids'][key]
+            ttk.Label(bids_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+            if isinstance(value, bool):
+                var = tk.BooleanVar(value=value)
+                widget = ttk.Checkbutton(bids_standard_frame, variable=var)
+            else:
+                var = tk.StringVar(value=str(value))
+                widget = ttk.Entry(bids_standard_frame, textvariable=var, width=50)
+            bids_vars[key] = var
+            widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+            row += 1
+    
+    # BIDS information frame (in standard tab)
+    bids_info_frame = ttk.Frame(bids_standard_frame)
     bids_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
     
-    # Add informational text about the Project tab
+    # Add informational text about the BIDS standard tab
     bids_info_text = """
 Set the parameters for Bidsification.
 
@@ -479,13 +507,62 @@ Set the parameters for Bidsification.
 • New_subjID_name: Name of the new subject ID column in the mapping file
 • Original_session_name: Name of the original session ID column in the mapping file
 • New_session_name: Name of the new session ID column in the mapping file
-• Overwrite: Overwrite existing BIDS files
+• dataset_type: Type of dataset (e.g., 'raw', 'derivative')
+• overwrite: Overwrite existing BIDS files
 
 """
+    
     bids_info_label = ttk.Label(bids_info_frame, text=bids_info_text, 
                           justify='left', wraplength=550, 
                           font=('TkDefaultFont', 10))
     bids_info_label.pack(anchor='w', padx=5, pady=0)
+    
+    # Dataset description tab
+    bids_dataset_frame = ttk.Frame(bids_notebook)
+    bids_notebook.add(bids_dataset_frame, text="Dataset Description")
+    
+    # Dataset description settings (matching default config keys)
+    dataset_bids_keys = ['data_license', 'authors', 'acknowledgements', 'how_to_acknowledge', 
+                        'funding', 'ethics_approvals', 'references_and_links', 'doi']
+    
+    row = 0
+    for key in dataset_bids_keys:
+        if key in config['bids']:
+            value = config['bids'][key]
+            ttk.Label(bids_dataset_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+            if isinstance(value, bool):
+                var = tk.BooleanVar(value=value)
+                widget = ttk.Checkbutton(bids_dataset_frame, variable=var)
+            else:
+                var = tk.StringVar(value=str(value))
+                widget = ttk.Entry(bids_dataset_frame, textvariable=var, width=50)
+            bids_vars[key] = var
+            widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+            row += 1
+    
+    # Dataset description information frame
+    dataset_info_frame = ttk.Frame(bids_dataset_frame)
+    dataset_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    
+    # Add informational text about the dataset description tab
+    dataset_info_text = """
+Set the dataset description metadata for BIDS.
+
+• data_license: License under which the data is made available
+• authors: List of individuals who contributed to the creation/curation of the dataset
+• acknowledgements: Text acknowledging contributions
+• how_to_acknowledge: Instructions on how researchers should acknowledge this dataset
+• funding: List of sources of funding
+• ethics_approvals: List of ethics committee approvals
+• references_and_links: List of references, publications, and links
+• doi: Digital Object Identifier of the dataset
+
+"""
+    
+    dataset_info_label = ttk.Label(dataset_info_frame, text=dataset_info_text, 
+                          justify='left', wraplength=550, 
+                          font=('TkDefaultFont', 10))
+    dataset_info_label.pack(anchor='w', padx=5, pady=0)
     
     # Run tab
     run_frame = ttk.Frame(notebook)
@@ -662,5 +739,31 @@ Set the parameters for Bidsification.
     root.mainloop()
     return config
 
+def args_parser():
+    parser = argparse.ArgumentParser(description=
+                                     '''
+Configuration script for NatMEG pipeline.
+                                     
+This script allows you to create or edit a configuration file for the NatMEG pipeline.
+You can specify paths, settings, and options for various stages of the pipeline including MaxFilter,
+OPM processing, and BIDS conversion. The configuration can be saved in YAML or JSON format.
+You can also provide a path to an existing configuration file to load its settings.
+                                     
+                                     ''',
+                                     add_help=True,
+                                     usage='maxfilter [-h] [-c CONFIG]')
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
+    args = parser.parse_args()
+    return args
+
 if __name__ == "__main__":
-    config = config_UI()
+    args = args_parser()
+    
+    config_file = args.config
+    
+    if not config_file or not exists(config_file):
+        config = config_UI()
+    elif config_file:
+        config = config_UI(config_file)
+    else:
+        print('Something went wrong, exiting')
