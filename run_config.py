@@ -12,6 +12,7 @@ default_path = '/neuro/data/local/'
 global config
 
 def create_default_config():
+    
     config = {
         'RUN': {
             'Copy to Cerberos': True,
@@ -94,15 +95,18 @@ def create_default_config():
     }
     return config
 
-def save_config(config, filename='config.yaml'):
-    save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
-    
+def save_config(config, filename=None):
+    if filename:
+        save_path = filename
+    elif filename is None:
+        save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path).name
+
     if save_path:
-        if save_path.name.endswith('.yml') or save_path.name.endswith('.yaml'):
-            with open(save_path.name, 'w') as file:
+        if save_path.endswith('.yml') or save_path.endswith('.yaml'):
+            with open(save_path, 'w') as file:
                 yaml.dump(config, file, default_flow_style=False, sort_keys=False)
-        elif save_path.name.endswith('.json'):
-            with open(save_path.name, 'w') as file:
+        elif save_path.endswith('.json'):
+            with open(save_path, 'w') as file:
                 json.dump(config, file, indent=4)
 
 def load_config(config_file=None):
@@ -177,7 +181,8 @@ def config_UI(config_file=None):
         config = create_default_config()
     
     root = tk.Tk()
-    root.title("NatMEG Config Editor")
+    root.title(f"NatMEG Config Editor")
+    
     root.geometry("700x800")
     
     notebook = ttk.Notebook(root)
@@ -639,14 +644,14 @@ Set the dataset description metadata for BIDS.
         for key, var in run_vars.items():
             config['RUN'][key] = var.get()
 
-        save_config(config)
+        save_config(config, filename=config_file if config_file else None)
         
         # Switch to RUN tab
         notebook.select(run_frame)
         
         # Re-enable save button after any variable changes
         def enable_save_button(*args):
-            save_button.config(state='normal', text='Save Configuration')
+            save_button.config(state='normal', text='Save')
             # Disable execute button when changes are made
             execute_button.config(state='disabled', text='Save to execute', style='C.TButton')
         
@@ -662,6 +667,39 @@ Set the dataset description metadata for BIDS.
             var.trace('w', enable_save_button)
         for var in run_vars.values():
             var.trace('w', enable_save_button)
+
+    def save_as():
+        # Update config with GUI values (same as save function)
+        for key, var in project_vars.items():
+            value = var.get()
+            if key == 'tasks':
+                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
+            else:
+                config['project'][key] = value
+    
+        for key, var in opm_vars.items():
+            value = var.get()
+            if key in ['hpi_names', 'polhemus']:
+                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
+            else:
+                config['opm'][key] = value
+    
+        for section in ['standard_settings', 'advanced_settings']:
+            for key, var in maxfilter_vars[section].items():
+                value = var.get()
+                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
+                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
+                else:
+                    config['maxfilter'][section][key] = value
+    
+        for key, var in bids_vars.items():
+            config['bids'][key] = var.get()
+    
+        for key, var in run_vars.items():
+            config['RUN'][key] = var.get()
+
+        # Force file dialog for save as (pass None as filename)
+        save_config(config, filename=None)
     
     def open_config():
         new_config_file = askopenfile(
@@ -715,18 +753,27 @@ Set the dataset description metadata for BIDS.
     
     # Button frame at bottom
     button_frame = ttk.Frame(root)
-    button_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+    button_frame.pack(side='bottom', fill='x', padx=10, pady=5)
     
+    # Configuration file label
+    config_file_label = ttk.Label(button_frame,
+                                  text=f"{config_file if config_file else ''}", 
+                                 font=('TkDefaultFont', 9), foreground='gray')
+    config_file_label.pack(anchor='n', padx=5, pady=5, fill='x', expand=False)
     # Cancel button
     cancel_button = ttk.Button(button_frame, text="Cancel", command=cancel)
-    cancel_button.pack(side='right', padx=5) 
+    cancel_button.pack(side='right', padx=5)
+    
+    # Save as button
+    save_as_button = ttk.Button(button_frame, text="Save as...", command=save_as)
+    save_as_button.pack(side='right', padx=5)
     
     # Save button
-    save_button = ttk.Button(button_frame, text="Save Configuration", command=save)
+    save_button = ttk.Button(button_frame, text="Save", command=save)
     save_button.pack(side='right', padx=5)
     
     # Open button
-    open_button = ttk.Button(button_frame, text="Open Configuration", command=open_config)
+    open_button = ttk.Button(button_frame, text="Open", command=open_config)
     open_button.pack(side='right', padx=5)
     
     # Center the window on screen
@@ -771,7 +818,7 @@ def main(config_file=None):
     if not config_file or not exists(config_file):
         config = config_UI()
     elif config_file:
-        config = load_config(config_file)
+        config = config_UI(config_file)
         return config
 
 if __name__ == "__main__":
