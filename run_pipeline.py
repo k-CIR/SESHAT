@@ -42,7 +42,7 @@ config_file = args.config
 if not config_file or not exists(config_file):
     config = run_config.config_UI()
 elif config_file:
-    config = run_config.main(config_file)
+    config = run_config.load_config(config_file)
 
 # Copy
 if config['RUN'].get('Copy to Cerberos', False):
