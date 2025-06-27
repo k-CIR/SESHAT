@@ -112,6 +112,8 @@ def is_binary(file_path):
 
 def copy_from_sinuhe(config, check_existing=False):
     
+    config = get_parameters(config)
+    
     if not config['sinuhe_raw']:
         print('No TRIUX directory defined')
         pass
@@ -219,6 +221,8 @@ def copy_from_sinuhe(config, check_existing=False):
                             log(f'Updated {source} --> {destination}', logfile=log_file, logpath=log_path)
 
 def copy_from_kaptah(config, check_existing=False):
+    
+    config = get_parameters(config)
     
     if not config['kaptah_raw']:
         print('No Hedscan directory defined')

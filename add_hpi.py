@@ -29,6 +29,7 @@ from glob import glob
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
+from copy import deepcopy
 import mne
 
 import numpy as np
@@ -340,7 +341,7 @@ def plot_3d(plot_params: dict, filename: str):
 # Configuration and Setup Functions
 ###############################################################################
 
-def get_config(config_file: str):
+def get_parameters(config):
     """
     Load and parse HPI processing configuration from YAML file.
     
@@ -362,11 +363,20 @@ def get_config(config_file: str):
             - plot: Whether to generate visualization plots
     """
     
-    if config_file:
-        all_config = yaml.safe_load(open(config_file, 'r'))
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    elif isinstance(config, dict):
+        config_dict = deepcopy(config)
     
-    project = all_config.get('project', {})
-    opm = all_config.get('opm', {})
+    project = deepcopy(config_dict['project'])
+    opm = deepcopy(config_dict['opm'])
     
     config = {
         'tasks': project.get('tasks', []),
@@ -433,7 +443,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     hpifreq = config.get('hpifreq', 33.0)
     new_sfreq = config.get('downsample_freq', 1000)
     hpinames=config.get('hpinames')
-    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
+    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif', 'hpi']
     overwrite = config.get('overwrite', False)
     
     log_path = opmMEGdir.replace('raw', 'log')
@@ -449,6 +459,20 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     if new_sfreq:
         proc += f'ds'
     proc += f'_meg'
+    
+    hpi_fit_parameters = {
+        'hedscan_files': [],
+        'hpi_dev': None,
+        'hpi_gofs': None,
+        'hpi_orig': None,
+        'hpi_names': None,
+        'pol_info': None,
+        'nasion': None,
+        'lpa': None,
+        'rpa': None,
+        'raw': None,
+        'new_sfreq': None
+    }
 
     if not overwrite:
         hedscan_files = [f for f in hedscan_files if not os.path.exists(f.replace('raw.fif', proc + '.fif'))]
@@ -682,23 +706,20 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         hpi_gofs = np.array(coil_locs['gofs'][0])
 
         log('**** Apply trans to recording file ***********************************', 'info',logfile=log_file, logpath=log_path)
+        hpi_fit_parameters['hedscan_files'] = hedscan_files
+        hpi_fit_parameters['hpi_dev'] = hpi_dev
+        hpi_fit_parameters['hpi_gofs'] = hpi_gofs
+        hpi_fit_parameters['hpi_orig'] = hpi_orig
+        hpi_fit_parameters['hpi_names'] = hpi_names
+        hpi_fit_parameters['pol_info'] = pol_info
+        hpi_fit_parameters['nasion'] = nasion
+        hpi_fit_parameters['lpa'] = lpa
+        hpi_fit_parameters['rpa'] = rpa
+        hpi_fit_parameters['raw'] = raw
+        hpi_fit_parameters['new_sfreq'] = new_sfreq
     else:
         log('No files to process, all files have been processed', 'info',logfile=log_file, logpath=log_path)
-        return [], None, None, None, None, None, None, None, None, None, new_sfreq
-    
-    hpi_fit_parameters = {
-        'hedscan_files': hedscan_files,
-        'hpi_dev': hpi_dev,
-        'hpi_gofs': hpi_gofs,
-        'hpi_orig': hpi_orig,
-        'hpi_names': hpi_names,
-        'pol_info': pol_info,
-        'nasion': nasion,
-        'lpa': lpa,
-        'rpa': rpa,
-        'raw': raw,
-        'new_sfreq': new_sfreq
-    }
+ 
     return hpi_fit_parameters
 
 def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path):
@@ -766,6 +787,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
     lpa = hpi_fit_parameters['lpa']
     rpa = hpi_fit_parameters['rpa']
     new_sfreq = hpi_fit_parameters['new_sfreq']
+    overwrite = hpi_fit_parameters.get('overwrite', False)
     
     
     proc = 'proc-hpi+'
@@ -775,101 +797,102 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
         
     savename = f'{savename}_{proc}.fif'
     
-    """Process a single data file"""
-    raw = mne.io.read_raw_fif(datfile)
+    if overwrite or not os.path.exists(f'{path}/{savename}'):
+        """Process a single data file"""
+        raw = mne.io.read_raw_fif(datfile)
 
-    #resample if new sampling freq different from old one
-    if new_sfreq != raw.info['sfreq']: 
-        raw.load_data().resample(new_sfreq)
+        #resample if new sampling freq different from old one
+        if new_sfreq != raw.info['sfreq']: 
+            raw.load_data().resample(new_sfreq)
 
-    #remove bad channels
-    for bad_chan in raw.info["bads"]:
-        raw.drop_channels(bad_chan)
+        #remove bad channels
+        for bad_chan in raw.info["bads"]:
+            raw.drop_channels(bad_chan)
 
-    #remove zero channels
-    bads=TC_findzerochans(raw.info)
-    for bad_chan in bads:
-        raw.drop_channels(bad_chan)
+        #remove zero channels
+        bads=TC_findzerochans(raw.info)
+        for bad_chan in bads:
+            raw.drop_channels(bad_chan)
 
-    #only use good fits
-    include_hpis = hpi_gofs>0.9
+        #only use good fits
+        include_hpis = hpi_gofs>0.9
 
-    tree = cKDTree(hpi_orig)
-    distances, indices = tree.query(hpi_dev[include_hpis])
+        tree = cKDTree(hpi_orig)
+        distances, indices = tree.query(hpi_dev[include_hpis])
 
-    log(f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=log_file, logpath=log_path)
+        log(f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=log_file, logpath=log_path)
 
-    trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
-    dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
+        trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
+        dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
 
-    hpi_head = apply_trans(dev_to_head_trans, hpi_dev)
-    dist = np.linalg.norm(hpi_orig[indices]-hpi_head[include_hpis], axis=1)
+        hpi_head = apply_trans(dev_to_head_trans, hpi_dev)
+        dist = np.linalg.norm(hpi_orig[indices]-hpi_head[include_hpis], axis=1)
 
-    raw.info.update(dev_head_t=dev_to_head_trans)
+        raw.info.update(dev_head_t=dev_to_head_trans)
 
-    info=raw.info
-    digpts=np.array([],dtype=float)
-    for j in pol_info['dig']:
-        digpts=np.append(digpts,j['r'])
-    n=int(digpts.shape[0]/3)
-    digpts=digpts.reshape((n,3))
-
-    with raw.info._unlock():
-        raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
-
-    raw.save(f'{path}/{savename}',overwrite=True)
-
-    msg_coils = ''
-    for index, value in enumerate(hpi_gofs):
-            status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
-            msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
-    
-    msg = f'''---------------------------------------------
-    hpi_orig: {hpi_orig}
-    hpi_dev: {hpi_dev}
-    mean distance = {np.mean(dist)*1000:.1f} mm\n
-    {msg_coils}
-    ---------------------------------------------'''
-
-    log(msg, 'info',logfile=log_file, logpath=log_path)
-
-    if plotResult:
-        senspos=np.array([],dtype=float)
-        picks = pick_types(raw.info, meg='mag')
-        for j in picks:
-            senspos=np.append(senspos, apply_trans(dev_to_head_trans, (raw.info['chs'][j]['loc'][0:3])))
-        n=int(senspos.shape[0]/3)
-        senspos=senspos.reshape((n,3))
-
-        senslabel=list()
-        picks = pick_types(raw.info, meg='mag')
-        for j in picks:
-            index = raw.info['chs'][j]['ch_name'].find('s')
-            if index != -1:
-                senslabel.append(raw.info['chs'][j]['ch_name'][index:])
-            else:
-                senslabel.append('')
-
+        info=raw.info
         digpts=np.array([],dtype=float)
-        for j in raw.info['dig']:
-            digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
+        for j in pol_info['dig']:
+            digpts=np.append(digpts,j['r'])
         n=int(digpts.shape[0]/3)
         digpts=digpts.reshape((n,3))
-        hpilabel=list()
-        for j in range(len(hpi_names)):
-            hpilabel+=[str(j+1)]
-            
-        plot_params = {
-            'senspos': senspos,
-            'senslabel': senslabel,
-            'hpipos': hpi_orig,
-            'hpilabel': hpilabel,
-            'hpipos2': hpi_head,
-            'hpilabel2': hpi_names,
-            'digpos': digpts
-        }
 
-        plot_3d(plot_params, f'{path}/{savename.replace("_meg.fif", "_3d_plot.png")}')
+        with raw.info._unlock():
+            raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
+
+        raw.save(f'{path}/{savename}',overwrite=True)
+
+        msg_coils = ''
+        for index, value in enumerate(hpi_gofs):
+                status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
+                msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
+        
+        msg = f'''---------------------------------------------
+        hpi_orig: {hpi_orig}
+        hpi_dev: {hpi_dev}
+        mean distance = {np.mean(dist)*1000:.1f} mm\n
+        {msg_coils}
+        ---------------------------------------------'''
+
+        log(msg, 'info',logfile=log_file, logpath=log_path)
+
+        if plotResult:
+            senspos=np.array([],dtype=float)
+            picks = pick_types(raw.info, meg='mag')
+            for j in picks:
+                senspos=np.append(senspos, apply_trans(dev_to_head_trans, (raw.info['chs'][j]['loc'][0:3])))
+            n=int(senspos.shape[0]/3)
+            senspos=senspos.reshape((n,3))
+
+            senslabel=list()
+            picks = pick_types(raw.info, meg='mag')
+            for j in picks:
+                index = raw.info['chs'][j]['ch_name'].find('s')
+                if index != -1:
+                    senslabel.append(raw.info['chs'][j]['ch_name'][index:])
+                else:
+                    senslabel.append('')
+
+            digpts=np.array([],dtype=float)
+            for j in raw.info['dig']:
+                digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
+            n=int(digpts.shape[0]/3)
+            digpts=digpts.reshape((n,3))
+            hpilabel=list()
+            for j in range(len(hpi_names)):
+                hpilabel+=[str(j+1)]
+                
+            plot_params = {
+                'senspos': senspos,
+                'senslabel': senslabel,
+                'hpipos': hpi_orig,
+                'hpilabel': hpilabel,
+                'hpipos2': hpi_head,
+                'hpilabel2': hpi_names,
+                'digpos': digpts
+            }
+
+            plot_3d(plot_params, f'{path}/{savename.replace("_meg.fif", "_3d_plot.png")}')
 
 ###############################################################################
 # Command Line Interface
@@ -890,7 +913,7 @@ def args_parser():
                         help='Path to the configuration file (default: config.yml)')
     return parser.parse_args()
 
-def main():
+def main(config=None):
     """
     Main execution function for HPI coregistration pipeline.
     
@@ -937,15 +960,18 @@ def main():
         - ProcessPoolExecutor handles memory-intensive operations
         - Shared parameter passing via functools.partial
     """
-    args = args_parser()
-    config_file = args.config
-    if not config_file or not os.path.exists(config_file):
-        config_file = askForConfig()
+    if config is None:
+        args = args_parser()
+        config_file = args.config
+        if not config_file or not os.path.exists(config_file):
+            config_file = askForConfig()
+        else:
+            print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
+            return
+        
+        config = get_parameters(config_file)
     else:
-        print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
-        return
-    
-    config = get_config(config_file)
+        config = get_parameters(config)
 
     opmMEGdir = config.get('opmMEG')
     overwrite = config.get('overwrite', False)

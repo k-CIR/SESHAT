@@ -400,53 +400,29 @@ def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
                 if not exists(new_cap):
                     copy2(old_cap, new_cap)
 
-def generate_new_conversion_table(
-    config_dict: dict,
-    overwrite=False):
+def generate_new_conversion_table(config: dict):
     
     """
     For each participant and session within MEG folder, move the files to BIDS correspondent folder
     or create a new one if the session does not match. Change the name of the files into BIDS format.
     """
     # TODO: parallelize the conversion
-    # TODO: add event file option based on tasks
     ts = datetime.now().strftime('%Y%m%d')
-    path_triux = config_dict['squidMEG']
-    path_opm = config_dict['opmMEG']
-    path_BIDS = config_dict['BIDS']
-    participant_mapping = config_dict['Participants mapping file']
-    old_subj_id = config_dict['Original subjID name']
-    new_subj_id = config_dict['New subjID name']
-    old_session = config_dict['Original session name']
-    new_session = config_dict['New session name']
-    tasks = config_dict['Tasks'] + opm_exceptions_patterns
+    path_triux = config['squidMEG']
+    path_opm = config['opmMEG']
+    path_BIDS = config['BIDS']
+    participant_mapping = config['Participants_mapping_file']
+    old_subj_id = config['Original_subjID_name']
+    new_subj_id = config['New_subjID_name']
+    old_session = config['Original_session_name']
+    new_session = config['New_session_name']
+    tasks = config['tasks'] + opm_exceptions_patterns
     
     processing_modalities = []
     if path_triux != '' and str(path_triux) != '()':
         processing_modalities.append('triux')
     if path_opm != '' and str(path_opm) != '()':
         processing_modalities.append('hedscan')
-
-    processing_schema = {
-        'time_stamp': [],
-        'run_conversion': [],
-        'participant_from': [],
-        'participant_to': [],
-        'session_from': [],
-        'session_to': [],
-        'task': [],
-        'split': [],
-        'run': [],
-        'datatype': [],
-        'acquisition': [],
-        'processing': [],
-        'description': [],
-        'raw_path': [],
-        'raw_name': [],
-        'bids_path': [],
-        'bids_name': [],
-        'event_id': []
-    }
     
     if participant_mapping:
         mapping_found=True
@@ -462,6 +438,7 @@ def generate_new_conversion_table(
     def process_file_entry(args):
         participant, date_session, mod, file = args
         full_file_name = os.path.join(path, participant, date_session, mod, file)
+        
         info_dict = {}
         if exists(full_file_name):
             info_dict = extract_info_from_filename(full_file_name)
@@ -511,21 +488,29 @@ def generate_new_conversion_table(
                 suffix = None
         else:
             datatype = 'meg'
+        
+        print(file)
+        print(subj_out, session_out, task, mod, proc, run, datatype, desc)
 
         if process_file:
-            bids_path = BIDSPath(
-                subject=subj_out,
-                session=session_out,
-                task=task,
-                acquisition=mod,
-                processing=None if proc == '' else proc,
-                run=None if run == '' else run,
-                datatype=datatype,
-                description=None if desc == '' else desc,
-                root=path_BIDS,
-                extension=extension,
-                suffix=suffix
-            )
+            try:
+                bids_path = BIDSPath(
+                    subject=subj_out,
+                    session=session_out,
+                    task=task,
+                    acquisition=mod,
+                    processing=None if proc == '' else proc,
+                    run=None if run == '' else run,
+                    datatype=datatype,
+                    description=None if desc == '' else desc,
+                    root=path_BIDS,
+                    extension=extension,
+                    suffix=suffix
+                )
+            except ValueError as e:
+                print(f"Error creating BIDSPath for {full_file_name}: {e}")
+                return None
+
             # Check if bids exist
             run_conversion = 'yes'
             if (find_matching_paths(bids_path.directory,
@@ -596,8 +581,7 @@ def generate_new_conversion_table(
 # TODO: continue check here
 
 
-def load_conversion_table(config: dict,
-                          conversion_file: str=None, overwrite=False):
+def load_conversion_table(config: dict):
     """
     Load or generate conversion table for BIDS conversion process.
     
@@ -619,26 +603,36 @@ def load_conversion_table(config: dict,
     """
         # Load the most recent conversion table
     path_BIDS = config['BIDS']
+    conversion_file = config['Conversion_file']
+    overwrite = config['Overwrite_conversion']
+    
     conversion_logs_path = os.path.join(path_BIDS, 'conversion_logs')
     if not os.path.exists(conversion_logs_path):
         os.makedirs(conversion_logs_path, exist_ok=True)
         print("No conversion logs directory found. Created new")
-        
-    if overwrite or not conversion_file:
-        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
-        if overwrite or not conversion_files:
-            print("Creating new conversion table")
-            generate_new_conversion_table(config, overwrite)
-
-    conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
-
-    latest_conversion_file = conversion_files[-1]
-    print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
-
-    conversion_table = pd.read_csv(latest_conversion_file, sep='\t', dtype=str)
     
-    print(conversion_table)
-    return conversion_table
+    if conversion_file:
+        conversion_file = os.path.join(conversion_logs_path, conversion_file)
+    
+    if exists(conversion_file) and not overwrite:
+        print(f"Loading conversion table from {conversion_file}")
+        conversion_table = pd.read_csv(conversion_file, sep='\t', dtype=str)
+        return conversion_table, conversion_file
+    else:
+        if overwrite:
+            print(f'Overwrite requested, generating new conversion table')
+        else:
+            print(f'Conversion file {conversion_file} not found, generating new')
+        generate_new_conversion_table(config)
+        # After generation, load the newly created file
+        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
+        if conversion_files:
+            latest_conversion_file = conversion_files[-1]
+            print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
+            conversion_table = pd.read_csv(latest_conversion_file, sep='\t', dtype=str)
+            return conversion_table, latest_conversion_file
+        else:
+            raise FileNotFoundError("No conversion files found after generation")
 
 def update_conversion_table(conversion_table: pd.DataFrame, 
                             conversion_file: str=None):
@@ -672,11 +666,11 @@ def update_conversion_table(conversion_table: pd.DataFrame,
         
         # TODO: Add argument for update if file exists
     
-    conversion_table.to_csv(conversion_file, sep='\t', index=False)
+    conversion_table.to_csv(f'{conversion_file}', sep='\t', index=False)
     return conversion_table
 
         
-def bidsify(config: dict, conversion_file: str=None, overwrite=False):
+def bidsify(config: dict):
     """
     Main function to convert raw MEG/EEG data to BIDS format.
     
@@ -722,9 +716,10 @@ def bidsify(config: dict, conversion_file: str=None, overwrite=False):
     path_BIDS = config['BIDS']
     calibration = config['Calibration']
     crosstalk = config['Crosstalk']
+    overwrite = config['overwrite']
     # overwrite = config['Overwrite']
 
-    df = load_conversion_table(config, conversion_file, overwrite)
+    df, conversion_file = load_conversion_table(config)
     df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
@@ -944,9 +939,10 @@ def main(config=None):
         else:
             print('No configuration file selected')
             sys.exit(1)
-
+    config = get_parameters(config)
+    
     create_dataset_description(config)
-    bidsify(config, args.conversion, args.overwrite)
+    bidsify(config)
     update_sidecars(config)
     print_dir_tree(config['BIDS'])
     
