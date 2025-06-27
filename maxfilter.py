@@ -55,6 +55,7 @@ from utils import (
 
 exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 
+
 ###############################################################################
 # Configuration and Parameter Functions
 ###############################################################################
@@ -772,6 +773,7 @@ class MaxFilter:
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
                         log(f'{file} -> {clean}')
+
                     else:
                         print(self.command_mxf)
 
@@ -825,6 +827,7 @@ class MaxFilter:
         
         subjects = sorted([s for s in glob('*', root_dir=data_root) if os.path.isdir(f'{data_root}/{s}') and (s.startswith('sub') or s.startswith('NatMEG'))])
         skip_subjects = parameters.get('subjects_to_skip')
+
         if not isinstance(skip_subjects, list):
             skip_subjects = [skip_subjects] if skip_subjects else []
         
