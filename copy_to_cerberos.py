@@ -370,8 +370,8 @@ def main(config=None):
             print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
             return
     
-    copy_from_sinuhe(config_file, check_existing=False)
-    copy_from_kaptah(config_file, check_existing=False)
+    copy_from_sinuhe(config, check_existing=False)
+    copy_from_kaptah(config, check_existing=False)
 
 if __name__ == "__main__":
     main()
