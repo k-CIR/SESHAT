@@ -221,8 +221,14 @@ def extract_info_from_filename(file_name: str):
         datatypes.append('opm')
     
     if 'opm' in datatypes or 'kaptah' in file_name:    
-        task = re.split('_', basename(file_name), flags=re.IGNORECASE)[-2].replace('file-', '')
-        task = re.split('opm', task, flags=re.IGNORECASE)[0]
+
+        exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc-']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + ['file']+ desc + [r'\d{8}_', r'\d{6}_'])
+        if not file_contains(file_name, opm_exceptions_patterns):
+            exclude_from_task += '|hpi|ds'
+
+        task = re.sub(exclude_from_task, '', basename(file_name), flags=re.IGNORECASE)
+        
+        proc = re.findall('|'.join(proc_patterns + ['hpi', 'ds']), basename(file_name))
 
     else:
         task = re.sub(exclude_from_task, '', basename(file_name), flags=re.IGNORECASE)

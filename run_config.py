@@ -30,9 +30,9 @@ def create_default_config():
             'tasks': [''],
             'sinuhe_raw': '/neuro/data/sinuhe',
             'kaptah_raw': '/neuro/data/kaptah',
-            'squidMEG': '/neuro/data/local/',
-            'opmMEG': '/neuro/data/local/',
-            'BIDS': '/neuro/data/local/',
+            'squidMEG': default_path,
+            'opmMEG': default_path,
+            'BIDS': default_path,
             'Calibration': '/neuro/databases/sss/sss_cal.dat',
             'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
         },
@@ -74,11 +74,13 @@ def create_default_config():
             'Dataset_description': 'dataset_description.json',
             'Participants': 'participants.tsv',
             'Participants_mapping_file': 'participant_mapping_example.csv',
+            'Conversion_file': 'bids_conversion.tsv',
+            'Overwrite_conversion': False,
             'Original_subjID_name': 'old_subject_id',
             'New_subjID_name': 'new_subject_id',
             'Original_session_name': 'old_session_id',
             'New_session_name': 'new_session_id',
-            'overwrite': True,
+            'overwrite': False,
             'dataset_type': 'raw',
             'data_license': '',
             'authors': '',
@@ -249,10 +251,12 @@ This tab allows you to set the basic project information and paths for the proje
         value = config['project'][key]
         # Update paths with project name
         if key in ['squidMEG', 'opmMEG', 'BIDS'] and config['project']['name']:
-            if key == 'BIDS':
-                value = f"{value}{config['project']['name']}/BIDS"
-            else:
-                value = f"{value}{config['project']['name']}/raw"
+            project_name = config['project']['name']
+            if project_name not in value:  # Only update if not already updated with project name
+                if key == 'BIDS':
+                    value = f"{value}{project_name}/BIDS"
+                else:
+                    value = f"{value}{project_name}/raw"
         ttk.Label(project_advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
         var = tk.StringVar(value=str(value))
         widget = ttk.Entry(project_advanced_frame, textvariable=var, width=50, justify='left')
@@ -264,7 +268,7 @@ This tab allows you to set the basic project information and paths for the proje
             def update_path(name_var, path_var, path_type):
                 def callback(*args):
                     name = name_var.get()
-                    if name:
+                    if name and name not in path_var.get():
                         base_path = config['project'][path_type]
                         if path_type == 'BIDS':
                             path_var.set(f"{base_path}{name}/BIDS")
@@ -473,9 +477,10 @@ Set the parameters for MaxFilter processing.
     bids_vars = {}
     
     # Standard BIDS settings (matching default config keys)
-    standard_bids_keys = ['Dataset_description', 'Participants', 'Participants_mapping_file', 
+    standard_bids_keys = ['Dataset_description', 'Participants',
+                          'Participants_mapping_file', 'Conversion_file','Overwrite_conversion',
                           'Original_subjID_name', 'New_subjID_name', 'Original_session_name', 
-                          'New_session_name', 'dataset_type', 'overwrite']
+                          'New_session_name', 'overwrite']
     
     row = 0
     for key in standard_bids_keys:
@@ -503,11 +508,12 @@ Set the parameters for Bidsification.
 • Dataset_description: Path to dataset_description.json file
 • Participants: Path to participants.tsv file
 • Participants_mapping_file: Path to participant mapping CSV file
+• Conversion_file: Path to conversion file (e.g. bids_conversion.tsv)
+• Overwrite_conversion: Overwrite existing conversion files
 • Original_subjID_name: Name of the original subject ID column in the mapping file
 • New_subjID_name: Name of the new subject ID column in the mapping file
 • Original_session_name: Name of the original session ID column in the mapping file
 • New_session_name: Name of the new session ID column in the mapping file
-• dataset_type: Type of dataset (e.g., 'raw', 'derivative')
 • overwrite: Overwrite existing BIDS files
 
 """
@@ -522,7 +528,7 @@ Set the parameters for Bidsification.
     bids_notebook.add(bids_dataset_frame, text="Dataset Description")
     
     # Dataset description settings (matching default config keys)
-    dataset_bids_keys = ['data_license', 'authors', 'acknowledgements', 'how_to_acknowledge', 
+    dataset_bids_keys = ['dataset_type', 'data_license', 'authors', 'acknowledgements', 'how_to_acknowledge', 
                         'funding', 'ethics_approvals', 'references_and_links', 'doi']
     
     row = 0
@@ -548,6 +554,7 @@ Set the parameters for Bidsification.
     dataset_info_text = """
 Set the dataset description metadata for BIDS.
 
+• dataset_type: Type of dataset (e.g., 'raw', 'derivative')
 • data_license: License under which the data is made available
 • authors: List of individuals who contributed to the creation/curation of the dataset
 • acknowledgements: Text acknowledging contributions
@@ -756,7 +763,7 @@ You can also provide a path to an existing configuration file to load its settin
     args = parser.parse_args()
     return args
 
-if __name__ == "__main__":
+def main(config_file=None):
     args = args_parser()
     
     config_file = args.config
@@ -764,6 +771,8 @@ if __name__ == "__main__":
     if not config_file or not exists(config_file):
         config = config_UI()
     elif config_file:
-        config = config_UI(config_file)
-    else:
-        print('Something went wrong, exiting')
+        config = load_config(config_file)
+        return config
+
+if __name__ == "__main__":
+    main()

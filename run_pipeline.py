@@ -42,7 +42,7 @@ config_file = args.config
 if not config_file or not exists(config_file):
     config = run_config.config_UI()
 elif config_file:
-    config = run_config.config_UI(config_file)
+    config = run_config.main(config_file)
 
 # Copy
 if config['RUN'].get('Copy to Cerberos', False):
@@ -58,5 +58,5 @@ if config['RUN'].get('Run Maxfilter', False):
     mf.loop_dirs()
 
 # Bidsification
-if config['RUN'].get('Bidsify', False):
+if config['RUN'].get('Run BIDS conversion', False):
     bidsify.main(config)
