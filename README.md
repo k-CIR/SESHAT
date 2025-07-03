@@ -39,11 +39,11 @@ This opens a tabbed GUI for setting up all pipeline components with integrated e
 ### 2. Complete Pipeline
 Run the entire pipeline programmatically:
 ```bash
-python run_pipeline.py --config config.yml
+python natmeg_pipeline.py --config config.yml
 ```
 Or use the GUI to first edit the configuration and then execute the pipeline.
 ```bash
-python run_pipeline.py
+python natmeg_pipeline.py
 ```
 
 ### 3. Individual Components

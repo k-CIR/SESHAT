@@ -1,11 +1,8 @@
 # Ignore folders
 neuro
 data
-
+depricated
 # Ignore config files
-*yml
-*yaml
-*json
 *projects_to_sync*
 
 # Ignore test files
