@@ -28,20 +28,26 @@ find_conda_path() {
             conda_paths=(
                 "/opt/homebrew/Caskroom/miniconda/base"
                 "/usr/local/Caskroom/miniconda/base"
+                "/usr/local/Caskroom/miniforge3/base"
                 "$HOME/miniconda3"
+                "$HOME/miniforge3"
                 "$HOME/anaconda3"
                 "$HOME/conda"
                 "/opt/miniconda3"
+                "/opt/miniforge3"
                 "/opt/anaconda3"
             )
             ;;
         "Linux")
             conda_paths=(
                 "$HOME/miniconda3"
+                "$HOME/miniforge3"
                 "$HOME/anaconda3"
                 "/opt/miniconda3"
+                "/opt/miniforge3"
                 "/opt/anaconda3"
                 "/usr/local/miniconda3"
+                "/usr/local/miniforge3"
                 "/usr/local/anaconda3"
             )
             ;;
@@ -212,7 +218,7 @@ if [ "\$env_exists" = false ]; then
     echo "To create the environment:"
     echo "  conda create -n \$ENV_NAME python=3.9 -y"
     echo "  conda activate \$ENV_NAME"
-    echo "  cd $HOME/Sites/NatMEG-utils"
+    echo "  cd \$(dirname "\$0")"
     echo "  pip install -e ."
     exit 1
 fi
@@ -227,7 +233,7 @@ else
 fi
 
 # Run natmeg pipeline with safety checks
-SCRIPT_PATH="$HOME/Sites/NatMEG-utils/natmeg_pipeline.py"
+SCRIPT_PATH="$(dirname "$0")/natmeg_pipeline.py"
 if [ ! -f "\$SCRIPT_PATH" ]; then
     echo "Error: Could not find natmeg_pipeline.py at \$SCRIPT_PATH"
     echo "Please ensure the NatMEG-utils repository is at the correct location"
@@ -322,7 +328,7 @@ if [ "$ENV_EXISTS" = false ]; then
     echo "  1. source $SHELL_CONFIG"
     echo "  2. conda create -n natmeg_utils python=3.9 -y"
     echo "  3. conda activate natmeg_utils"
-    echo "  4. cd $HOME/Sites/NatMEG-utils"
+    echo "  4. cd \$(dirname "\$0")"
     echo "  5. pip install -e ."
     echo "  6. Test with: natmeg --help"
 elif [ "$INSTALL_SUCCESS" = true ]; then
