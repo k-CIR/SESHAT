@@ -749,6 +749,7 @@ Set the dataset description metadata for BIDS.
     
     def cancel():
         root.destroy()
+        print('User cancelled')
         sys.exit(0)
         config = None
     
