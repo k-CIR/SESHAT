@@ -89,8 +89,33 @@ else
     exit 1
 fi
 
+
+# Copy relevant files to local
+if [ -f "$HOME/.local/bin/NatMEG-utils" ]; then
+    echo "NatMEG utils already exists at $HOME/.local/bin/NatMEG-utils"
+    read -p "Do you want to overwrite it? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        exit 0
+    fi
+fi
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "README.md") 
+SOURCE_DIR=$(pwd)
+TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
+
 # Create local bin directory
 mkdir -p "$HOME/.local/bin"
+mkdir -p "$TARGET_DIR"
+
+for file in "${RELEVANT_FILES[@]}"; do
+    if [ -f "$SOURCE_DIR/$file" ]; then
+        cp "$SOURCE_DIR/$file" "$TARGET_DIR"
+        echo "Copied $file to $TARGET_DIR"
+    else
+        echo "Warning: $file does not exist in $SOURCE_DIR"
+    fi
+done
 
 # Determine shell config file
 SHELL_CONFIG=""
@@ -106,8 +131,8 @@ echo "Using shell config: $SHELL_CONFIG"
 
 # Create the natmeg executable
 echo "Creating natmeg executable..."
-if [ -f "$HOME/.local/bin/natmeg" ]; then
-    echo "natmeg executable already exists at $HOME/.local/bin/natmeg"
+if [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
+    echo "natmeg executable already exists at $HOME/.local/bin/NatMEG-utils/natmeg"
     read -p "Do you want to overwrite it? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -116,7 +141,7 @@ if [ -f "$HOME/.local/bin/natmeg" ]; then
     fi
 fi
 
-cat > "$HOME/.local/bin/natmeg" << EOF
+cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << EOF
 #!/bin/bash
 # NatMEG Pipeline Executable - Auto-generated
 
@@ -233,7 +258,7 @@ else
 fi
 
 # Run natmeg pipeline with safety checks
-SCRIPT_PATH="$(dirname "$0")/natmeg_pipeline.py"
+SCRIPT_PATH="\$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py"
 if [ ! -f "\$SCRIPT_PATH" ]; then
     echo "Error: Could not find natmeg_pipeline.py at \$SCRIPT_PATH"
     echo "Please ensure the NatMEG-utils repository is at the correct location"
@@ -269,15 +294,15 @@ esac
 EOF
 
 # Make it executable
-chmod +x "$HOME/.local/bin/natmeg"
+chmod +x "$HOME/.local/bin/NatMEG-utils/natmeg"
 
 # Add to PATH if not already there
-if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-    echo "Adding $HOME/.local/bin to PATH in $SHELL_CONFIG"
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_CONFIG"
+if ! echo "$PATH" | grep -q "$HOME/.local/bin/NatMEG-utils"; then
+    echo "Adding $HOME/.local/bin/NatMEG-utils to PATH in $SHELL_CONFIG"
+    echo 'export PATH="$HOME/.local/bin/NatMEG-utils:$PATH"' >> "$SHELL_CONFIG"
     echo "Please run: source $SHELL_CONFIG"
 else
-    echo "$HOME/.local/bin is already in PATH"
+    echo "$HOME/.local/bin/NatMEG-utils is already in PATH"
 fi
 
 # Check conda environment (reuse existing conda initialization)
@@ -300,11 +325,11 @@ echo ""
 echo "Testing the installation..."
 
 # Test if the executable works
-if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/natmeg" ]; then
+if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
     echo "✓ natmeg executable created successfully"
     
     # Test basic execution only if environment exists
-    if [ "$ENV_EXISTS" = true ] && "$HOME/.local/bin/natmeg" --help &> /dev/null; then
+    if [ "$ENV_EXISTS" = true ] && "$HOME/.local/bin/NatMEG-utils/natmeg" --help &> /dev/null; then
         echo "✓ natmeg executable runs correctly"
         INSTALL_SUCCESS=true
     else
@@ -338,6 +363,6 @@ else
     echo "TROUBLESHOOTING:"
     echo "  - Ensure conda is working: conda --version"
     echo "  - Check PATH: echo \$PATH"
-    echo "  - View executable: cat ~/.local/bin/natmeg"
+    echo "  - View executable: cat ~/.local/bin/NatMEG-utils/natmeg"
     echo "  - Re-run installer if needed"
 fi
