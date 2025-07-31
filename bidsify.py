@@ -28,6 +28,7 @@ from mne_bids import (
     find_matching_paths
     )
 from mne_bids.utils import _write_json
+from mne_bids.write import _sidecar_json
 import mne
 
 from utils import (
@@ -231,6 +232,15 @@ def update_sidecars(config: dict):
             suffix = bp.suffix
             info = mne.io.read_info(bp.fpath, verbose='error')
             bp_json = bp.copy().update(extension='.json', split=None)
+            # Check if json exists, if not create it
+            if not exists(bp_json.fpath):
+                raw = read_raw_bids(bp)
+                _sidecar_json(raw=raw,
+                              task=bp.task,
+                              manufacturer='Elekta',
+                              fname=bp_json.fpath,
+                              datatype=bp.datatype)
+            
             with open(str(bp_json.fpath), 'r') as f:
                 sidecar = json.load(f)
             
@@ -285,7 +295,7 @@ def update_sidecars(config: dict):
                 
                 # TODO: Add maxfilter and headposition parameters
                 if proc:
-                    print('Processing detected')
+                    #print('Processing detected')
                     proc_list = proc.split('+')
                     max_info = info['proc_history'][0]['max_info']
                     
@@ -314,13 +324,16 @@ def update_sidecars(config: dict):
             
             new_sidecar = institution | sidecar
             
-            with open(str(bp_json.fpath), 'w') as f:
-                json.dump(new_sidecar, f, indent=4)
+            if not new_sidecar == sidecar:
+
+                with open(str(bp_json.fpath), 'w') as f:
+                    json.dump(new_sidecar, f, indent=4)
 
 def add_channel_parameters(
     bids_tsv: str,
     opm_tsv: str):
 
+    print(bids_tsv, opm_tsv)
     """
     Merge additional channel parameters from OPM source file into BIDS channels.tsv.
     
@@ -488,9 +501,6 @@ def generate_new_conversion_table(config: dict):
                 suffix = None
         else:
             datatype = 'meg'
-        
-        print(file)
-        print(subj_out, session_out, task, mod, proc, run, datatype, desc)
 
         if process_file:
             try:
@@ -576,7 +586,7 @@ def generate_new_conversion_table(config: dict):
         ])
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
-    df.to_csv(f'{path_BIDS}/conversion_logs/{ts}_bids_conversion.tsv', sep='\t', index=False)
+    df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
 
 # TODO: continue check here
 
@@ -654,14 +664,22 @@ def update_conversion_table(conversion_table: pd.DataFrame,
         - Saves updated table to file if path provided
         - Prints conversion status updates
     """
+    ts = datetime.now().strftime('%Y%m%d')
+    
+    conversion_table = conversion_table.where(pd.notnull(conversion_table), None)
     for i, row in conversion_table.iterrows():
         
-        path = os.path.dirname(row['bids_path'])
-        datatype = basename(path)
-        file = basename(row['bids_name']).split(datatype)[0]
-        files = glob(f'{file}*', root_dir=path)
+        # Check if raw file has already been converted
+        raw_file = f"{row['raw_path']}/{row['raw_name']}"
+        
+        files = (glob(row['bids_name'] + '*',
+                 root_dir=row['bids_path']) + 
+            glob(row['bids_name'].rsplit('_', 1)[0] + '_split*' + row['bids_name'].rsplit('_', 1)[1] + '*', 
+                 root_dir=row['bids_path'])) 
+    
         if not files:
             conversion_table.at[i, 'run_conversion'] = 'yes'
+            conversion_table.at[i, 'time_stamp'] = ts
             print(f'Running conversion on {row['raw_name']}')
         
         # TODO: Add argument for update if file exists
@@ -712,15 +730,17 @@ def bidsify(config: dict):
     """
     
     # TODO: parallelize the conversion
-    
+    ts = datetime.now().strftime('%Y%m%d')
     path_BIDS = config['BIDS']
     calibration = config['Calibration']
     crosstalk = config['Crosstalk']
     overwrite = config['overwrite']
+    logfile = config['Logfile']
+    logpath = os.path.dirname(config['BIDS'])
     # overwrite = config['Overwrite']
 
     df, conversion_file = load_conversion_table(config)
-    df = update_conversion_table(df, conversion_file)
+    #df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
     
     # Start by creating the BIDS directory structure
@@ -755,7 +775,7 @@ def bidsify(config: dict):
         
         # Ignore files that are already converted
         if d['run_conversion'] == 'no' and not overwrite:
-            print(f"{d['bids_name']} already converted")
+            #print(f"{d['bids_name']} already converted")
             continue
         
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
@@ -829,8 +849,8 @@ def bidsify(config: dict):
                     log( 
                         f'{fname} not bidsified',
                         level='error',
-                        logfile='log.tsv',
-                        logpath=path_BIDS
+                        logfile=logfile,
+                        logpath=logpath
                         )
 
             # Copy EEG to MEG
@@ -838,7 +858,7 @@ def bidsify(config: dict):
                 copy_eeg_to_meg(raw_file, bids_path)
 
             # Add channel parameters 
-            if acquisition == 'hedscan':
+            if acquisition == 'hedscan' and not processing:
                 opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
                 
                 bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
@@ -860,17 +880,20 @@ def bidsify(config: dict):
         log( 
             f'{raw_file} -> {bids_path}',
             level='info',
-            logfile='log.tsv',
-            logpath=path_BIDS
+            logfile=logfile,
+            logpath=logpath
         )
         
         # Update the conversion table
+        df.at[i, 'time_stamp'] = ts
+        df.at[i, 'run_conversion'] = 'no'
         df.at[i, 'run_conversion'] = 'no'
         df.at[i, 'bids_path'] = dirname(bids_path)
         df.at[i, 'bids_name'] = basename(bids_path)
 
     # Save updated conversion table
-    df.to_csv(f'{path_BIDS}/conversion_logs/{df["time_stamp"].iloc[0]}_bids_conversion.tsv', sep='\t', index=False)
+    update_conversion_table(df, conversion_file)
+    # df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
 
 def args_parser():
     """
@@ -898,7 +921,7 @@ It includes:
     args = parser.parse_args()
     return args
 
-def main(config=None):
+def main(config:str=None):
     """
     Main entry point for BIDS conversion pipeline.
     
@@ -939,12 +962,16 @@ def main(config=None):
         else:
             print('No configuration file selected')
             sys.exit(1)
-    config = get_parameters(config)
+    
+    if isinstance(config, str):
+        # If config is a string, assume it's a path to a config file
+        config = get_parameters(config)
     
     create_dataset_description(config)
     bidsify(config)
     update_sidecars(config)
     print_dir_tree(config['BIDS'])
+    return True
     
 
 if __name__ == "__main__":

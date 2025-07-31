@@ -24,6 +24,7 @@ import tkinter as tk
 from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfile
 import json
 import yaml
+from typing import Union
 import pandas as pd
 import subprocess
 import argparse
@@ -99,6 +100,7 @@ def get_parameters(config):
     maxfilter_dict['standard_settings']['project_name'] = config_dict['project']['name']
     maxfilter_dict['standard_settings']['data_path'] = config_dict['project']['squidMEG']
     maxfilter_dict['standard_settings']['out_path'] = config_dict['project']['squidMEG']
+    maxfilter_dict['standard_settings']['logfile'] = config_dict['project']['Logfile']
     
     return maxfilter_dict
 
@@ -209,7 +211,7 @@ class MaxFilter:
     - BIDS-compatible output naming
     """
     
-    def __init__(self, config_dict: dict, **kwargs):
+    def __init__(self, config_dict: Union[dict, str], **kwargs):
         """
         Initialize MaxFilter processor with configuration parameters.
         
@@ -224,10 +226,11 @@ class MaxFilter:
             - Merges standard and advanced settings into self.parameters
             - Converts 'on'/'off' strings to True/False booleans
         """
-
-        config_dict = get_parameters(config_dict)
+        if isinstance(config_dict, str):
+            config_dict = get_parameters(config_dict)
         
         parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
+        self.logfile = parameters.get('logfile', 'maxfilter.log')
         
         # Convert 'on'/'off' to True/False in parameters
         for key, value in parameters.items():
@@ -668,7 +671,7 @@ class MaxFilter:
         subj_in = f'{data_root}/{subject}/{session}/triux'
         subj_out = f'{output_path}/{subject}/{session}/triux'
         
-        # Create log directory if it doesn't exist
+        # Create maxfilter log directory if it doesn't exist
         os.makedirs(f'{subj_out}/{'log'}', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
@@ -772,7 +775,7 @@ class MaxFilter:
                                  task))
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
-                        log(f'{file} -> {clean}')
+                        log(f'{file} -> {clean}', logfile=self.logfile)
 
                     else:
                         print(self.command_mxf)
@@ -870,13 +873,14 @@ def args_parser():
                                      
                                      ''',
                                      add_help=True,
-                                     usage='maxfilter [-h] [-c CONFIG]')
+                                     usage='maxfilter [-h] [-c CONFIG] [--dry-run]')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
+    parser.add_argument('--dry-run', action='store_true', help='Show what would be executed without actually running MaxFilter')
     args = parser.parse_args()
     return args
 
 # %%
-def main(config=None):
+def main(config=None, dry_run=False):
     """
     Main entry point for MaxFilter processing pipeline.
     
@@ -889,6 +893,7 @@ def main(config=None):
     Args:
         config (dict, optional): Configuration dictionary. If None, loads
                                 from command-line arguments or GUI selection
+        dry_run (bool, optional): Show commands without executing them
     
     Returns:
         None
@@ -904,26 +909,51 @@ def main(config=None):
     
     Usage Examples:
         # Command line with config file
-        python maxfilter.py -c config.yml
+        python maxfilter.py -c config.yml --dry-run
         
         # Programmatic usage
         from maxfilter import main
-        main(config_dict)
+        main(config_dict, dry_run=True)
     """
     if config is None:
         args = args_parser()
         config_file = args.config
+        dry_run = getattr(args, 'dry_run', False)
         if not config_file or not os.path.exists(config_file):
             config_file = askForConfig()
         if config_file:
             config = get_parameters(config_file)
             print(f'Using configuration file: {config_file}')
+            if dry_run:
+                print("DRY RUN MODE - Commands will be displayed but not executed")
         else:
             print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
             return
+    
+    elif isinstance(config, str):
+        # If config is a string, treat it as a file path
+        config_file = config
+        if os.path.exists(config_file):
+            config = get_parameters(config_file)
+            print(f'Using configuration file: {config_file}')
+            if dry_run:
+                print("DRY RUN MODE - Commands will be displayed but not executed")
+        else:
+            print(f'Configuration file not found: {config_file}')
+            return
+
+    # Override debug setting if dry_run is specified
+    if dry_run:
+        # After get_parameters, config structure is flattened maxfilter config
+        if 'advanced_settings' in config:
+            config['advanced_settings']['debug'] = True
+        else:
+            config.setdefault('advanced_settings', {})['debug'] = True
 
     mf = MaxFilter(config)
     mf.loop_dirs()
+    log("HPI registration completed successfully.", 'info',logfile=mf.logfile, logpath=log_path)
+    return True
 
 if __name__ == "__main__":
     main()
