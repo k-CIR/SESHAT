@@ -736,7 +736,7 @@ def bidsify(config: dict):
     crosstalk = config['Crosstalk']
     overwrite = config['overwrite']
     logfile = config['Logfile']
-    logpath = os.path.dirname(config['BIDS'])
+    logpath = config['BIDS'].replace('raw', 'log')
     # overwrite = config['Overwrite']
 
     df, conversion_file = load_conversion_table(config)
@@ -766,9 +766,8 @@ def bidsify(config: dict):
     # Flag deviants and exist if found
     deviants = df[df['task_flag'] == 'check']
     if len(deviants) > 0:
-        print('Deviants found:')
+        log('BIDS', 'Deviants found, please check the conversion table', level='error', logfile=logfile, logpath=logpath)
         print(deviants)
-        print('Please check the conversion table')
         sys.exit(1)
 
     for i, d in df.iterrows():
@@ -846,7 +845,7 @@ def bidsify(config: dict):
                     raw.save(fname, overwrite=True)
                 except Exception as e:
                     print(f"Error saving raw file: {e}")
-                    log( 
+                    log('BIDS',
                         f'{fname} not bidsified',
                         level='error',
                         logfile=logfile,
@@ -877,7 +876,7 @@ def bidsify(config: dict):
                 mne.write_trans(bids_path, trans, overwrite=True)
 
         # Log and print the conversion
-        log( 
+        log('BIDS',
             f'{raw_file} -> {bids_path}',
             level='info',
             logfile=logfile,
@@ -893,7 +892,9 @@ def bidsify(config: dict):
 
     # Save updated conversion table
     update_conversion_table(df, conversion_file)
+    log('BIDS', f'All files bidsified according to {conversion_file}', level='info', logfile=logfile, logpath=logpath)
     # df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
+    
 
 def args_parser():
     """

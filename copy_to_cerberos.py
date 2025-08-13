@@ -118,15 +118,17 @@ def copy_from_sinuhe(config, check_existing=False):
     log_path = os.path.join(project_root, 'log')
     os.makedirs(log_path, exist_ok=True)
     logfile = config.get('Logfile', 'pipeline_log.log')
+    
+    new_files = True
 
     if not config['sinuhe_raw']:
-        log('No TRIUX directory defined', 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', 'No TRIUX directory defined', 'warning', logfile=logfile, logpath=log_path)
 
     elif not os.path.isdir(config['sinuhe_raw']):
-        log(f"{config['sinuhe_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
+        log('Copy', f"{config['sinuhe_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
 
     elif not glob('*', root_dir=config['sinuhe_raw']):
-        log(f"{config['sinuhe_raw']} is empty", 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', f"{config['sinuhe_raw']} is empty", 'warning', logfile=logfile, logpath=log_path)
     
     else:
         sinuhe = config['sinuhe_raw']
@@ -186,7 +188,7 @@ def copy_from_sinuhe(config, check_existing=False):
                 new_triux_files = triux_compare.left_only
                 
                 if not new_triux_files:
-                    print(f'No new files to copy for subject {subject} session {session}')
+                    new_files = False
                     continue
 
                 # First copy files that dont exist:
@@ -201,13 +203,13 @@ def copy_from_sinuhe(config, check_existing=False):
                             try:
                                 raw = read_raw(source, allow_maxshield=True, verbose='error')
                                 raw.save(destination, overwrite=True, verbose='error')
-                                log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=logfile, logpath=log_path)
+                                log('Copy', f'Copied (split if > 2GB) {source} --> {destination}', logfile=logfile, logpath=log_path)
                             except Exception as e:
-                                log(f'{source} !!! {destination} {e}', 'error',logfile=logfile, logpath=log_path)
+                                log('Copy', f'{source} !!! {destination} {e}', 'error',logfile=logfile, logpath=log_path)
                             continue
                     else:
                         copy_if_newer_or_larger(source, destination)
-                        log(f'Copied {source} --> {destination}', logfile=logfile, logpath=log_path)
+                        log('Copy', f'Copied {source} --> {destination}', logfile=logfile, logpath=log_path)
 
                 # Check files that exist in both source and destination
                 if check_existing:
@@ -221,7 +223,9 @@ def copy_from_sinuhe(config, check_existing=False):
                             continue
                         else:
                             copy_if_newer_or_larger(source, destination)
-                            log(f'Updated {source} --> {destination}', logfile=logfile, logpath=log_path)
+                            log('Copy', f'Updated {source} --> {destination}', logfile=logfile, logpath=log_path)
+        if not new_files:
+            log('Copy', f'No new TRIUX files to copy', logfile=logfile, logpath=log_path)
 
 def copy_from_kaptah(config: Union[str, dict], check_existing=False):
     
@@ -234,15 +238,16 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
     log_path = os.path.join(project_root, 'log')
     os.makedirs(log_path, exist_ok=True)
     logfile = config.get('Logfile', 'pipeline_log.log')
+    new_files = True
 
     if not config['kaptah_raw']:
-        log('No Hedscan directory defined', 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', 'No Hedscan directory defined', 'warning', logfile=logfile, logpath=log_path)
 
     elif not os.path.isdir(config['kaptah_raw']):
-        log(f"{config['kaptah_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
+        log('Copy', f"{config['kaptah_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
     
     elif not glob('*', root_dir=config['kaptah_raw']):
-        log(f"{config['kaptah_raw']} is empty", 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', f"{config['kaptah_raw']} is empty", 'warning', logfile=logfile, logpath=log_path)
 
     else:
 
@@ -306,7 +311,7 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
                 new_hedscan_files = df[df['in_dst'] == False]['old_name'].tolist()
                 
                 if not new_hedscan_files:
-                    print(f'No new files to copy for subject {subject} session {session}')
+                    new_files = False
                     continue
 
                 # First copy files that dont exist:
@@ -325,14 +330,14 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
                             try:
                                 raw = read_raw(source, allow_maxshield=True, verbose='error')
                                 raw.save(destination, overwrite=True, verbose='error')
-                                log(f'Copied (split if > 2GB) {source} --> {destination}', logfile=logfile, logpath=log_path)
+                                log('Copy', f'Copied (split if > 2GB) {source} --> {destination}', logfile=logfile, logpath=log_path)
                             except Exception as e:
-                                log(f'{source} !!! {destination} {e}', 'error', logfile=logfile, logpath=log_path)
+                                log('Copy', f'{source} !!! {destination} {e}', 'error', logfile=logfile, logpath=log_path)
                         else:
                             continue
                     else:
                         copy_if_newer_or_larger(source, destination)
-                        log(f'Copied {source} --> {destination}', logfile=logfile, logpath=log_path)
+                        log('Copy', f'Copied {source} --> {destination}', logfile=logfile, logpath=log_path)
                 
                 # Check files that exist in both source and destination
                 if check_existing:
@@ -351,7 +356,9 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
                             continue
                         else:
                             copy_if_newer_or_larger(source, destination)
-                            log(f'Updated {source} --> {destination}', logfile=logfile, logpath=log_path)           
+                            log('Copy', f'Updated {source} --> {destination}', logfile=logfile, logpath=log_path)
+        if not new_files:         
+            log('Copy', 'No new HEDSCAN files to copy', logfile=logfile, logpath=log_path)
 
 
 def args_parser():

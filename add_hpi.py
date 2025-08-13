@@ -476,20 +476,20 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     
     if overwrite or hedscan_files:
 
-        log(f"Looking for polhemus files matching: {config['polhemus_file']}", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"Looking for polhemus files matching: {config['polhemus_file']}", 'info',logfile=logfile, logpath=log_path)
         polfile_list = [
             file for pattern in config['polhemus_file']
             for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern}*.fif")
         ]
 
         polfile = polfile_list[0]
-        log(f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
 
         hpi_files = [f for f in all_files if file_contains(f, hpinames)]
-        log(f"Looking for hpi files matching: {hpinames}", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"Looking for hpi files matching: {hpinames}", 'info',logfile=logfile, logpath=log_path)
                 
         hpifile = hpi_files[0]
-        log(f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
 
         raw = mne.io.read_raw_fif(hpifile)
         raw.load_data()
@@ -501,7 +501,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         bads=TC_findzerochans(raw.info)
         for bad_chan in bads:
             raw.drop_channels(bad_chan)
-        log(f'found the following channels with locations at 0,0,0 {bads}', 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'info',logfile=logfile, logpath=log_path)
 
         hpi_names,hpi_indices=TC_get_hpiout_names(raw)
 
@@ -550,7 +550,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         start_sample =  0
         stop_sample = len(raw)
 
-        log(f'start_sample={start_sample}, stop_sample={stop_sample}', 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f'start_sample={start_sample}, stop_sample={stop_sample}', 'info',logfile=logfile, logpath=log_path)
 
         hpi_locs = []
 
@@ -568,7 +568,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             channel_index = {channel_index}
             hpi_indices[index] = {hpi_indices[index]}
             '''
-            log(msg, 'info',logfile=logfile, logpath=log_path)
+            log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
 
             do_plot=False
 
@@ -585,7 +585,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 plt.show()
 
             if len(peaks) <1 :
-                log('***********Error no peaks found**********', 'error',logfile=logfile, logpath=log_path)
+                log("HPI", '***********Error no peaks found**********', 'error',logfile=logfile, logpath=log_path)
                 exit()
                 
             window=(peaks[-1]-peaks[0])/raw.info['sfreq']
@@ -603,7 +603,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             tmin window = {tmin}, t max window = {tmax}
             '''
             
-            log(msg, 'info',logfile=logfile, logpath=log_path)
+            log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
 
             raw.crop(tmin=tmin,tmax=tmax)
 
@@ -622,7 +622,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 plt.show()
 
                 raw_selection2 = raw[channel_index, 0:len(raw)]
-                log(f'cropped time window length = {len(raw)}', 'info',logfile=logfile, logpath=log_path)
+                log("HPI", f'cropped time window length = {len(raw)}', 'info',logfile=logfile, logpath=log_path)
                 x1 = raw_selection2[1]
                 y1 = raw_selection2[0].T
 
@@ -630,7 +630,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 plt.show()
 
 
-            log('************* add hpi struct to info ***********', 'info',logfile=logfile, logpath=log_path)
+            log("HPI", '************* add hpi struct to info ***********', 'info',logfile=logfile, logpath=log_path)
 
             hpi_sub = dict()
 
@@ -651,7 +651,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 # build coil structure
                 hpi_coils[i]["number"] = i + 1
                 hpi_coils[i]["drive_chan"] = drive_channels[i]
-                log(hpi_coils[i]["drive_chan"], 'info',logfile=logfile, logpath=log_path)
+                log("HPI", hpi_coils[i]["drive_chan"], 'info',logfile=logfile, logpath=log_path)
                 hpi_coils[i]["coil_freq"] = default_freqs[i]
 
                 hpi_sub["hpi_coils"][i]["event_bits"] = [256]
@@ -661,7 +661,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 raw.info["hpi_meas"] = [{"hpi_coils": hpi_coils}]
 
             #****************************************************
-            log('************* localize hpi *******************', 'info',logfile=logfile, logpath=log_path)
+            log("HPI", '************* localize hpi *******************', 'info',logfile=logfile, logpath=log_path)
             n_hpis = 0
 
             info=raw.info
@@ -701,7 +701,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         hpi_dev = np.array(coil_locs['rrs'][0])
         hpi_gofs = np.array(coil_locs['gofs'][0])
 
-        log('**** Apply trans to recording file ***********************************', 'info',logfile=logfile, logpath=log_path)
+        log("HPI", '**** Apply trans to recording file ***********************************', 'info',logfile=logfile, logpath=log_path)
         hpi_fit_parameters['hedscan_files'] = hedscan_files
         hpi_fit_parameters['hpi_dev'] = hpi_dev
         hpi_fit_parameters['hpi_gofs'] = hpi_gofs
@@ -716,7 +716,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         hpi_fit_parameters['logfile'] = logfile
         hpi_fit_parameters['log_path'] = log_path
     else:
-        log('No files to process, all files have been processed', 'info',logfile=logfile, logpath=log_path)
+        log("HPI", 'No (new) files to process', 'info',logfile=logfile, logpath=log_path)
  
     return hpi_fit_parameters
 
@@ -820,7 +820,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
         tree = cKDTree(hpi_orig)
         distances, indices = tree.query(hpi_dev[include_hpis])
 
-        log(f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=logfile, logpath=log_path)
 
         trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
         dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
@@ -854,7 +854,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
         {msg_coils}
         ---------------------------------------------'''
 
-        log(msg, 'info',logfile=logfile, logpath=log_path)
+        log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
 
         if plotResult:
             senspos=np.array([],dtype=float)
@@ -1018,8 +1018,8 @@ def main(config: Union[str, dict]=None):
                         try:
                             future.result()  # This will raise an exception if the task failed
                         except Exception as exc:
-                            log(f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
-    log("HPI registration completed successfully.", 'info',logfile=logfile, logpath=log_path)
+                            log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
+    log("HPI", "Registration completed successfully.", 'info',logfile=logfile, logpath=log_path)
     return True
 
 # Use concurrent.futures instead of multiprocessing

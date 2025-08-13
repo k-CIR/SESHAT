@@ -3,7 +3,6 @@
 NatMEG Pipeline Application
 Main executable entry point for the NatMEG processing pipeline
 """
-
 import sys
 import os
 import argparse
@@ -111,63 +110,52 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
         if args.command == 'gui':
             from run_config import config_UI
             config = config_UI(args.config)
-            if config:
-                log("Configuration saved successfully!", 'info')
         
         elif args.command == 'run':
             # Run complete pipeline
-            
+
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
-            
+                        
             logfile = config['project'].get('Logfile', 'pipeline_log.log')
-            # Create log directory in the project root (parent of squidMEG/opmMEG/BIDS)
+
             project_root = os.path.dirname(config['project'].get('squidMEG', '.')) or os.path.dirname(config['project'].get('opmMEG', '.'))
             logpath = os.path.join(project_root, 'log')
             os.makedirs(logpath, exist_ok=True)
             dry_run = getattr(args, 'dry_run', False)
-            
-            if dry_run:
-                log("DRY RUN MODE - No actual processing will be performed", 'info', logfile=logfile, logpath=logpath)
 
-            log("Starting complete NatMEG pipeline", 'info', logfile=logfile, logpath=logpath)
+            log("Pipeline", '----------------------------------------------------', 'info', logfile=logfile, logpath=logpath)
+            log("Pipeline",f'Using config file: {args.config}', 'info', logfile=logfile, logpath=logpath)
+
+            if dry_run:
+                log("Pipeline","DRY RUN MODE - No actual processing will be performed", 'info', logfile=logfile, logpath=logpath)
+
+            log("Pipeline", "Starting", 'info', logfile=logfile, logpath=logpath)
             
             pipeline_success = []
             
             # Execute pipeline steps based on config
             if config['RUN'].get('Copy to Cerberos', False):
-                log("Running data synchronization...", 'info', logfile=logfile, logpath=logpath)
                 import copy_to_cerberos
                 copy_success = copy_to_cerberos.main(args.config)
                 pipeline_success.append(copy_success)
                 
             if config['RUN'].get('Add HPI coregistration', False):
-                log("Running HPI coregistration...", 'info', logfile=logfile, logpath=logpath)
                 import add_hpi
                 hpi_success = add_hpi.main(args.config)
                 pipeline_success.append(hpi_success)
 
             if config['RUN'].get('Run Maxfilter', False):
-                if dry_run:
-                    log("DRY RUN: Would run MaxFilter processing...", 'info', logfile=logfile, logpath=logpath)
-                else:
-                    log("Running MaxFilter processing...", 'info', logfile=logfile, logpath=logpath)
                 import maxfilter
                 maxfilter_success = maxfilter.main(args.config, dry_run=dry_run)
                 pipeline_success.append(maxfilter_success)
 
             if config['RUN'].get('Run BIDS conversion', False):
-                log("Running BIDS conversion...", 'info', logfile=logfile, logpath=logpath)
                 import bidsify
                 bids_success = bidsify.main(args.config)
                 pipeline_success.append(bids_success)
             
             if config['RUN'].get('Sync to CIR', False):
-                if dry_run:
-                    log("DRY RUN: Would sync to CIR server...", 'info', logfile=logfile, logpath=logpath)
-                else:
-                    log("Syncing to CIR server...", 'info', logfile=logfile, logpath=logpath)
-                
                 import sync_to_cir
                 # Use BIDS directory as the sync source
                 bids_path = config['project'].get('BIDS', '.')
@@ -182,13 +170,11 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                     delete=getattr(args, 'delete', False)
                 )
                 pipeline_success.append(success)
-                if success:
-                    log("Sync completed successfully!", 'info', logfile=logfile, logpath=logpath)
-                else:
-                    log("Sync failed. Check log files for details.", 'error', logfile=logfile, logpath=logpath)
             if all(pipeline_success):
-                log("Pipeline completed successfully!", 'info', logfile=logfile, logpath=logpath)
-        
+                log("Pipeline", "Completed successfully!", 'info', logfile=logfile, logpath=logpath)
+            else:
+                log("Pipeline", "Completed with errors.", 'error', logfile=logfile, logpath=logpath)
+
         elif args.command == 'copy':
             import copy_to_cerberos
             copy_to_cerberos.main(args.config)
@@ -234,9 +220,9 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                         delete=getattr(args, 'delete', False)
                     )
                 if success:
-                    log("Sync completed successfully!", 'info')
+                    log("Sync", "Completed successfully!", 'info')
                 else:
-                    log("Sync failed. Check log files for details.", 'error')
+                    log("Sync", "Failed. Check log files for details.", 'error')
 
             else:
                 # If no sync subcommand, print help
@@ -244,7 +230,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 sync_main()
             
     except Exception as e:
-        log(f"Error: {e}", 'error')
+        log("Pipeline", f"Error: {e}", 'error')
         sys.exit(1)
 
 if __name__ == "__main__":

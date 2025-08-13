@@ -26,6 +26,7 @@ opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
 
 def log(
+    process: str,
     message: str,
     level: str='info',
     logfile: str='log.log',
@@ -55,9 +56,9 @@ def log(
         - Prints color-coded message to console
         
     Log File Format:
-        Level    Timestamp           Message
-        -----    ---------           -------
-        [INFO]   2025-01-27 14:30:15 Processing started
+        Level    Timestamp           Process    Message
+        -----    ---------           -------    -------
+        [INFO]   2025-01-27 14:30:15 Copy       Processing started
     
     Note:
         Uses ANSI color codes for terminal output formatting
@@ -89,12 +90,12 @@ def log(
     # Create the log file if it doesn't exist
     if not exists(f'{logpath}/{logfile}'):
         with open(f'{logpath}/{logfile}', 'w') as f:
-            f.write('Level\tTimestamp\tMessage\n')
-            f.write('-----\t---------\t-------\n')
-    
+            f.write('Level\tTimestamp\tProcess\tMessage\n')
+            f.write('-----\t---------\t-------\t-------\n')
+
     # Write the message to the log file
     with open(f'{logpath}/{logfile}', 'a') as f:
-        f.write(f"[{level.upper()}]\t{timestamp}\t{message}\n")
+        f.write(f"[{level.upper()}]\t{timestamp}\t{process}\t{message}\n")
     print(formatted_message)
 
 

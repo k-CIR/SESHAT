@@ -231,6 +231,7 @@ class MaxFilter:
         
         parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
         self.logfile = parameters.get('logfile', 'maxfilter.log')
+        self.logpath = parameters.get('data_path').replace('raw', 'log')
         
         # Convert 'on'/'off' to True/False in parameters
         for key, value in parameters.items():
@@ -765,17 +766,11 @@ class MaxFilter:
                 self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
 
                 if not exists(clean):
-                    print('''
-                          Running Maxfilter on
-                          Subject: %s
-                          Session: %s
-                          Task: %s
-                          ''' % (subject, 
-                                 session,
-                                 task))
+                    print(
+                        f'Running MaxFilter on {subject} | {session} | {task}')
                     if not debug:
                         subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
-                        log(f'{file} -> {clean}', logfile=self.logfile)
+                        log('MaxFilter', f'{file} -> {clean}', logfile=self.logfile, log_path=self.logpath)
 
                     else:
                         print(self.command_mxf)
@@ -952,7 +947,6 @@ def main(config=None, dry_run=False):
 
     mf = MaxFilter(config)
     mf.loop_dirs()
-    log("HPI registration completed successfully.", 'info',logfile=mf.logfile, logpath=log_path)
     return True
 
 if __name__ == "__main__":
