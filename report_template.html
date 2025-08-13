@@ -1,0 +1,87 @@
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 2em; background: #f8f9fa; }
+    h1 { color: #2c3e50; }
+    .summary { margin-bottom: 1em; font-size: 1.1em; }
+    .toggle-btn { float: right; margin-top: -2em; }
+    .tree { margin-left: 1em; }
+    .dir { font-weight: bold; color: #013152; cursor: pointer; }
+    .file { color: #636e72; }
+    .meta { color: #7f8c8d; font-size: 0.9em; margin-left: 0.5em; }
+    .highlight { background: #ffebab; }
+    .hidden { display: none; }
+    @media (max-width: 600px) { body { margin: 0.5em; } }
+    .dark-mode { background: #222; color: #eee; }
+    .dark-mode .dir { color: #81ecec; }
+    .dark-mode .file { color: #b2bec3; }
+    .dark-mode h1 { color: #b3fff0; }
+    .dark-mode a { color: #d0fffd; }
+  </style>
+  <script>
+    function toggleDarkMode() {
+      document.body.classList.toggle('dark-mode');
+    }
+    function filterTree() {
+      var input = document.getElementById('searchBox').value.toLowerCase();
+      var items = document.querySelectorAll('.dir, .file');
+      var treeDivs = document.querySelectorAll('.tree div');
+      items.forEach(function(item) {
+        var match = input.length === 0 || item.textContent.toLowerCase().includes(input);
+        if (match) {
+          item.classList.remove('hidden');
+          item.classList.add('highlight');
+          // Expand parent directories if collapsed
+          var parentDiv = item.closest('div');
+          if (parentDiv && parentDiv.classList.contains('hidden')) {
+            parentDiv.classList.remove('hidden');
+          }
+        } else {
+          item.classList.add('hidden');
+          item.classList.remove('highlight');
+        }
+      });
+      // Recursively expand all parent directories of matches
+      items.forEach(function(item) {
+        if (!item.classList.contains('hidden')) {
+          var parent = item.parentElement;
+          while (parent) {
+            if (parent.tagName === 'DIV' && parent.classList.contains('hidden')) {
+              parent.classList.remove('hidden');
+            }
+            parent = parent.parentElement;
+          }
+        }
+      });
+    }
+  </script>
+</head>
+<body>
+  <button class="toggle-btn" onclick="toggleDarkMode()">Toggle Dark Mode</button>
+  <h1>{{ title }}</h1>
+  <input type="text" id="searchBox" onkeyup="filterTree()" placeholder="Search files/folders...">
+  {% macro render_tree(tree) %}
+    {% set _level = kwargs.get('level', 0) %}
+    <ul class="tree">
+      {% for key, value in tree.items() %}
+        {% if key == '__files__' %}
+          {% for file in value %}
+  <li class="file">
+    <a href="{{ file.relpath }}" target="_blank">{{ file.name }}</a>
+  </li>
+          {% endfor %}
+        {% else %}
+          <li>
+            <span class="dir" onclick="this.nextElementSibling.classList.toggle('hidden')">{{ key }}</span>
+            <div {% if _level >= 2 %}class="hidden"{% endif %}>
+              {{ render_tree(value, level=_level+1) }}
+            </div>
+          </li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  {% endmacro %}
+  {{ render_tree(data) }}
+</body>
+</html>
