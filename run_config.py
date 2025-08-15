@@ -15,6 +15,8 @@ default_path = '/neuro/data/local/'
 
 global config
 
+# TODO: fix save and save as buttons
+
 def create_default_config():
     
     config = {
@@ -40,6 +42,7 @@ def create_default_config():
             'BIDS': default_path,
             'Calibration': '/neuro/databases/sss/sss_cal.dat',
             'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
+            'Logfile': 'pipeline_log.log'
         },
         'opm': {
             'polhemus': [''],
@@ -786,6 +789,7 @@ Set the dataset description metadata for BIDS.
     
     def cancel():
         root.destroy()
+        print('User cancelled')
         sys.exit(0)
         config = None
     
@@ -854,7 +858,7 @@ You can also provide a path to an existing configuration file to load its settin
     args = parser.parse_args()
     return args
 
-def main(config_file=None):
+def main(config_file:str=None):
     args = args_parser()
     
     config_file = args.config
