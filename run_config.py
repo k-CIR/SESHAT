@@ -1,11 +1,15 @@
 import yaml
 import json
 import sys
+import os
 from os.path import exists
 import argparse
 import tkinter as tk
 from tkinter import ttk
 from tkinter.filedialog import asksaveasfile, askopenfile
+import threading
+import subprocess
+from tkinter.scrolledtext import ScrolledText
 
 default_path = '/neuro/data/local/'
 
@@ -270,20 +274,18 @@ This tab allows you to set the basic project information and paths for the proje
         widget.grid(row=row, column=1, padx=3, pady=1)
         
         # Update paths immediately when project name changes
-        if key in ['squidMEG', 'opmMEG', 'BIDS']:
+        if key in ['squidMEG', 'opmMEG', 'BIDS', 'sinuhe_raw', 'kaptah_raw']:
             def update_path(name_var, path_var, path_type):
                 def callback(*args):
                     name = name_var.get()
-                    if name and name not in path_var.get():
-                        base_path = config['project'][path_type]
-                        if path_type == 'BIDS':
-                            path_var.set(f"{base_path}{name}/BIDS")
-                        else:
-                            path_var.set(f"{base_path}{name}/raw")
-                    else:
-                        path_var.set(config['project'][path_type])
+                    base_path = default_path
+                    if path_type == 'BIDS':
+                        path_var.set(f"{base_path}{name}/BIDS" if name else base_path)
+                    elif path_type in ['squidMEG', 'opmMEG']:
+                        path_var.set(f"{base_path}{name}/raw" if name else base_path)
+                    elif path_type in ['sinuhe_raw', 'kaptah_raw']:
+                        path_var.set(f"{base_path}{name}" if name else base_path)
                 return callback
-            
             project_vars['name'].trace('w', update_path(project_vars['name'], var, key))
         
         row += 1
@@ -591,17 +593,50 @@ Set the dataset description metadata for BIDS.
         widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
         row += 1
     
+    terminal_frame = ttk.Frame(root)
+    terminal_output = ScrolledText(terminal_frame, height=18, width=90, state='disabled', font=('TkDefaultFont', 10))
+    terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
+    def show_terminal():
+        terminal_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
+    def hide_terminal():
+        terminal_frame.pack_forget()
+
     # Execute button
     def execute():
         # Update config with current GUI values
         for key, var in run_vars.items():
             config['RUN'][key] = var.get()
-        
-        # messagebox.showinfo("Execute", "Executing pipeline with current configuration...")
-        
-        # Close the GUI and return the config
-        root.destroy()
+        # Always use the latest config_file value
+        config_path = config_file if config_file else None
+        cmd = ['python', 'natmeg_pipeline.py', 'run']
+        if config_path:
+            cmd += ['--config', config_path]
+        # Show terminal output window
+        show_terminal()
+        terminal_output.config(state='normal')
+        terminal_output.delete('1.0', 'end')
+        terminal_output.insert('end', f"Running: {' '.join(cmd)}\n\n")
+        terminal_output.config(state='disabled')
+        root.update()
+        def run_subprocess():
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=os.environ)
+            for line in process.stdout:
+                terminal_output.config(state='normal')
+                terminal_output.insert('end', line)
+                terminal_output.see('end')
+                terminal_output.config(state='disabled')
+                root.update()
+            process.wait()
+            terminal_output.config(state='normal')
+            if process.returncode == 0:
+                terminal_output.insert('end', '\nPipeline finished successfully.')
+            else:
+                terminal_output.insert('end', f'\nPipeline exited with code {process.returncode}.')
+            terminal_output.config(state='disabled')
+            root.update()
+        threading.Thread(target=run_subprocess, daemon=True).start()
     
+    # Execute button widget (initially disabled until a save occurs)
     execute_button = ttk.Button(run_frame, text="Save to execute", command=execute, state='disabled', style='C.TButton')
     execute_button.grid(row=row, column=0, columnspan=2, pady=20, padx=10, sticky='ew')
     
@@ -707,7 +742,7 @@ Set the dataset description metadata for BIDS.
             title='Select config file',
             filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
             initialdir=default_path)
-        
+        nonlocal config_file
         if new_config_file:
             # Load the new configuration
             new_config = load_config(new_config_file)
@@ -719,14 +754,12 @@ Set the dataset description metadata for BIDS.
                             var.set(', '.join(new_config['project'][key]) if isinstance(new_config['project'][key], list) else str(new_config['project'][key]))
                         else:
                             var.set(str(new_config['project'][key]))
-                
                 for key, var in opm_vars.items():
                     if key in new_config['opm']:
                         if key in ['hpi_names', 'polhemus']:
                             var.set(', '.join(new_config['opm'][key]) if isinstance(new_config['opm'][key], list) else str(new_config['opm'][key]))
                         else:
                             var.set(new_config['opm'][key])
-                
                 for section in ['standard_settings', 'advanced_settings']:
                     for key, var in maxfilter_vars[section].items():
                         if key in new_config['maxfilter'][section]:
@@ -734,33 +767,43 @@ Set the dataset description metadata for BIDS.
                                 var.set(', '.join(new_config['maxfilter'][section][key]) if isinstance(new_config['maxfilter'][section][key], list) else str(new_config['maxfilter'][section][key]))
                             else:
                                 var.set(new_config['maxfilter'][section][key])
-                
                 for key, var in bids_vars.items():
                     if key in new_config['bids']:
                         var.set(new_config['bids'][key])
-                
                 for key, var in run_vars.items():
                     if key in new_config['RUN']:
                         var.set(new_config['RUN'][key])
-                
                 # Update the global config variable
                 nonlocal config
                 config = new_config
+                # Update config_file to the newly loaded file
+                if hasattr(new_config_file, 'name'):
+                    config_file = new_config_file.name
+                else:
+                    config_file = new_config_file
+                # Update the loaded file label
+                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='blue')
     
     def cancel():
         root.destroy()
         sys.exit(0)
         config = None
     
+    # Show loaded config file above buttons
+    if config_file:
+        loaded_file_label = ttk.Label(root,
+            text=f"Loaded config file: {config_file}",
+            font=('TkDefaultFont', 10, 'bold'), foreground='blue')
+        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
+    else:
+        loaded_file_label = ttk.Label(root,
+            text="No config file loaded (using default)",
+            font=('TkDefaultFont', 10, 'bold'), foreground='gray')
+        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
+
     # Button frame at bottom
     button_frame = ttk.Frame(root)
     button_frame.pack(side='bottom', fill='x', padx=10, pady=5)
-    
-    # Configuration file label
-    config_file_label = ttk.Label(button_frame,
-                                  text=f"{config_file if config_file else ''}", 
-                                 font=('TkDefaultFont', 9), foreground='gray')
-    config_file_label.pack(anchor='n', padx=5, pady=5, fill='x', expand=False)
     # Cancel button
     cancel_button = ttk.Button(button_frame, text="Cancel", command=cancel)
     cancel_button.pack(side='right', padx=5)
