@@ -173,7 +173,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             if all(pipeline_success):
                 log("Pipeline", "Completed successfully!", 'info', logfile=logfile, logpath=logpath)
             else:
-                log("Pipeline", "Completed with errors.", 'error', logfile=logfile, logpath=logpath)
+                log("Pipeline", f"Completed with errors, see {logpath}/{logfile}", 'error', logfile=logfile, logpath=logpath)
 
         elif args.command == 'copy':
             import copy_to_cerberos

@@ -30,6 +30,7 @@ from mne_bids import (
 from mne_bids.utils import _write_json
 from mne_bids.write import _sidecar_json
 import mne
+import time
 
 from utils import (
     log,
@@ -587,6 +588,7 @@ def generate_new_conversion_table(config: dict):
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
+    return df
 
 # TODO: continue check here
 
@@ -633,9 +635,17 @@ def load_conversion_table(config: dict):
             print(f'Overwrite requested, generating new conversion table')
         else:
             print(f'Conversion file {conversion_file} not found, generating new')
+        
         generate_new_conversion_table(config)
+        conversion_file_path = f'{path_BIDS}/conversion_logs/bids_conversion.tsv'
+        while not exists(conversion_file_path):
+            time.sleep(0.5)
         # After generation, load the newly created file
-        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
+        conversion_files = sorted(
+            glob(os.path.join(conversion_logs_path, '*.tsv')),
+            key=os.path.getctime
+        )
+        print(f"Found conversion files: {conversion_files}")
         if conversion_files:
             latest_conversion_file = conversion_files[-1]
             print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
@@ -766,9 +776,8 @@ def bidsify(config: dict):
     # Flag deviants and exist if found
     deviants = df[df['task_flag'] == 'check']
     if len(deviants) > 0:
-        log('BIDS', 'Deviants found, please check the conversion table', level='error', logfile=logfile, logpath=logpath)
-        print(deviants)
-        sys.exit(1)
+        log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
+        return
 
     for i, d in df.iterrows():
         
@@ -972,7 +981,6 @@ def main(config:str=None):
     bidsify(config)
     update_sidecars(config)
     print_dir_tree(config['BIDS'])
-    return True
     
 
 if __name__ == "__main__":

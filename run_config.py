@@ -631,10 +631,10 @@ Set the dataset description metadata for BIDS.
                 root.update()
             process.wait()
             terminal_output.config(state='normal')
-            if process.returncode == 0:
-                terminal_output.insert('end', '\nPipeline finished successfully.')
-            else:
-                terminal_output.insert('end', f'\nPipeline exited with code {process.returncode}.')
+            # if process.returncode == 0:
+            #     terminal_output.insert('end', '\nPipeline finished successfully.')
+            # else:
+            #     terminal_output.insert('end', f'\nPipeline exited with code {process.returncode}.')
             terminal_output.config(state='disabled')
             root.update()
         threading.Thread(target=run_subprocess, daemon=True).start()

@@ -230,7 +230,7 @@ def TC_get_hpiout_names(raw):
     """
     hpi_names=list()
 
-    hpi_raw = raw.compute_psd(picks="misc")
+    hpi_raw = raw.compute_psd(picks="misc", verbose='error')
 
     for name in hpi_raw.info['ch_names']:
         if 'out' in name:
@@ -340,7 +340,7 @@ def plot_3d(plot_params: dict, filename: str):
 # Configuration and Setup Functions
 ###############################################################################
 
-def get_parameters(config:Union[str, dict]) -> dict:
+def get_parameters(config:str):
     """
     Load and parse HPI processing configuration from YAML file.
     
@@ -475,24 +475,33 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     
     
     if overwrite or hedscan_files:
-
-        log("HPI", f"Looking for polhemus files matching: {config['polhemus_file']}", 'info',logfile=logfile, logpath=log_path)
+        log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         polfile_list = [
-            file for pattern in config['polhemus_file']
+            file for pattern in config['polhemus_file'] or config['tasks']
             for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern}*.fif")
         ]
 
-        polfile = polfile_list[0]
-        log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+        if not polfile_list:
+            log("HPI", f"No polhemus file found matching: {config['polhemus_file']}", 'error',logfile=logfile, logpath=log_path)
+            polfile = None
+        else:
+            polfile = polfile_list[0]
+            log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+        
 
         hpi_files = [f for f in all_files if file_contains(f, hpinames)]
-        log("HPI", f"Looking for hpi files matching: {hpinames}", 'info',logfile=logfile, logpath=log_path)
-                
-        hpifile = hpi_files[0]
-        log("HPI", f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
+        if not hpi_files:
+            log("HPI", f"No hpi file found matching: {hpinames}", 'error',logfile=logfile, logpath=log_path)
+            hpifile = None
+        else:
+            hpifile = hpi_files[0]
+            log("HPI", f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
 
-        raw = mne.io.read_raw_fif(hpifile)
-        raw.load_data()
+        if not polfile and not hpifile:
+            return hpi_fit_parameters
+
+
+        raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
         #remove bad channels
         for bad_chan in raw.info["bads"]:
             raw.drop_channels(bad_chan)
@@ -501,7 +510,8 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         bads=TC_findzerochans(raw.info)
         for bad_chan in bads:
             raw.drop_channels(bad_chan)
-        log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'info',logfile=logfile, logpath=log_path)
+        if len(bads) > 0:
+            log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'warning',logfile=logfile, logpath=log_path)
 
         hpi_names,hpi_indices=TC_get_hpiout_names(raw)
 
@@ -510,8 +520,8 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             hpi_freqs[i]=hpifreq
 
         #resample
-        if 1:
-            raw.load_data().resample(1000)
+        if new_sfreq:
+            raw.resample(new_sfreq)
 
         #assuming file with polhemus locations of fiducials and HPIs
 
@@ -558,7 +568,6 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
         raw_orig = raw.copy()
         slope = np.zeros((len(hpi_indices),len(pick_types(raw.info, meg='mag'))),dtype=float)
-
         for index in range(len(hpi_indices)):
             raw=raw_orig.copy()
             channel_index=hpi_indices[index]
@@ -586,7 +595,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
             if len(peaks) <1 :
                 log("HPI", '***********Error no peaks found**********', 'error',logfile=logfile, logpath=log_path)
-                exit()
+                continue
                 
             window=(peaks[-1]-peaks[0])/raw.info['sfreq']
 
@@ -695,26 +704,30 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 slope[index,:] = coil_amplitudes['slopes'][0][index]
         #********
 
-        assert len(coil_amplitudes["times"]) == 1
-        coil_amplitudes['slopes'][0]= slope
-        coil_locs = compute_chpi_locs(raw.info, coil_amplitudes)
-        hpi_dev = np.array(coil_locs['rrs'][0])
-        hpi_gofs = np.array(coil_locs['gofs'][0])
 
-        log("HPI", '**** Apply trans to recording file ***********************************', 'info',logfile=logfile, logpath=log_path)
-        hpi_fit_parameters['hedscan_files'] = hedscan_files
-        hpi_fit_parameters['hpi_dev'] = hpi_dev
-        hpi_fit_parameters['hpi_gofs'] = hpi_gofs
-        hpi_fit_parameters['hpi_orig'] = hpi_orig
-        hpi_fit_parameters['hpi_names'] = hpi_names
-        hpi_fit_parameters['pol_info'] = pol_info
-        hpi_fit_parameters['nasion'] = nasion
-        hpi_fit_parameters['lpa'] = lpa
-        hpi_fit_parameters['rpa'] = rpa
-        hpi_fit_parameters['raw'] = raw
-        hpi_fit_parameters['new_sfreq'] = new_sfreq
-        hpi_fit_parameters['logfile'] = logfile
-        hpi_fit_parameters['log_path'] = log_path
+        try:
+            assert len(coil_amplitudes["times"]) == 1
+            coil_amplitudes['slopes'][0]= slope
+            coil_locs = compute_chpi_locs(raw.info, coil_amplitudes)
+            hpi_dev = np.array(coil_locs['rrs'][0])
+            hpi_gofs = np.array(coil_locs['gofs'][0])
+
+            log("HPI", '**** Apply trans to recording file ***********************************', 'info',logfile=logfile, logpath=log_path)
+            hpi_fit_parameters['hedscan_files'] = hedscan_files
+            hpi_fit_parameters['hpi_dev'] = hpi_dev
+            hpi_fit_parameters['hpi_gofs'] = hpi_gofs
+            hpi_fit_parameters['hpi_orig'] = hpi_orig
+            hpi_fit_parameters['hpi_names'] = hpi_names
+            hpi_fit_parameters['pol_info'] = pol_info
+            hpi_fit_parameters['nasion'] = nasion
+            hpi_fit_parameters['lpa'] = lpa
+            hpi_fit_parameters['rpa'] = rpa
+            hpi_fit_parameters['raw'] = raw
+            hpi_fit_parameters['new_sfreq'] = new_sfreq
+            hpi_fit_parameters['logfile'] = logfile
+            hpi_fit_parameters['log_path'] = log_path
+        except Exception as e:
+            log("HPI", f"Error occurred while processing HPI files: {e}", 'error', logfile=logfile, logpath=log_path)
     else:
         log("HPI", 'No (new) files to process', 'info',logfile=logfile, logpath=log_path)
  
@@ -799,100 +812,103 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
     
     if overwrite or not os.path.exists(f'{path}/{savename}'):
         """Process a single data file"""
-        raw = mne.io.read_raw_fif(datfile)
+        try:
+            raw = mne.io.read_raw_fif(datfile)
 
-        #resample if new sampling freq different from old one
-        if new_sfreq != raw.info['sfreq']: 
-            raw.load_data().resample(new_sfreq)
+            #resample if new sampling freq different from old one
+            if new_sfreq != raw.info['sfreq']: 
+                raw.load_data().resample(new_sfreq)
 
-        #remove bad channels
-        for bad_chan in raw.info["bads"]:
-            raw.drop_channels(bad_chan)
+            #remove bad channels
+            for bad_chan in raw.info["bads"]:
+                raw.drop_channels(bad_chan)
 
-        #remove zero channels
-        bads=TC_findzerochans(raw.info)
-        for bad_chan in bads:
-            raw.drop_channels(bad_chan)
+            #remove zero channels
+            bads=TC_findzerochans(raw.info)
+            for bad_chan in bads:
+                raw.drop_channels(bad_chan)
 
-        #only use good fits
-        include_hpis = hpi_gofs>0.9
+            #only use good fits
+            include_hpis = hpi_gofs>0.9
 
-        tree = cKDTree(hpi_orig)
-        distances, indices = tree.query(hpi_dev[include_hpis])
+            tree = cKDTree(hpi_orig)
+            distances, indices = tree.query(hpi_dev[include_hpis])
 
-        log("HPI", f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=logfile, logpath=log_path)
+            log("HPI", f"hpi_orig: {hpi_dev[include_hpis]}\nhpi_dev: {hpi_orig[indices]}\n", 'info',logfile=logfile, logpath=log_path)
 
-        trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
-        dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
+            trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
+            dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
 
-        hpi_head = apply_trans(dev_to_head_trans, hpi_dev)
-        dist = np.linalg.norm(hpi_orig[indices]-hpi_head[include_hpis], axis=1)
+            hpi_head = apply_trans(dev_to_head_trans, hpi_dev)
+            dist = np.linalg.norm(hpi_orig[indices]-hpi_head[include_hpis], axis=1)
 
-        raw.info.update(dev_head_t=dev_to_head_trans)
+            raw.info.update(dev_head_t=dev_to_head_trans)
 
-        info=raw.info
-        digpts=np.array([],dtype=float)
-        for j in pol_info['dig']:
-            digpts=np.append(digpts,j['r'])
-        n=int(digpts.shape[0]/3)
-        digpts=digpts.reshape((n,3))
-
-        with raw.info._unlock():
-            raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
-
-        raw.save(f'{path}/{savename}',overwrite=True)
-
-        msg_coils = ''
-        for index, value in enumerate(hpi_gofs):
-                status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
-                msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
-        
-        msg = f'''---------------------------------------------
-        hpi_orig: {hpi_orig}
-        hpi_dev: {hpi_dev}
-        mean distance = {np.mean(dist)*1000:.1f} mm\n
-        {msg_coils}
-        ---------------------------------------------'''
-
-        log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
-
-        if plotResult:
-            senspos=np.array([],dtype=float)
-            picks = pick_types(raw.info, meg='mag')
-            for j in picks:
-                senspos=np.append(senspos, apply_trans(dev_to_head_trans, (raw.info['chs'][j]['loc'][0:3])))
-            n=int(senspos.shape[0]/3)
-            senspos=senspos.reshape((n,3))
-
-            senslabel=list()
-            picks = pick_types(raw.info, meg='mag')
-            for j in picks:
-                index = raw.info['chs'][j]['ch_name'].find('s')
-                if index != -1:
-                    senslabel.append(raw.info['chs'][j]['ch_name'][index:])
-                else:
-                    senslabel.append('')
-
+            info=raw.info
             digpts=np.array([],dtype=float)
-            for j in raw.info['dig']:
-                digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
+            for j in pol_info['dig']:
+                digpts=np.append(digpts,j['r'])
             n=int(digpts.shape[0]/3)
             digpts=digpts.reshape((n,3))
-            hpilabel=list()
-            for j in range(len(hpi_names)):
-                hpilabel+=[str(j+1)]
-                
-            plot_params = {
-                'senspos': senspos,
-                'senslabel': senslabel,
-                'hpipos': hpi_orig,
-                'hpilabel': hpilabel,
-                'hpipos2': hpi_head,
-                'hpilabel2': hpi_names,
-                'digpos': digpts
-            }
 
-            plot_3d(plot_params, f'{path}/{savename.replace("_meg.fif", "_3d_plot.png")}')
+            with raw.info._unlock():
+                raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
+
+            raw.save(f'{path}/{savename}',overwrite=True)
+
+            msg_coils = ''
+            for index, value in enumerate(hpi_gofs):
+                    status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
+                    msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
+            
+            msg = f'''---------------------------------------------
+            hpi_orig: {hpi_orig}
+            hpi_dev: {hpi_dev}
+            mean distance = {np.mean(dist)*1000:.1f} mm\n
+            {msg_coils}
+            ---------------------------------------------'''
+
+            log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
+
+            if plotResult:
+                senspos=np.array([],dtype=float)
+                picks = pick_types(raw.info, meg='mag')
+                for j in picks:
+                    senspos=np.append(senspos, apply_trans(dev_to_head_trans, (raw.info['chs'][j]['loc'][0:3])))
+                n=int(senspos.shape[0]/3)
+                senspos=senspos.reshape((n,3))
+
+                senslabel=list()
+                picks = pick_types(raw.info, meg='mag')
+                for j in picks:
+                    index = raw.info['chs'][j]['ch_name'].find('s')
+                    if index != -1:
+                        senslabel.append(raw.info['chs'][j]['ch_name'][index:])
+                    else:
+                        senslabel.append('')
+
+                digpts=np.array([],dtype=float)
+                for j in raw.info['dig']:
+                    digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
+                n=int(digpts.shape[0]/3)
+                digpts=digpts.reshape((n,3))
+                hpilabel=list()
+                for j in range(len(hpi_names)):
+                    hpilabel+=[str(j+1)]
+                    
+                plot_params = {
+                    'senspos': senspos,
+                    'senslabel': senslabel,
+                    'hpipos': hpi_orig,
+                    'hpilabel': hpilabel,
+                    'hpipos2': hpi_head,
+                    'hpilabel2': hpi_names,
+                    'digpos': digpts
+                }
+
+                plot_3d(plot_params, f'{path}/{savename.replace("_meg.fif", "_3d_plot.png")}')
+        except Exception as e:
+            log("HPI", f"Error occurred while processing {savename}: {e}", 'error', logfile=logfile, logpath=log_path)
 
 ###############################################################################
 # Command Line Interface
@@ -960,16 +976,23 @@ def main(config: Union[str, dict]=None):
         - ProcessPoolExecutor handles memory-intensive operations
         - Shared parameter passing via functools.partial
     """
+    
+
     if config is None:
+        # Parse command line arguments
         args = args_parser()
-        config_file = args.config
-        if not config_file or not os.path.exists(config_file):
-            config_file = askForConfig()
-        else:
-            print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
-            return
         
-        config = get_parameters(config_file)
+        if args.config:
+            config_file = args.config
+        else:
+            config_file = askForConfig()
+        
+        if config_file:
+            config = get_parameters(config_file)
+        
+        else:
+            print('No configuration file selected')
+            sys.exit(1)
     elif isinstance(config, str):
         config_file = config
         config = get_parameters(config_file)
@@ -994,19 +1017,22 @@ def main(config: Union[str, dict]=None):
             if os.path.isdir(f'{opmMEGdir}/{subject}/{session}') and re.match(r'^\d{6}$', session)
         ])
         for session in sessions:
-            
+            print(subject, session)
             hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite)
             
             hedscan_files = hpi_fit_parameters.get('hedscan_files', [])
             # Create partial function with shared parameters
             if overwrite or hedscan_files:
-                process_func = partial(
-                    process_single_file,
-                    hpi_fit_parameters=hpi_fit_parameters,
-                    plotResult=plotResult,
-                    log_path=log_path
+                try:
+                    process_func = partial(
+                        process_single_file,
+                        hpi_fit_parameters=hpi_fit_parameters,
+                        plotResult=plotResult,
+                        log_path=log_path
                 )
-    
+                except Exception as e:
+                    log("HPI", f"Error occurred while processing: {e}", 'error', logfile=logfile, logpath=log_path)
+
     # Use ThreadPoolExecutor or ProcessPoolExecutor
 
                 with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:

@@ -205,7 +205,8 @@ def copy_from_sinuhe(config, check_existing=False):
                                 raw.save(destination, overwrite=True, verbose='error')
                                 log('Copy', f'Copied (split if > 2GB) {source} --> {destination}', logfile=logfile, logpath=log_path)
                             except Exception as e:
-                                log('Copy', f'{source} !!! {destination} {e}', 'error',logfile=logfile, logpath=log_path)
+                                copy_if_newer_or_larger(source, destination)
+                                log('Copy', f'{source} --> {destination} {e}', 'warning',logfile=logfile, logpath=log_path)
                             continue
                     else:
                         copy_if_newer_or_larger(source, destination)
