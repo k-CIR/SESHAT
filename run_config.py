@@ -10,6 +10,7 @@ from tkinter.filedialog import asksaveasfile, askopenfile
 import threading
 import subprocess
 from tkinter.scrolledtext import ScrolledText
+import queue
 
 default_path = '/neuro/data/local/'
 
@@ -194,10 +195,34 @@ def config_UI(config_file=None):
     root.geometry("700x800")
     
     notebook = ttk.Notebook(root)
-    notebook.pack(fill='both', expand=False, padx=3, pady=3)
+    notebook.pack(fill='x', expand=False, padx=1, pady=1)
     
     style = ttk.Style()
     style.map("C.TButton", foreground=[('disabled', 'grey')])
+
+    # Helper to add a fixed-size, scrollable help section labeled simply 'Help'
+    def init_collapsible_help(parent, text, wrap=650, title='Help'):
+        header_lbl = ttk.Label(parent, text='Help', font=('TkDefaultFont', 10, 'bold'))
+        header_lbl.pack(anchor='w', padx=1, pady=1)
+        # Match help box colors to current ttk theme
+        bg = style.lookup('TFrame', 'background') or root.cget('background')
+        fg = style.lookup('TLabel', 'foreground') or '#000000'
+        help_box = ScrolledText(
+            parent,
+            height=5,
+            wrap='word',
+            font=('TkDefaultFont', 10),
+            bg=bg,
+            fg=fg,
+            insertbackground=fg,
+            borderwidth=0,
+            relief='flat',
+            highlightthickness=0
+        )
+        help_box.insert('1.0', text.strip() + '\n')
+        help_box.config(state='disabled')
+        help_box.pack(fill='both', expand=True, padx=1, pady=1)
+        return header_lbl, help_box
     
     # Project tab
     project_frame = ttk.Frame(notebook)
@@ -205,7 +230,7 @@ def config_UI(config_file=None):
     
     # Create notebook for Project sub-tabs
     project_notebook = ttk.Notebook(project_frame)
-    project_notebook.pack(fill='both', expand=True, padx=3, pady=3)
+    project_notebook.pack(fill='x', expand=False, padx=1, pady=1)
     
     # Standard settings tab
     project_standard_frame = ttk.Frame(project_notebook)
@@ -223,7 +248,7 @@ def config_UI(config_file=None):
     row = 0
     for key in standard_keys:
         value = config['project'][key]
-        ttk.Label(project_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(project_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         if key == 'tasks':
             var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
             widget = ttk.Entry(project_standard_frame, textvariable=var, width=50)
@@ -231,12 +256,12 @@ def config_UI(config_file=None):
             var = tk.StringVar(value=str(value))
             widget = ttk.Entry(project_standard_frame, textvariable=var, width=50, justify='left')
         project_vars[key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1)
+        widget.grid(row=row, column=1, padx=1, pady=1)
         row += 1
         
     # Project information frame (in standard tab)
     project_std_info_frame = ttk.Frame(project_standard_frame)
-    project_std_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    project_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the Project tab
     std_info_text = """
@@ -245,15 +270,12 @@ This tab allows you to set the basic project information and paths for the proje
 • name: Name of project directory on local disk
 • CIR-ID: CIR ID of the project, used for data management
 • description: Brief description of the project
-• tasks: Comma-separated list in square brackets of experimental tasks (e.g. [rest, oddball, memory])
+• tasks: Comma-separated list in square brackets of experimental tasks (e.g. rest, oddball, memory)
 • sinuhe_raw: Path to Sinuhe raw data directory
 • kaptah_raw: Path to Kaptah raw data directory
 """
 
-    std_info_label = ttk.Label(project_std_info_frame, text=std_info_text, 
-                          justify='left', wraplength=650, 
-                          font=('TkDefaultFont', 11))
-    std_info_label.pack(anchor='w', padx=5, pady=5)
+    init_collapsible_help(project_std_info_frame, std_info_text, wrap=650, title='Project help')
     
     # Advanced project settings
     advanced_keys = ['InstitutionName',
@@ -270,11 +292,11 @@ This tab allows you to set the basic project information and paths for the proje
                     value = f"{value}{project_name}/BIDS"
                 else:
                     value = f"{value}{project_name}/raw"
-        ttk.Label(project_advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(project_advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         var = tk.StringVar(value=str(value))
         widget = ttk.Entry(project_advanced_frame, textvariable=var, width=50, justify='left')
         project_vars[key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1)
+        widget.grid(row=row, column=1, padx=1, pady=1)
         
         # Update paths immediately when project name changes
         if key in ['squidMEG', 'opmMEG', 'BIDS', 'sinuhe_raw', 'kaptah_raw']:
@@ -295,7 +317,7 @@ This tab allows you to set the basic project information and paths for the proje
     
     # Project information frame (in advanced tab)
     project_adv_info_frame = ttk.Frame(project_advanced_frame)
-    project_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    project_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the Project tab
     adv_info_text = """
@@ -311,10 +333,7 @@ This tab allows you to set the basic project information and paths for the proje
 • Crosstalk: Path to SSS crosstalk file
 """
 
-    adv_info_label = ttk.Label(project_adv_info_frame, text=adv_info_text, 
-                          justify='left', wraplength=650, 
-                          font=('TkDefaultFont', 11))
-    adv_info_label.pack(anchor='w', padx=5, pady=5)
+    init_collapsible_help(project_adv_info_frame, adv_info_text, wrap=650, title='Advanced help')
     
     # OPM tab
     opm_frame = ttk.Frame(notebook)
@@ -323,7 +342,7 @@ This tab allows you to set the basic project information and paths for the proje
     opm_vars = {}
     row = 0
     for key, value in config['opm'].items():
-        ttk.Label(opm_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(opm_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         if isinstance(value, bool):
             var = tk.BooleanVar(value=value)
             widget = ttk.Checkbutton(opm_frame, variable=var, onvalue=True, offvalue=False)
@@ -334,12 +353,12 @@ This tab allows you to set the basic project information and paths for the proje
             var = tk.StringVar(value=str(value))
             widget = ttk.Entry(opm_frame, textvariable=var, width=50)
         opm_vars[key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
         row += 1
         
     # OPM information frame (in standard tab)
     opm_info_frame = ttk.Frame(opm_frame)
-    opm_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    opm_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the OPM tab
     opm_info_text = """
@@ -353,10 +372,7 @@ Set the parameters for adding HPI coregistration polhemus data from the TRIUX re
 • plot: Store a plot of the OPM data after processing
 """
 
-    opm_info_label = ttk.Label(opm_info_frame, text=opm_info_text, 
-                          justify='left', wraplength=650, 
-                          font=('TkDefaultFont', 11))
-    opm_info_label.pack(anchor='w', padx=5, pady=5)
+    init_collapsible_help(opm_info_frame, opm_info_text, wrap=650, title='OPM help')
     
     # MaxFilter tab
     maxfilter_frame = ttk.Frame(notebook)
@@ -366,7 +382,7 @@ Set the parameters for adding HPI coregistration polhemus data from the TRIUX re
     
     # Create notebook for MaxFilter sub-tabs
     maxfilter_notebook = ttk.Notebook(maxfilter_frame)
-    maxfilter_notebook.pack(fill='both', expand=True, padx=3, pady=3)
+    maxfilter_notebook.pack(fill='x', expand=False, padx=1, pady=1)
     
     # Standard settings tab
     standard_frame = ttk.Frame(maxfilter_notebook)
@@ -374,7 +390,7 @@ Set the parameters for adding HPI coregistration polhemus data from the TRIUX re
     
     row = 0
     for key, value in config['maxfilter']['standard_settings'].items():
-        ttk.Label(standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         if isinstance(value, bool):
             var = tk.BooleanVar(value=value)
             widget = ttk.Checkbutton(standard_frame, variable=var)
@@ -392,12 +408,12 @@ Set the parameters for adding HPI coregistration polhemus data from the TRIUX re
                 selected_option.set(options[0])
                 var = selected_option
         maxfilter_vars['standard_settings'][key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
         row += 1
     
     # Maxfilter information frame (in standard tab)
     mf_std_info_frame = ttk.Frame(standard_frame)
-    mf_std_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    mf_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the Project tab
     mf_std_info_text = """
@@ -418,10 +434,7 @@ Set the parameters for MaxFilter processing.
 
 
 """
-    mf_std_info_label = ttk.Label(mf_std_info_frame, text=mf_std_info_text, 
-                          justify='left', wraplength=550, 
-                          font=('TkDefaultFont', 10))
-    mf_std_info_label.pack(anchor='w', padx=5, pady=0)
+    init_collapsible_help(mf_std_info_frame, mf_std_info_text, wrap=550, title='MaxFilter (standard) help')
     
     # Advanced settings tab
     advanced_frame = ttk.Frame(maxfilter_notebook)
@@ -429,7 +442,7 @@ Set the parameters for MaxFilter processing.
     
     row = 0
     for key, value in config['maxfilter']['advanced_settings'].items():
-        ttk.Label(advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         if isinstance(value, bool):
             var = tk.BooleanVar(value=value)
             widget = ttk.Checkbutton(advanced_frame, variable=var)
@@ -447,12 +460,12 @@ Set the parameters for MaxFilter processing.
                 var = selected_option
                 
         maxfilter_vars['advanced_settings'][key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
         row += 1
     
     # Maxfilter information frame (in advanced tab)
     mf_adv_info_frame = ttk.Frame(advanced_frame)
-    mf_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    mf_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the Project tab
     mf_adv_info_text = """
@@ -468,18 +481,15 @@ Set the parameters for MaxFilter processing.
 • debug: Enable debug mode for MaxFilter (if true will print command instead of running it, headpos will still be applied)
 
 """
-    mf_adv_info_label = ttk.Label(mf_adv_info_frame, text=mf_adv_info_text, 
-                          justify='left', wraplength=550, 
-                          font=('TkDefaultFont', 10))
-    mf_adv_info_label.pack(anchor='w', padx=5, pady=0)
+    init_collapsible_help(mf_adv_info_frame, mf_adv_info_text, wrap=550, title='MaxFilter (advanced) help')
     
     # BIDS tab
-    bids_frame = ttk.Frame(notebook)
+    bids_frame = ttk.Frame(notebook, )
     notebook.add(bids_frame, text="BIDS")
     
     # Create notebook for BIDS sub-tabs
     bids_notebook = ttk.Notebook(bids_frame)
-    bids_notebook.pack(fill='both', expand=True, padx=3, pady=3)
+    bids_notebook.pack(fill='x', expand=False, padx=1, pady=1)
     
     # Standard settings tab
     bids_standard_frame = ttk.Frame(bids_notebook)
@@ -497,7 +507,7 @@ Set the parameters for MaxFilter processing.
     for key in standard_bids_keys:
         if key in config['bids']:
             value = config['bids'][key]
-            ttk.Label(bids_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+            ttk.Label(bids_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
             if isinstance(value, bool):
                 var = tk.BooleanVar(value=value)
                 widget = ttk.Checkbutton(bids_standard_frame, variable=var)
@@ -505,12 +515,12 @@ Set the parameters for MaxFilter processing.
                 var = tk.StringVar(value=str(value))
                 widget = ttk.Entry(bids_standard_frame, textvariable=var, width=50)
             bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
             row += 1
     
     # BIDS information frame (in standard tab)
     bids_info_frame = ttk.Frame(bids_standard_frame)
-    bids_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    bids_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the BIDS standard tab
     bids_info_text = """
@@ -529,10 +539,7 @@ Set the parameters for Bidsification.
 
 """
     
-    bids_info_label = ttk.Label(bids_info_frame, text=bids_info_text, 
-                          justify='left', wraplength=550, 
-                          font=('TkDefaultFont', 10))
-    bids_info_label.pack(anchor='w', padx=5, pady=0)
+    init_collapsible_help(bids_info_frame, bids_info_text, wrap=550, title='BIDS help')
     
     # Dataset description tab
     bids_dataset_frame = ttk.Frame(bids_notebook)
@@ -546,7 +553,7 @@ Set the parameters for Bidsification.
     for key in dataset_bids_keys:
         if key in config['bids']:
             value = config['bids'][key]
-            ttk.Label(bids_dataset_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+            ttk.Label(bids_dataset_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
             if isinstance(value, bool):
                 var = tk.BooleanVar(value=value)
                 widget = ttk.Checkbutton(bids_dataset_frame, variable=var)
@@ -554,12 +561,12 @@ Set the parameters for Bidsification.
                 var = tk.StringVar(value=str(value))
                 widget = ttk.Entry(bids_dataset_frame, textvariable=var, width=50)
             bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
             row += 1
     
     # Dataset description information frame
     dataset_info_frame = ttk.Frame(bids_dataset_frame)
-    dataset_info_frame.grid(row=row, column=0, columnspan=2, padx=3, pady=3, sticky='ew')
+    dataset_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
     
     # Add informational text about the dataset description tab
     dataset_info_text = """
@@ -577,10 +584,7 @@ Set the dataset description metadata for BIDS.
 
 """
     
-    dataset_info_label = ttk.Label(dataset_info_frame, text=dataset_info_text, 
-                          justify='left', wraplength=550, 
-                          font=('TkDefaultFont', 10))
-    dataset_info_label.pack(anchor='w', padx=5, pady=0)
+    init_collapsible_help(dataset_info_frame, dataset_info_text, wrap=550, title='Dataset description help')
     
     # Run tab
     run_frame = ttk.Frame(notebook)
@@ -589,20 +593,31 @@ Set the dataset description metadata for BIDS.
     run_vars = {}
     row = 0
     for key, value in config['RUN'].items():
-        ttk.Label(run_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=3, pady=1)
+        ttk.Label(run_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
         var = tk.BooleanVar(value=value)
         widget = ttk.Checkbutton(run_frame, variable=var)
         run_vars[key] = var
-        widget.grid(row=row, column=1, padx=3, pady=1, sticky='w')
+        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
         row += 1
     
     terminal_frame = ttk.Frame(root)
-    terminal_output = ScrolledText(terminal_frame, height=18, width=90, state='disabled', font=('TkDefaultFont', 10))
+    terminal_output = ScrolledText(
+        terminal_frame,
+        height=15,
+        width=90,
+        state='disabled',
+        font=('TkDefaultFont', 10),
+        bg='#000000',
+        fg='#FFFFFF',
+        insertbackground='#FFFFFF'
+    )
     terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
     def show_terminal():
         terminal_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
     def hide_terminal():
         terminal_frame.pack_forget()
+    # Show terminal by default
+    show_terminal()
 
     # Execute button
     def execute():
@@ -611,7 +626,10 @@ Set the dataset description metadata for BIDS.
             config['RUN'][key] = var.get()
         # Always use the latest config_file value
         config_path = config_file if config_file else None
-        cmd = ['python', 'natmeg_pipeline.py', 'run']
+        # Build macOS-safe command using the current Python interpreter
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
+        cmd = [sys.executable, '-u', pipeline_path, 'run']
         if config_path:
             cmd += ['--config', config_path]
         # Show terminal output window
@@ -620,23 +638,38 @@ Set the dataset description metadata for BIDS.
         terminal_output.delete('1.0', 'end')
         terminal_output.insert('end', f"Running: {' '.join(cmd)}\n\n")
         terminal_output.config(state='disabled')
-        root.update()
+        # Thread-safe streaming using a queue and periodic polling on the main thread
+        q = queue.Queue()
+        def poll_queue():
+            try:
+                while True:
+                    line = q.get_nowait()
+                    terminal_output.config(state='normal')
+                    terminal_output.insert('end', line)
+                    terminal_output.see('end')
+                    terminal_output.config(state='disabled')
+            except queue.Empty:
+                pass
+            finally:
+                root.after(50, poll_queue)
+
         def run_subprocess():
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=os.environ)
+            process = subprocess.Popen(
+                cmd,
+                cwd=base_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=os.environ
+            )
             for line in process.stdout:
-                terminal_output.config(state='normal')
-                terminal_output.insert('end', line)
-                terminal_output.see('end')
-                terminal_output.config(state='disabled')
-                root.update()
+                q.put(line)
             process.wait()
-            terminal_output.config(state='normal')
-            # if process.returncode == 0:
-            #     terminal_output.insert('end', '\nPipeline finished successfully.')
-            # else:
-            #     terminal_output.insert('end', f'\nPipeline exited with code {process.returncode}.')
-            terminal_output.config(state='disabled')
-            root.update()
+            q.put(f"\nProcess finished with exit code {process.returncode}\n")
+
+        # Kick off polling and background process
+        root.after(0, poll_queue)
         threading.Thread(target=run_subprocess, daemon=True).start()
     
     # Execute button widget (initially disabled until a save occurs)
@@ -785,7 +818,7 @@ Set the dataset description metadata for BIDS.
                 else:
                     config_file = new_config_file
                 # Update the loaded file label
-                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='blue')
+                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='white')
     
     def cancel():
         root.destroy()
@@ -797,7 +830,7 @@ Set the dataset description metadata for BIDS.
     if config_file:
         loaded_file_label = ttk.Label(root,
             text=f"Loaded config file: {config_file}",
-            font=('TkDefaultFont', 10, 'bold'), foreground='blue')
+            font=('TkDefaultFont', 10, 'bold'), foreground='white')
         loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
     else:
         loaded_file_label = ttk.Label(root,
