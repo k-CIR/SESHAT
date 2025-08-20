@@ -13,6 +13,7 @@ import numpy as np
 import argparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import subprocess
 
 
 from mne_bids import (
@@ -122,9 +123,10 @@ def create_participants_files(config: dict):
         participants = glob('sub*', root_dir=config['BIDS'])
         # create empty table with 4 columns (participant_id, sex, age)
         df = pd.DataFrame(columns=['participant_id', 'sex', 'age', 'group'])
-        
-        df.to_csv(f'{config['BIDS']}/participants.tsv', sep='\t', index=False)
-        print(f'Writing {config['BIDS']}/participants.tsv')
+            
+        participants_tsv_path = os.path.join(config['BIDS'], 'participants.tsv')
+        df.to_csv(participants_tsv_path, sep='\t', index=False)
+        print(f"Writing {participants_tsv_path}")
 
     json_file = os.path.join(config['BIDS'], 'participants.json')
 
@@ -149,9 +151,10 @@ def create_participants_files(config: dict):
             }
         }
 
-        with open(f'{config['BIDS']}/participants.json', 'w') as f:
+    participants_json_path = os.path.join(config['BIDS'], 'participants.json')
+    with open(participants_json_path, 'w') as f:
             json.dump(participants_json, f, indent=4)
-        print(f'Writing {config['BIDS']}/participants.json')
+    print(f"Writing {participants_json_path}")
 
 ###############################################################################
 # Help functions
@@ -234,6 +237,7 @@ def update_sidecars(config: dict):
             info = mne.io.read_info(bp.fpath, verbose='error')
             bp_json = bp.copy().update(extension='.json', split=None)
             # Check if json exists, if not create it
+            print(bp.subject)
             if not exists(bp_json.fpath):
                 raw = read_raw_bids(bp)
                 _sidecar_json(raw=raw,
@@ -354,8 +358,11 @@ def add_channel_parameters(
     """
     if exists(opm_tsv):
         orig_df = pd.read_csv(opm_tsv, sep='\t')
-        bids_df = pd.read_csv(bids_tsv, sep='\t')
-        
+        if not exists(bids_tsv):
+            bids_df = orig_df.copy()
+        else:
+            bids_df = pd.read_csv(bids_tsv, sep='\t')
+
         # Compare file with file in BIDS folder
 
         add_cols = [c for c in orig_df.columns
@@ -754,11 +761,13 @@ def bidsify(config: dict):
     df, conversion_file = load_conversion_table(config)
     #df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
+
+    df['participant_to'] = df['participant_to'].str.zfill(4)
     
     # Start by creating the BIDS directory structure
     unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
     for _, row in unique_participants_sessions.iterrows():
-        subject_padded = str(row['participant_to']).zfill(3)
+        subject_padded = str(row['participant_to']).zfill(4)
         session_padded = str(row['session_to']).zfill(2)
         bids_path = BIDSPath(
             subject=subject_padded,
@@ -779,6 +788,7 @@ def bidsify(config: dict):
     deviants = df[df['task_flag'] == 'check']
     if len(deviants) > 0:
         log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
+        
         return
 
     for i, d in df.iterrows():
@@ -790,11 +800,16 @@ def bidsify(config: dict):
         
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
         if not file_contains(raw_file, headpos_patterns):
-            raw = mne.io.read_raw_fif(raw_file,
-                                    allow_maxshield=True,
-                                    verbose='error')
+            try:
+                raw = mne.io.read_raw_fif(raw_file,
+                                        allow_maxshield=True,
+                                        verbose='error')
+            except Exception as e:
+                log('BIDS', f'Error reading {raw_file}: {e}', level='error', logfile=logfile, logpath=logpath)
+                continue
 
             ch_types = set(raw.info.get_channel_types())
+            
 
             if 'mag' in ch_types:
                 datatype = 'meg'
@@ -804,9 +819,17 @@ def bidsify(config: dict):
                 datatype = 'eeg'
                 extension = None
                 suffix = None
-            
+            elif raw_file.endswith('.fif'):
+                datatype = 'meg'
+                extension = '.fif'
+                suffix = 'meg'
+
             # Added leading zero-padding to subject and session
-            subject = str(d['participant_to']).zfill(3)
+            if len(d['participant_to']) > 3:
+                subject = str(d['participant_to']).zfill(4)
+            else:
+                subject = str(d['participant_to']).zfill(3)
+            
             session = str(d['session_to']).zfill(2)
             task = d['task']
             acquisition = d['acquisition']
@@ -822,6 +845,7 @@ def bidsify(config: dict):
             else:
                 event_id = None
                 events = None
+            
 
             # Create BIDS path
             bids_path = BIDSPath(
@@ -836,7 +860,8 @@ def bidsify(config: dict):
                 extension=extension,
                 root=path_BIDS
             )
-        # Write the BIDS file
+            
+            # Write the BIDS file
             try:
                 write_raw_bids(
                     raw=raw,
@@ -869,10 +894,12 @@ def bidsify(config: dict):
 
             # Add channel parameters 
             if acquisition == 'hedscan' and not processing:
+                
                 opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
                 
                 bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
                 add_channel_parameters(bids_tsv, opm_tsv)
+
 
         # If the file is a head position file, copy it to the BIDS directory
         # and rename it to the BIDS format
