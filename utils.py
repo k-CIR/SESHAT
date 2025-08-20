@@ -17,6 +17,9 @@ from glob import glob
 import pandas as pd
 from os.path import exists, dirname
 import os
+import logging
+from logging import handlers
+from typing import Optional, Dict, Tuple
 
 default_output_path = 'neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
@@ -25,78 +28,128 @@ headpos_patterns = ['trans', 'headpos']
 opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
 
+###############################################################################
+# Centralized logging setup (colored console + structured file log)
+###############################################################################
+
+_LOGGER_NAME = 'NatMEG'
+_CONFIGURED: bool = False
+_FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
+_CONSOLE_HANDLER: Optional[logging.Handler] = None
+
+
+class _ColoredFormatter(logging.Formatter):
+    COLORS = {
+        logging.DEBUG: '\033[90m',
+        logging.INFO: '\033[94m',
+        logging.WARNING: '\033[93m',
+        logging.ERROR: '\033[91m',
+        logging.CRITICAL: '\033[95m',
+    }
+    RESET = '\033[0m'
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.COLORS.get(record.levelno, '')
+        msg = super().format(record)
+        # Keep color codes for Tk terminal to render
+        return f"{color}{msg}{self.RESET}"
+
+
+def configure_logging(log_dir: str = '.',
+                      log_file: str = 'pipeline.log',
+                      console_level: int = logging.INFO,
+                      file_level: int = logging.DEBUG,
+                      rotate: bool = False,
+                      max_bytes: int = 5_000_000,
+                      backup_count: int = 3) -> logging.Logger:
+    """Configure centralized logging for the project.
+
+    - Adds a colored console handler (ANSI) for interactive use.
+    - Adds a structured TSV file handler including filename:line.
+    - Safe to call multiple times; reuses existing handlers.
+    """
+    global _CONFIGURED, _CONSOLE_HANDLER
+
+    logger = logging.getLogger(_LOGGER_NAME)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    # Console handler (singleton)
+    if _CONSOLE_HANDLER is None:
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(console_level)
+        ch.setFormatter(_ColoredFormatter('[%(levelname)s] %(asctime)s %(name)s:%(lineno)d - %(message)s'))
+        logger.addHandler(ch)
+        _CONSOLE_HANDLER = ch
+
+    # File handler per file path
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    file_path = os.path.join(log_dir, log_file)
+
+    # Write header on first creation
+    if not os.path.exists(file_path):
+        with open(file_path, 'w') as f:
+            f.write('timestamp\tlevel\tlogger\tlocation\tmessage\n')
+
+    if file_path not in _FILE_HANDLER_REGISTRY:
+        if rotate:
+            fh = handlers.RotatingFileHandler(file_path, maxBytes=max_bytes, backupCount=backup_count)
+        else:
+            fh = logging.FileHandler(file_path)
+        fh.setLevel(file_level)
+        fh.setFormatter(logging.Formatter('%(asctime)s\t%(levelname)s\t%(name)s\t%(filename)s:%(lineno)d\t%(message)s'))
+        logger.addHandler(fh)
+        _FILE_HANDLER_REGISTRY[file_path] = fh
+
+    _CONFIGURED = True
+    return logger
+
+
+def get_logger(name: Optional[str] = None) -> logging.Logger:
+    base = logging.getLogger(_LOGGER_NAME)
+    return base.getChild(name) if name else base
+
+
+def _normalize_legacy_call(process: str, message: str, level: str) -> Tuple[str, str, str]:
+    """Support both legacy and misordered calls.
+    If called as log(message, 'error', ...), swap to (process, message, level).
+    """
+    levels = {'info', 'warning', 'error', 'debug', 'critical'}
+    if message in levels and level == 'info':
+        # Likely called as log(message, 'error', ...)
+        return ('App', process, message)
+    return (process, message, level)
+
+
 def log(
     process: str,
     message: str,
-    level: str='info',
-    logfile: str='log.log',
-    logpath: str='.'):
+    level: str = 'info',
+    logfile: str = 'log.log',
+    logpath: str = '.'
+):
+    """Project-wide logging wrapper (backward-compatible).
+
+    - Uses centralized logging with colored console + TSV file output.
+    - Accepts legacy utils.log signature and common misordered usage.
+    - Ensures a file handler for the given logpath/logfile exists.
     """
-    Print colored messages to console and append to structured log file.
-    
-    Provides standardized logging with:
-    - Color-coded console output (blue=info, yellow=warning, red=error)
-    - Timestamped log file entries in tab-separated format
-    - Automatic log directory and file creation
-    - Console and file output synchronization
-    
-    Args:
-        message (str): Message content to log
-        level (str): Log severity ('info', 'warning', 'error')
-        logfile (str): Log filename (default: 'log.log')
-        logpath (str): Directory path for log file (default: current dir)
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Creates log directory if it doesn't exist
-        - Creates log file with header if first use
-        - Appends timestamped entry to log file
-        - Prints color-coded message to console
-        
-    Log File Format:
-        Level    Timestamp           Process    Message
-        -----    ---------           -------    -------
-        [INFO]   2025-01-27 14:30:15 Copy       Processing started
-    
-    Note:
-        Uses ANSI color codes for terminal output formatting
-    """
+    process, message, level = _normalize_legacy_call(process, message, level)
+    level = level.lower()
 
-    # Define colors for different log levels
-    level_colors = {
-        'info': '\033[94m',   # Blue
-        'warning': '\033[93m',   # Yellow
-        'error': '\033[91m'    # Red
-    }
-    
-    # Check if the log level is valid
-    if level not in level_colors:
-        print(f"Invalid log level '{level}'. Supported levels are: info, warning, error.")
-        return
+    if not _CONFIGURED:
+        # Default configuration if not yet configured
+        configure_logging(log_dir=logpath, log_file=logfile)
+    else:
+        # Ensure file handler exists for this target
+        file_path = os.path.join(logpath, logfile)
+        if file_path not in _FILE_HANDLER_REGISTRY:
+            configure_logging(log_dir=logpath, log_file=logfile)
 
-    # Get the current timestamp
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Format the message
-    formatted_message = f"""
-    {level_colors[level]}[{level.upper()}] {timestamp}
-    {message}\033[0m
-     """
-
-    if not exists(logpath):
-        os.makedirs(logpath, exist_ok=True)
-    # Create the log file if it doesn't exist
-    if not exists(f'{logpath}/{logfile}'):
-        with open(f'{logpath}/{logfile}', 'w') as f:
-            f.write('Level\tTimestamp\tProcess\tMessage\n')
-            f.write('-----\t---------\t-------\t-------\n')
-
-    # Write the message to the log file
-    with open(f'{logpath}/{logfile}', 'a') as f:
-        f.write(f"[{level.upper()}]\t{timestamp}\t{process}\t{message}\n")
-    print(formatted_message)
+    logger = get_logger(process)
+    log_fn = getattr(logger, level if level in ('debug', 'info', 'warning', 'error', 'critical') else 'info')
+    log_fn(message)
 
 
 ###############################################################################

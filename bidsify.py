@@ -33,7 +33,7 @@ import mne
 import time
 
 from utils import (
-    log,
+    log, configure_logging,
     noise_patterns,
     headpos_patterns,
     askForConfig,
@@ -747,6 +747,8 @@ def bidsify(config: dict):
     overwrite = config['overwrite']
     logfile = config['Logfile']
     logpath = config['BIDS'].replace('raw', 'log')
+
+    configure_logging(log_dir=logpath, log_file=logfile)
     # overwrite = config['Overwrite']
 
     df, conversion_file = load_conversion_table(config)

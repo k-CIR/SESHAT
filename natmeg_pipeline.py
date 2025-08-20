@@ -8,7 +8,7 @@ import os
 import argparse
 from pathlib import Path
 import yaml
-from utils import log
+from utils import log, configure_logging
 
 # Add the current directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -122,6 +122,8 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             project_root = os.path.dirname(config['project'].get('squidMEG', '.')) or os.path.dirname(config['project'].get('opmMEG', '.'))
             logpath = os.path.join(project_root, 'log')
             os.makedirs(logpath, exist_ok=True)
+            # Initialize centralized logging once for this run
+            configure_logging(log_dir=logpath, log_file=logfile)
             dry_run = getattr(args, 'dry_run', False)
 
             log("Pipeline", '----------------------------------------------------', 'info', logfile=logfile, logpath=logpath)

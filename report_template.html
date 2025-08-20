@@ -1,87 +1,478 @@
+<!DOCTYPE html>
 <html>
 <head>
-  <title>{{ title }}</title>
-  <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 2em; background: #f8f9fa; }
-    h1 { color: #2c3e50; }
-    .summary { margin-bottom: 1em; font-size: 1.1em; }
-    .toggle-btn { float: right; margin-top: -2em; }
-    .tree { margin-left: 1em; }
-    .dir { font-weight: bold; color: #013152; cursor: pointer; }
-    .file { color: #636e72; }
-    .meta { color: #7f8c8d; font-size: 0.9em; margin-left: 0.5em; }
-    .highlight { background: #ffebab; }
-    .hidden { display: none; }
-    @media (max-width: 600px) { body { margin: 0.5em; } }
-    .dark-mode { background: #222; color: #eee; }
-    .dark-mode .dir { color: #81ecec; }
-    .dark-mode .file { color: #b2bec3; }
-    .dark-mode h1 { color: #b3fff0; }
-    .dark-mode a { color: #d0fffd; }
-  </style>
-  <script>
-    function toggleDarkMode() {
-      document.body.classList.toggle('dark-mode');
-    }
-    function filterTree() {
-      var input = document.getElementById('searchBox').value.toLowerCase();
-      var items = document.querySelectorAll('.dir, .file');
-      var treeDivs = document.querySelectorAll('.tree div');
-      items.forEach(function(item) {
-        var match = input.length === 0 || item.textContent.toLowerCase().includes(input);
-        if (match) {
-          item.classList.remove('hidden');
-          item.classList.add('highlight');
-          // Expand parent directories if collapsed
-          var parentDiv = item.closest('div');
-          if (parentDiv && parentDiv.classList.contains('hidden')) {
-            parentDiv.classList.remove('hidden');
-          }
-        } else {
-          item.classList.add('hidden');
-          item.classList.remove('highlight');
+    <title>{{ title }} - File Report</title>
+    <style>
+    /* Note: The external-link SVG used for the "Open" icon is based on Feather Icons (MIT License): https://feathericons.com/ */
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 2em;
+            background: #f8f9fa;
+            color: #2c3e50;
         }
-      });
-      // Recursively expand all parent directories of matches
-      items.forEach(function(item) {
-        if (!item.classList.contains('hidden')) {
-          var parent = item.parentElement;
-          while (parent) {
-            if (parent.tagName === 'DIV' && parent.classList.contains('hidden')) {
-              parent.classList.remove('hidden');
-            }
-            parent = parent.parentElement;
-          }
+        
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 0.5em;
         }
-      });
-    }
-  </script>
+        
+        .controls {
+            margin: 1em 0;
+            padding: 1em;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .search-box {
+            width: 300px;
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .search-box:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .toggle-btn {
+            float: right;
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .toggle-btn:hover {
+            background: #2980b9;
+        }
+        
+        .file-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 1em;
+        }
+        
+        .file-table th {
+            background: #34495e;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            cursor: default;
+            user-select: none;
+            position: relative;
+        }
+        
+        .file-table th:hover {
+            background: #2c3e50;
+        }
+        
+    /* Sorting removed */
+        
+        .file-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        .file-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .file-name {
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        
+        .view-link {
+            margin-left: 8px;
+            color: #3498db;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+        }
+        .view-link svg { width: 14px; height: 14px; display: inline-block; }
+        .view-link:hover { color: #1f78c1; }
+        
+        .folder-row {
+            background: #ecf0f1;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .folder-row:hover {
+            background: #d5dbdb;
+        }
+        
+        .folder-name {
+            color: #2980b9;
+            font-weight: bold;
+        }
+        
+        
+        .folder-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            text-align: center;
+            cursor: pointer;
+            margin-right: 5px;
+            color: #666;
+        }
+        .folder-toggle svg {
+            width: 12px;
+            height: 12px;
+            transition: transform 0.15s ease-in-out;
+            transform: rotate(0deg); /* down */
+            transform-box: fill-box; /* Safari */
+            transform-origin: 50% 50%; /* Safari */
+            fill: currentColor;
+            display: inline-block;
+        }
+        .folder-toggle.collapsed svg {
+            transform: rotate(-90deg); /* right */
+        }
+        
+        .folder-icon {
+            margin-right: 5px;
+        }
+        
+        /* spacer to align files with folder toggle width */
+        .toggle-spacer {
+            display: inline-block;
+            width: 16px;
+            margin-right: 5px;
+        }
+        
+        .file-icon {
+            margin-right: 5px;
+        }
+        
+    /* Indentation levels (higher specificity to override td padding) */
+    .file-table td.indent-0 { padding-left: 0px !important; }
+    .file-table td.indent-1 { padding-left: 20px !important; }
+    .file-table td.indent-2 { padding-left: 40px !important; }
+    .file-table td.indent-3 { padding-left: 60px !important; }
+    .file-table td.indent-4 { padding-left: 80px !important; }
+    .file-table td.indent-5 { padding-left: 100px !important; }
+    .file-table td.indent-6 { padding-left: 120px !important; }
+    .file-table td.indent-7 { padding-left: 140px !important; }
+    .file-table td.indent-8 { padding-left: 160px !important; }
+    .file-table td.indent-9 { padding-left: 180px !important; }
+        
+        .file-row.collapsed {
+            display: none;
+        }
+        
+        .file-path {
+            color: #7f8c8d;
+            font-size: 0.9em;
+        }
+        
+        .file-size {
+            color: #95a5a6;
+        }
+        
+        .file-time {
+            color: #8e44ad;
+            font-size: 0.9em;
+        }
+        
+        .summary {
+            background: white;
+            padding: 1em;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1em;
+        }
+        
+        .summary-item {
+            display: inline-block;
+            margin-right: 2em;
+            font-weight: 500;
+        }
+        
+        /* Dark mode styles */
+        .dark-mode {
+            background: #2c3e50;
+            color: #ecf0f1;
+        }
+        
+        .dark-mode .controls,
+        .dark-mode .file-table,
+        .dark-mode .summary {
+            background: #34495e;
+            color: #ecf0f1;
+        }
+        
+        .dark-mode .file-table th {
+            background: #2c3e50;
+        }
+        
+        .dark-mode .file-table th:hover {
+            background: #1a252f;
+        }
+        
+        .dark-mode .file-table td {
+            border-bottom-color: #4a5f7a;
+        }
+        
+        .dark-mode .file-table tbody tr:hover {
+            background: #4a5f7a;
+        }
+        
+        .dark-mode .search-box {
+            background: #4a5f7a;
+            color: #ecf0f1;
+            border-color: #5a6f8a;
+        }
+        
+        .dark-mode .folder-row {
+            background: #4a5f7a;
+        }
+        
+        .dark-mode .folder-row:hover {
+            background: #5a6f8a;
+        }
+        
+        .dark-mode .folder-name {
+            color: #85c1e9;
+        }
+        
+        .dark-mode .file-name {
+            color: #ecf0f1;
+        }
+        
+        .dark-mode .file-path {
+            color: #bdc3c7;
+        }
+        
+        @media (max-width: 768px) {
+            body { margin: 0.5em; }
+            .search-box { width: 200px; }
+            .file-table { font-size: 0.9em; }
+        }
+    </style>
 </head>
 <body>
-  <button class="toggle-btn" onclick="toggleDarkMode()">Toggle Dark Mode</button>
-  <h1>{{ title }}</h1>
-  <input type="text" id="searchBox" onkeyup="filterTree()" placeholder="Search files/folders...">
-  {% macro render_tree(tree) %}
-    {% set _level = kwargs.get('level', 0) %}
-    <ul class="tree">
-      {% for key, value in tree.items() %}
-        {% if key == '__files__' %}
-          {% for file in value %}
-  <li class="file">
-    <a href="{{ file.relpath }}" target="_blank">{{ file.name }}</a>
-  </li>
-          {% endfor %}
-        {% else %}
-          <li>
-            <span class="dir" onclick="this.nextElementSibling.classList.toggle('hidden')">{{ key }}</span>
-            <div {% if _level >= 2 %}class="hidden"{% endif %}>
-              {{ render_tree(value, level=_level+1) }}
-            </div>
-          </li>
-        {% endif %}
-      {% endfor %}
-    </ul>
-  {% endmacro %}
-  {{ render_tree(data) }}
+    <div class="controls">
+        <h1>{{ title }} - File Report</h1>
+        <button class="toggle-btn" onclick="toggleDarkMode()">Toggle Dark Mode</button>
+        <br><br>
+        <input type="text" id="searchBox" class="search-box" onkeyup="filterTable()" 
+               placeholder="Search files and folders...">
+    </div>
+    
+    <div class="summary">
+        <span class="summary-item">Total Files: <span id="fileCount">{{ file_count }}</span></span>
+        <span class="summary-item">Directories: <span id="dirCount">{{ dir_count }}</span></span>
+        <span class="summary-item">Last Updated: <span id="lastUpdate">{{ last_update }}</span></span>
+    </div>
+    
+    <table class="file-table" id="fileTable">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Modified</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in hierarchical_list %}
+                {% if item.type == 'folder' %}
+                <tr class="folder-row" data-path="{{ item.path }}" data-level="{{ item.level }}" onclick="toggleFolder('{{ item.path }}')">
+                    <td class="folder-name indent-{{ item.level }}">
+                        <span class="folder-toggle" id="toggle-{{ item.path.replace('/', '_').replace(' ', '_').replace('.', '_') }}" aria-label="toggle" role="button">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M6 9 L12 15 L18 9 Z"/>
+                            </svg>
+                        </span>
+                        <svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="#f1c40f" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M10 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V8C22 6.9 21.1 6 20 6H12L10 4Z"/>
+                        </svg>
+                        <span class="name">{{ item.name }}</span>
+                        <a class="view-link" href="{{ item.path }}" target="_blank" rel="noopener" onclick="event.stopPropagation();" aria-label="Open" title="Open">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                        </a>
+                    </td>
+                    <td class="file-size">{{ item.size|filesize if item.size is not none else '' }}</td>
+                    <td class="file-time">{{ item.mtime|strftime('%Y-%m-%d %H:%M:%S') if item.mtime else '' }}</td>
+                </tr>
+                {% else %}
+                <tr class="file-row" data-path="{{ item.relpath }}" data-parent="{{ item.folder_path }}" data-level="{{ item.level }}">
+                    <td class="file-name indent-{{ item.level }}">
+                        <span class="toggle-spacer"></span>
+                        <svg class="file-icon" width="14" height="14" viewBox="0 0 24 24" fill="#95a5a6" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z"/>
+                        </svg>
+                        <span class="name">{{ item.name }}</span>
+                        <a class="view-link" href="{{ item.relpath }}" target="_blank" rel="noopener" onclick="event.stopPropagation();" aria-label="Open" title="Open">
+                            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                        </a>
+                    </td>
+                    <td class="file-size">{{ item.size|filesize if item.size is not none else '' }}</td>
+                    <td class="file-time">{{ item.mtime|strftime('%Y-%m-%d %H:%M:%S') if item.mtime else '' }}</td>
+                </tr>
+                {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <script>
+    // Sorting disabled
+        
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode');
+            localStorage.setItem('darkMode', document.body.classList.contains('dark-mode'));
+        }
+        
+        // Load saved dark mode preference
+        if (localStorage.getItem('darkMode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Initial collapse state: show root level (level 0) and hide deeper levels
+        (function initTree() {
+            const rows = Array.from(document.querySelectorAll('#fileTable tbody tr'));
+            rows.forEach(r => {
+                const level = parseInt(r.dataset.level || '0');
+                if (level > 0) r.style.display = 'none';
+            });
+            // ensure all toggles start collapsed
+            const toggles = document.querySelectorAll('.folder-toggle');
+            toggles.forEach(t => t.classList.add('collapsed'));
+        })();
+        
+        function toggleFolder(folderPath) {
+            const row = document.querySelector(`tr.folder-row[data-path="${folderPath}"]`);
+            if (!row) return;
+            const level = parseInt(row.dataset.level || '0');
+            const toggle = row.querySelector('.folder-toggle');
+            const collapsing = !toggle.classList.contains('collapsed'); // expanded -> collapse
+            const tbody = document.querySelector('#fileTable tbody');
+            const allRows = Array.from(tbody.querySelectorAll('tr'));
+
+            // Find index of current row
+            const startIndex = allRows.indexOf(row);
+            let i = startIndex + 1;
+            while (i < allRows.length) {
+                const r = allRows[i];
+                const rLevel = parseInt(r.dataset.level || '0');
+        if (rLevel <= level) break; // end of subtree
+        if (collapsing) {
+                    // Hide all descendants and reset their toggles to collapsed
+                    r.style.display = 'none';
+                    if (r.classList.contains('folder-row')) {
+                        const t = r.querySelector('.folder-toggle');
+            if (t) t.classList.add('collapsed');
+                    }
+        } else {
+                    // Expanding: show only direct children; deeper remain hidden
+                    if (rLevel === level + 1) {
+                        r.style.display = '';
+                    }
+                }
+                i++;
+            }
+
+        if (collapsing) toggle.classList.add('collapsed'); else toggle.classList.remove('collapsed');
+        }
+        
+        function filterTable() {
+            const input = document.getElementById('searchBox');
+            const filter = input.value.toLowerCase();
+            const tbody = document.getElementById('fileTable').querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+
+            if (!filter) {
+                // reset: show all rows according to current collapsed state
+                rows.forEach(r => {
+                    const level = parseInt(r.dataset.level || '0');
+                    if (level === 0) r.style.display = '';
+                    else {
+                        // show if parent is expanded and all ancestors up to root are expanded
+                        const prev = rows.slice(0, rows.indexOf(r)).reverse();
+                        let visible = true;
+                        let currentLevel = level - 1;
+                        for (const p of prev) {
+                            const pLevel = parseInt(p.dataset.level || '0');
+                            if (pLevel === currentLevel && p.classList.contains('folder-row')) {
+                                const t = p.querySelector('.folder-toggle');
+                                if (t && t.classList.contains('collapsed')) { visible = false; break; }
+                                currentLevel -= 1;
+                                if (currentLevel < 0) break;
+                            }
+                        }
+                        r.style.display = visible ? '' : 'none';
+                    }
+                });
+                return;
+            }
+
+            const visibleFolderPaths = new Set();
+            const visibleRows = new Set();
+
+            // First pass: mark matching rows
+            rows.forEach(r => {
+                const text = r.textContent.toLowerCase();
+                if (text.includes(filter)) {
+                    visibleRows.add(r);
+                    // collect ancestors
+                    const level = parseInt(r.dataset.level || '0');
+                    let currentLevel = level - 1;
+                    const prev = rows.slice(0, rows.indexOf(r)).reverse();
+                    for (const p of prev) {
+                        const pLevel = parseInt(p.dataset.level || '0');
+                        if (pLevel === currentLevel && p.classList.contains('folder-row')) {
+                            visibleRows.add(p);
+                            const path = p.getAttribute('data-path');
+                            if (path) visibleFolderPaths.add(path);
+                            currentLevel -= 1;
+                            if (currentLevel < 0) break;
+                        }
+                    }
+                }
+            });
+
+            // Show only visible rows; expand all ancestors of matches
+            rows.forEach(r => {
+                if (visibleRows.has(r)) {
+                    r.style.display = '';
+                } else {
+                    r.style.display = 'none';
+                }
+            });
+
+            // Expand toggles for visible folders
+            rows.forEach(r => {
+                if (r.classList.contains('folder-row')) {
+                    const path = r.getAttribute('data-path');
+                    const t = r.querySelector('.folder-toggle');
+                    if (visibleFolderPaths.has(path)) {
+                        if (t) t.classList.remove('collapsed');
+                    }
+                }
+            });
+        }
+        
+    // Sorting function removed
+    </script>
 </body>
 </html>

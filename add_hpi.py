@@ -68,7 +68,7 @@ from mne.utils import _check_fname, logger, verbose, warn
 from mne.transforms import apply_trans
 
 from utils import (
-    log,
+    log, configure_logging,
     askForConfig,
     file_contains,
     noise_patterns,
@@ -445,6 +445,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     log_path = opmMEGdir.replace('raw', 'log')
     if not os.path.exists(log_path):
         os.makedirs(log_path)
+    configure_logging(log_dir=log_path, log_file=logfile)
 
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
@@ -801,8 +802,9 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
     logfile = hpi_fit_parameters['logfile']
     log_path = hpi_fit_parameters['log_path']
     overwrite = hpi_fit_parameters.get('overwrite', False)
-    
-    
+
+    configure_logging(log_dir=log_path, log_file=logfile)
+
     proc = 'proc-hpi+'
     if new_sfreq:
         proc += f'ds'
@@ -1005,7 +1007,7 @@ def main(config: Union[str, dict]=None):
     if not os.path.exists(log_path):
         os.makedirs(log_path)
     logfile = config.get('logfile', 'adding_hpi.log')
-
+    configure_logging(log_dir=log_path, log_file=logfile)
 
     subjects = sorted([subject for subject in glob('sub-*',
                                                 root_dir = f'{opmMEGdir}')
