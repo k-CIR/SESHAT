@@ -981,6 +981,7 @@ def main(config:str=None):
     bidsify(config)
     update_sidecars(config)
     print_dir_tree(config['BIDS'])
+    return True
     
 
 if __name__ == "__main__":

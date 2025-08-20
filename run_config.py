@@ -11,6 +11,7 @@ import threading
 import subprocess
 from tkinter.scrolledtext import ScrolledText
 import queue
+import re
 
 default_path = '/neuro/data/local/'
 
@@ -612,6 +613,21 @@ Set the dataset description metadata for BIDS.
         insertbackground='#FFFFFF'
     )
     terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
+    # Configure text tags for formatting/colors
+    try:
+        terminal_output.tag_config('bold', font=('TkDefaultFont', 10, 'bold'))
+        terminal_output.tag_config('underline', underline=1)
+        _color_map = {
+            'fg-black': '#000000', 'fg-red': '#ff5555', 'fg-green': '#50fa7b', 'fg-yellow': '#f1fa8c',
+            'fg-blue': '#8be9fd', 'fg-magenta': '#ff79c6', 'fg-cyan': '#8be9fd', 'fg-white': '#ffffff',
+            'fg-bright-black': '#4d4d4d', 'fg-bright-red': '#ff6e6e', 'fg-bright-green': '#69ff94',
+            'fg-bright-yellow': '#ffffa5', 'fg-bright-blue': '#a4ffff', 'fg-bright-magenta': '#ff92df',
+            'fg-bright-cyan': '#a4ffff', 'fg-bright-white': '#ffffff'
+        }
+        for _tag, _color in _color_map.items():
+            terminal_output.tag_config(_tag, foreground=_color)
+    except Exception:
+        pass
     def show_terminal():
         terminal_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
     def hide_terminal():
@@ -640,12 +656,81 @@ Set the dataset description metadata for BIDS.
         terminal_output.config(state='disabled')
         # Thread-safe streaming using a queue and periodic polling on the main thread
         q = queue.Queue()
+        ansi_re = re.compile(r"\x1b\[(?P<codes>[0-9;]*)m")
+
+        def parse_ansi_segments(s: str):
+            # Returns list of (segment_text, [tags]) for ANSI SGR codes
+            segments = []
+            idx = 0
+            active_tags = set()
+            for m in ansi_re.finditer(s):
+                if m.start() > idx:
+                    segments.append((s[idx:m.start()], tuple(active_tags)))
+                codes = m.group('codes')
+                if codes == '' or codes == '0':
+                    active_tags.clear()
+                else:
+                    for code in codes.split(';'):
+                        if not code:
+                            continue
+                        try:
+                            n = int(code)
+                        except ValueError:
+                            continue
+                        if n == 0:
+                            active_tags.clear()
+                        elif n == 1:
+                            active_tags.add('bold')
+                        elif n == 4:
+                            active_tags.add('underline')
+                        elif n == 22:
+                            active_tags.discard('bold')
+                        elif n == 24:
+                            active_tags.discard('underline')
+                        elif n == 39:
+                            # default foreground -> remove any fg-* tag
+                            for t in list(active_tags):
+                                if t.startswith('fg-'):
+                                    active_tags.discard(t)
+                        elif 30 <= n <= 37:
+                            # standard fg colors
+                            for t in list(active_tags):
+                                if t.startswith('fg-'):
+                                    active_tags.discard(t)
+                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
+                            active_tags.add(f'fg-{names[n-30]}')
+                        elif 90 <= n <= 97:
+                            # bright fg colors
+                            for t in list(active_tags):
+                                if t.startswith('fg-'):
+                                    active_tags.discard(t)
+                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
+                            active_tags.add(f'fg-bright-{names[n-90]}')
+                        # Other codes ignored for simplicity
+                idx = m.end()
+            if idx < len(s):
+                segments.append((s[idx:], tuple(active_tags)))
+            return segments
+
+        def insert_formatted(text: str):
+            # Fallback highlight when no ANSI codes present
+            if not ansi_re.search(text):
+                tags = ()
+                up = text.upper()
+                if 'ERROR' in up:
+                    tags = ('fg-red', 'bold')
+                elif 'WARNING' in up:
+                    tags = ('fg-yellow',)
+                terminal_output.insert('end', text, tags)
+                return
+            for seg, tags in parse_ansi_segments(text):
+                terminal_output.insert('end', seg, tags)
         def poll_queue():
             try:
                 while True:
                     line = q.get_nowait()
                     terminal_output.config(state='normal')
-                    terminal_output.insert('end', line)
+                    insert_formatted(line)
                     terminal_output.see('end')
                     terminal_output.config(state='disabled')
             except queue.Empty:
@@ -666,7 +751,7 @@ Set the dataset description metadata for BIDS.
             for line in process.stdout:
                 q.put(line)
             process.wait()
-            q.put(f"\nProcess finished with exit code {process.returncode}\n")
+            #q.put(f"\nProcess finished with exit code {process.returncode}\n")
 
         # Kick off polling and background process
         root.after(0, poll_queue)
