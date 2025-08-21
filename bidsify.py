@@ -237,7 +237,6 @@ def update_sidecars(config: dict):
             info = mne.io.read_info(bp.fpath, verbose='error')
             bp_json = bp.copy().update(extension='.json', split=None)
             # Check if json exists, if not create it
-            print(bp.subject)
             if not exists(bp_json.fpath):
                 raw = read_raw_bids(bp)
                 _sidecar_json(raw=raw,
@@ -697,7 +696,6 @@ def update_conversion_table(conversion_table: pd.DataFrame,
         if not files:
             conversion_table.at[i, 'run_conversion'] = 'yes'
             conversion_table.at[i, 'time_stamp'] = ts
-            print(f'Running conversion on {row['raw_name']}')
         
         # TODO: Add argument for update if file exists
     
@@ -788,7 +786,6 @@ def bidsify(config: dict):
     deviants = df[df['task_flag'] == 'check']
     if len(deviants) > 0:
         log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
-        
         return
 
     for i, d in df.iterrows():

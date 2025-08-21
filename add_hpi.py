@@ -234,10 +234,13 @@ def TC_get_hpiout_names(raw):
 
     for name in hpi_raw.info['ch_names']:
         if 'out' in name:
-
-            if raw.copy().pick([name])._data.max() > 0:
+            # plt.plot(hpi_raw.copy().pick([name]).get_data()[0], label=name)
+            # print(raw.copy().pick([name])._data.var())
+            if raw.copy().pick([name])._data.var() > 1e-25:
 
                 hpi_names+=[name]
+    # plt.legend()
+    # plt.show()
 
     hpi_indices=np.zeros(len(hpi_names),dtype=np.int64)
     i=0
