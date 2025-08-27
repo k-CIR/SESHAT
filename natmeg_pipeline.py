@@ -63,6 +63,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     run_parser.add_argument('--delete', action='store_true', help='Delete files on server not in source')
     run_parser.add_argument('--exclude', action='append', help='Exclude pattern (can be used multiple times)')
     run_parser.add_argument('--include', action='append', help='Include pattern (can be used multiple times)')
+    run_parser.add_argument('--no-report', action='store_true', help='Skip final HTML report generation (default: generate report)')
     
     # Individual components
     copy_parser = subparsers.add_parser('copy', help='Data synchronization only')
@@ -77,6 +78,11 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     
     bidsify_parser = subparsers.add_parser('bidsify', help='BIDS conversion only')
     bidsify_parser.add_argument('--config', required=True, help='Configuration file')
+
+    # Standalone report generation
+    report_parser = subparsers.add_parser('report', help='Generate project HTML report only')
+    report_parser.add_argument('--config', required=True, help='Project configuration file used to locate data roots')
+    report_parser.add_argument('--no-report', action='store_true', help='(Ignored for compatibility)')
     
     # Server sync command (updated to reflect new sync_to_cir interface)
     sync_parser = subparsers.add_parser('sync', help='Sync data to remote server')
@@ -164,6 +170,16 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                     delete=getattr(args, 'delete', False)
                 )
                 pipeline_success.append(success)
+            
+            # Generate project report unless disabled
+            if not getattr(args, 'no_report', False):
+                try:
+                    import render_report
+                    render_report.main(args.config)
+                    log("Pipeline", "Report generated (report.html)", 'info', logfile=logfile, logpath=logpath)
+                except Exception as e:
+                    log("Pipeline", f"Report generation failed: {e}", 'warning', logfile=logfile, logpath=logpath)
+
             if all(pipeline_success):
                 log("Pipeline", "Completed successfully!", 'info', logfile=logfile, logpath=logpath)
             else:
@@ -185,6 +201,16 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
         elif args.command == 'bidsify':
             import bidsify
             bidsify.main(args.config)
+
+        elif args.command == 'report':
+            # Standalone report generation
+            try:
+                import render_report
+                render_report.main(args.config)
+                log("Report", "Report generated (report.html)", 'info')
+            except Exception as e:
+                log("Report", f"Report generation failed: {e}", 'error')
+                sys.exit(1)
         
         elif args.command == 'sync':
             import sync_to_cir
