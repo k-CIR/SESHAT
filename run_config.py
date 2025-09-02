@@ -903,7 +903,7 @@ Set the dataset description metadata for BIDS.
                 else:
                     config_file = new_config_file
                 # Update the loaded file label
-                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='white')
+                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='black')
     
     def cancel():
         root.destroy()
@@ -915,12 +915,12 @@ Set the dataset description metadata for BIDS.
     if config_file:
         loaded_file_label = ttk.Label(root,
             text=f"Loaded config file: {config_file}",
-            font=('TkDefaultFont', 10, 'bold'), foreground='white')
+            font=('TkDefaultFont', 10, 'bold'), foreground='black')
         loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
     else:
         loaded_file_label = ttk.Label(root,
             text="No config file loaded (using default)",
-            font=('TkDefaultFont', 10, 'bold'), foreground='gray')
+            font=('TkDefaultFont', 10, 'bold'), foreground='black')
         loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
 
     # Button frame at bottom

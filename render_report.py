@@ -5,7 +5,6 @@ import os
 from os.path import join, isdir, dirname, basename
 from mne_bids import print_dir_tree
 import re
-from json2html import json2html
 from jinja2 import Environment, FileSystemLoader
 from typing import Union
 import yaml

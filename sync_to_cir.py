@@ -12,6 +12,7 @@ import json
 import subprocess
 import shlex
 from pathlib import Path
+from os.path import dirname, abspath, exists, isdir
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from copy import deepcopy
@@ -23,8 +24,8 @@ from utils import log
 
 class ServerSync:
     """Handle syncing data to remote servers with rsync"""
-    
-    def __init__(self, config: Union[str, Dict] = 'server_sync_config.yml'):
+
+    def __init__(self, config: Union[str, Dict] = '/home/natmeg/.config/sync_config.yml'):
         """Initialize with configuration"""
         if isinstance(config, str):
             with open(config, 'r') as f:
@@ -78,6 +79,8 @@ class ServerSync:
         """Build rsync command with options"""
         
         cmd = ['rsync']
+
+        cmd.extend(self.config.get('default_rsync_options', []))
         
         global_excludes = self.config.get('sync_defaults', {}).get('global_excludes', [])
         
@@ -121,11 +124,13 @@ class ServerSync:
             cmd.extend(['-e', ' '.join(shlex.quote(arg) for arg in ssh_cmd)])
             
         # Source and destination
-        local_path = local_path.rstrip('/') # Remove trailing slash
-        remote_dest = f"{server_config['user']}@{server_config['host']}:{server_config['remote_path']}/{os.path.basename(local_path)}"
-        
+        local_path = local_path.rstrip('/')  # Remove trailing slash
+        remote_root = server_config['remote_path'].rstrip('/')
+        # Always avoid duplicating the local basename on the remote path
+        remote_dest = f"{server_config['user']}@{server_config['host']}:{remote_root}"
+
         cmd.extend([local_path, remote_dest])
-        
+
         return cmd
     
     def sync_directory(self, local_path: str, server_name: str,
@@ -144,11 +149,6 @@ class ServerSync:
                 logfile=self.log_file, logpath=log_path)
             return False
             
-        if not os.path.isdir(local_path):
-            log(f"Path is not a directory: {local_path}", 'error',
-                logfile=self.log_file, logpath=log_path)
-            return False
-        
         try:
             server_config = self.validate_server_config(server_name)
             cmd = self.build_rsync_command(
@@ -159,13 +159,14 @@ class ServerSync:
             # Log the command
             cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
             log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path)
-            
+
             if dry_run:
                 log("DRY RUN MODE - No files will be transferred", 'info',
                     logfile=self.log_file, logpath=log_path)
                 print_dir_tree(local_path, max_depth=2)  # Print directory structure for verification
             
             # Execute rsync
+            
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             # Log output
@@ -219,6 +220,38 @@ class ServerSync:
         except Exception as e:
             print(f"❌ Error testing connection to {server_name}: {e}")
             return False
+
+def get_parameters(config: Union[str, Dict]) -> Dict:
+    """
+    Extract and merge BIDS configuration parameters from file or dictionary.
+    
+    Reads configuration from JSON/YAML file or processes existing dictionary,
+    combining project and BIDS-specific parameters into a unified configuration.
+
+    Args:
+        config (str or dict): Path to config file (.json/.yml/.yaml) or
+                             configuration dictionary
+
+    Returns:
+        dict: Merged configuration dictionary combining project and BIDS settings
+
+    Raises:
+        ValueError: If unsupported file format is provided
+    """
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config_dict = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config_dict = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    elif isinstance(config, dict):
+        config_dict = deepcopy(config)
+
+    sync_dict = deepcopy(config_dict['project'])
+    return sync_dict
 
 
 def create_example_config():
@@ -277,13 +310,13 @@ def main(path:str=None):
         epilog="""
 Examples:
   # Test connection to server
-  python sync_to_cor.py --test-connection cir
+  python sync_to_cir.py --test cir
   
   # Sync custom directory
-  python sync_to_cor.py --sync-directory /path/to/data cir
-  
+  python sync_to_cir.py --directory /path/to/data cir
+
   # Generate example config
-  python sync_to_cor.py --create-config
+  python sync_to_cir.py --create-config
         """
     )
 
@@ -291,8 +324,9 @@ Examples:
     parser.add_argument('--server-config', help='Server configuration file (YAML or JSON)')
     parser.add_argument('--create-config', action='store_true', 
                        help='Create example server configuration file')
-    parser.add_argument('--test', metavar='SERVER', default='cir',
-                       help='Test connection to specified server')
+    parser.add_argument('--test', action='store_true',
+                       help='Only test connection to server and exit (use --server to pick server)')
+    parser.add_argument('--server', help='Server name (default cir)')
     
     parser.add_argument('--directory', nargs='*', metavar=('PATH', 'SERVER'),
                        help='Sync custom directory to specified server')
@@ -306,6 +340,8 @@ Examples:
                        help='Include files matching pattern (can be used multiple times)')
     
     args = parser.parse_args()
+
+    server_name = args.server or 'cir'
     
     # Create example config
     if args.create_config:
@@ -318,32 +354,38 @@ Examples:
         return
     
     # Load configuration
-    server_config_file = args.server_config
-    if not os.path.exists(server_config_file):
-        print(f"Configuration file not found: {server_config_file}")
-        print("Use --create-config to generate an example configuration.")
-        return
+    if args.server_config:
+        server_config_file = args.server_config
+        if not os.path.exists(server_config_file):
+            print(f"Configuration file not found: {server_config_file}")
+            print("Use --create-config to generate an example configuration.")
+            return
     
-    try:
-        syncer = ServerSync(server_config_file)
-    except Exception as e:
-        print(f"Error loading configuration: {e}")
-        return
-    
-    # Test connection
+        try:
+            syncer = ServerSync(server_config_file)
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
+            return
+    else:
+        syncer = ServerSync()
+
+    # Test connection only
     if args.test:
-        server_name = args.test
-        success = syncer.check_server_connection(server_name)
+        syncer.check_server_connection(server_name)
         return
     
     # Sync operations
-    
-    server_name = 'cir'  # Default server name
 
-    if args.directory:
-        local_path = args.directory[0] or syncer.get_local_path(path)
-        if len(args.directory) > 1:
-            server_name = args.directory[1]
+    if args.config:
+        try:
+            config = get_parameters(args.config)
+            print(config)
+        except Exception as e:
+            print(f"Error loading project configuration: {e}")
+            return
+
+        directory = dirname(config.get('squidMEG', None)) or dirname(config.get('squidMEG', None))
+        local_path = directory
         success = syncer.sync_directory(
             local_path, server_name,
             exclude_patterns=args.exclude,
@@ -351,10 +393,20 @@ Examples:
             dry_run=args.dry_run,
             delete=args.delete
         )
-    
+
+    if args.directory:
+        local_path = args.directory[0]
+        if len(args.directory) > 1 and not args.server:
+            server_name = args.directory[1]
+        syncer.sync_directory(
+            local_path, server_name,
+            exclude_patterns=args.exclude,
+            include_patterns=args.include,
+            dry_run=args.dry_run,
+            delete=args.delete
+        )
     else:
         parser.print_help()
-        return
 
 
 if __name__ == "__main__":

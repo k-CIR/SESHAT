@@ -100,7 +100,7 @@ if [ -f "$HOME/.local/bin/NatMEG-utils" ]; then
         exit 0
     fi
 fi
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "README.md" "run_config.py") 
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "report_template.html" "README.md" "run_config.py") 
 SOURCE_DIR=$(pwd)
 TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
 
@@ -344,7 +344,8 @@ fi
 echo ""
 echo "Usage:"
 echo "  natmeg gui                      # Launch GUI"
-echo "  natmeg run --config config.yml # Run pipeline"
+echo "  natmeg run --config config.yml   # Run pipeline"
+echo "  natmeg report --config config.yml # Generate HTML report only"
 echo ""
 
 # Conditional instructions based on installation status

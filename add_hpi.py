@@ -234,7 +234,13 @@ def TC_get_hpiout_names(raw):
 
     for name in hpi_raw.info['ch_names']:
         if 'out' in name:
-            hpi_names+=[name]
+            # plt.plot(hpi_raw.copy().pick([name]).get_data()[0], label=name)
+            # print(raw.copy().pick([name])._data.var())
+            if raw.copy().pick([name])._data.var() > 1e-25:
+
+                hpi_names+=[name]
+    # plt.legend()
+    # plt.show()
 
     hpi_indices=np.zeros(len(hpi_names),dtype=np.int64)
     i=0
@@ -473,36 +479,37 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
     if not overwrite:
         hedscan_files = [f for f in hedscan_files if not os.path.exists(f.replace('raw.fif', proc + '.fif'))]
-    
-    
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         polfile_list = [
-            file for pattern in config['polhemus_file'] or config['tasks']
+            file for pattern in config['polhemus_file'] + [f for f in config['tasks'] if f not in config['polhemus_file']]
             for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern}*.fif")
         ]
 
         if not polfile_list:
-            log("HPI", f"No polhemus file found matching: {config['polhemus_file']}", 'error',logfile=logfile, logpath=log_path)
+            log("HPI", f"No polhemus file found matching: {polfile_list}", 'error',logfile=logfile, logpath=log_path)
             polfile = None
-        else:
-            polfile = polfile_list[0]
-            log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
-        
+            return hpi_fit_parameters
 
         hpi_files = [f for f in all_files if file_contains(f, hpinames)]
         if not hpi_files:
             log("HPI", f"No hpi file found matching: {hpinames}", 'error',logfile=logfile, logpath=log_path)
             hpifile = None
+            return hpi_fit_parameters
         else:
             hpifile = hpi_files[0]
             log("HPI", f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
 
-        if not polfile and not hpifile:
+        raw = None
+        for hpifile in hpi_files:
+            try:
+                raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
+                break  # Stop after successfully reading the first file
+            except Exception as e:
+                log("HPI", f"Error reading {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
+        if raw is None:
+            log("HPI", "Could not read any HPI file.", 'error', logfile=logfile, logpath=log_path)
             return hpi_fit_parameters
-
-
-        raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
         #remove bad channels
         for bad_chan in raw.info["bads"]:
             raw.drop_channels(bad_chan)
@@ -525,8 +532,11 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             raw.resample(new_sfreq)
 
         #assuming file with polhemus locations of fiducials and HPIs
-
-        pol_info = mne.io.read_info(polfile)
+        for polfile in polfile_list:
+            pol_info = mne.io.read_info(polfile)
+            if not pol_info['dig']:
+                continue
+            log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
 
         digpts=np.array([],dtype=float)
         lpa=pol_info['dig'][0]['r']
@@ -569,16 +579,12 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
         raw_orig = raw.copy()
         slope = np.zeros((len(hpi_indices),len(pick_types(raw.info, meg='mag'))),dtype=float)
+        # check if 
+
         for index in range(len(hpi_indices)):
             raw=raw_orig.copy()
             channel_index=hpi_indices[index]
             chan_name=raw.info['ch_names'][channel_index]
-
-            msg = f'''*********HPI channel we want to localize {chan_name}**********
-            channel_index = {channel_index}
-            hpi_indices[index] = {hpi_indices[index]}
-            '''
-            log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
 
             do_plot=False
 
@@ -588,15 +594,21 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             b = y.ravel()
             dist=round(raw.info['sfreq']/hpifreq)-2
             peaks, _ = find_peaks(b, distance=dist,height=0.0001)
+            if peaks.size == 0:
+                log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
+                continue
+            else:
+                msg = f'''*********HPI channel we want to localize {chan_name}**********
+                channel_index = {channel_index}
+                hpi_indices[index] = {hpi_indices[index]}
+                '''
+                log("HPI", msg, 'info',logfile=logfile, logpath=log_path)
 
             if do_plot:
                 plt.plot(b)
                 plt.plot(peaks, b[peaks], "x")
                 plt.show()
 
-            if len(peaks) <1 :
-                log("HPI", '***********Error no peaks found**********', 'error',logfile=logfile, logpath=log_path)
-                continue
                 
             window=(peaks[-1]-peaks[0])/raw.info['sfreq']
 
@@ -1021,7 +1033,7 @@ def main(config: Union[str, dict]=None):
         for session in sessions:
             print(subject, session)
             hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite)
-            
+
             hedscan_files = hpi_fit_parameters.get('hedscan_files', [])
             # Create partial function with shared parameters
             if overwrite or hedscan_files:
