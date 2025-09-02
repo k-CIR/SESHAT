@@ -31,6 +31,8 @@ from mne_bids.utils import _write_json
 from mne_bids.write import _sidecar_json
 import mne
 import time
+from bids_validator import BIDSValidator
+from bids import BIDSLayout
 
 from utils import (
     log, configure_logging,
@@ -932,6 +934,70 @@ It includes:
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     args = parser.parse_args()
     return args
+
+
+def validate_bids():
+    """
+    Validate BIDS directory structure and contents using bids-validator.
+    
+    Args:
+        config (dict): Configuration dictionary with BIDS path
+    
+    Returns:
+        bool: True if validation passes, False otherwise
+    """
+    
+    bids_root = config['BIDS']
+    logfile = config.get('Logfile', 'bidsify.log')
+    logpath = config.get('BIDS', '').replace('raw', 'log')
+    
+    if not os.path.exists(bids_root):
+        log('BIDS', f"BIDS directory {bids_root} does not exist", level='error', logfile=logfile, logpath=logpath)
+        return False
+    
+    try:
+        # Run bids-validator
+        result = subprocess.run(
+            ['bids-validator', bids_root, '--json'],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        if result.returncode == 0:
+            log('BIDS', 'BIDS validation passed', level='info', logfile=logfile, logpath=logpath)
+            return True
+        else:
+            # Parse JSON output for detailed errors
+            try:
+                validation_result = json.loads(result.stdout)
+                errors = validation_result.get('issues', {}).get('errors', [])
+                warnings = validation_result.get('issues', {}).get('warnings', [])
+                
+                for error in errors:
+                    log('BIDS', f"Validation error: {error.get('reason', 'Unknown error')}", 
+                        level='error', logfile=logfile, logpath=logpath)
+                
+                for warning in warnings:
+                    log('BIDS', f"Validation warning: {warning.get('reason', 'Unknown warning')}", 
+                        level='warning', logfile=logfile, logpath=logpath)
+                        
+            except json.JSONDecodeError:
+                # Fallback to plain text output
+                log('BIDS', f"Validation failed: {result.stderr}", level='error', logfile=logfile, logpath=logpath)
+            
+            return False
+            
+    except subprocess.TimeoutExpired:
+        log('BIDS', 'BIDS validation timed out', level='error', logfile=logfile, logpath=logpath)
+        return False
+    except FileNotFoundError:
+        log('BIDS', 'bids-validator not found. Install with: npm install -g bids-validator', 
+            level='error', logfile=logfile, logpath=logpath)
+        return False
+    except Exception as e:
+        log('BIDS', f"Validation error: {str(e)}", level='error', logfile=logfile, logpath=logpath)
+        return False
 
 def main(config:str=None):
     """
