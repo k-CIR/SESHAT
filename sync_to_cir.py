@@ -21,11 +21,12 @@ from mne_bids import print_dir_tree
 
 from utils import log
 
+sync_config = '/home/natmeg/.config/sync_config.yml'
 
 class ServerSync:
     """Handle syncing data to remote servers with rsync"""
 
-    def __init__(self, config: Union[str, Dict] = '/home/natmeg/.config/sync_config.yml'):
+    def __init__(self, config: Union[str, Dict] = sync_config):
         """Initialize with configuration"""
         if isinstance(config, str):
             with open(config, 'r') as f:

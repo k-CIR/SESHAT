@@ -709,6 +709,11 @@ class MaxFilter:
         # Remove if empty
         tasks_to_run = [t for t in tasks_to_run if t != '']
 
+        print(f'''
+                Processing subject: {subject}
+                Session: {session}
+                ''')
+
         for task in tasks_to_run:
 
             files = match_task_files(all_fifs, task)
@@ -742,7 +747,7 @@ class MaxFilter:
                 # Use absolute path
                 file = f"{subj_in}/{file}"
                 clean = f"{subj_out}/{clean}"
-                log = f'{subj_out}/{'log'}/{basename(clean).replace(".fif",".log")}'
+                log = f'{self.logpath}/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
@@ -768,12 +773,11 @@ class MaxFilter:
                 self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
 
                 if not exists(clean):
-                    print(
-                        f'Running MaxFilter on {subject} | {session} | {task}')
+                    print(f'Running MaxFilter on {subject} | {session} | {task}')
                     if not debug:
                         try:
                             subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
-                            log('MaxFilter', f'{file} -> {clean}', logfile=self.logfile, log_path=self.logpath)
+                            log('MaxFilter', f'{file} -> {clean}', 'info', logfile=self.logfile, log_path=self.logpath)
                         except Exception as e:
                             print(f'Error occurred while running MaxFilter: {e}')
                     else:
