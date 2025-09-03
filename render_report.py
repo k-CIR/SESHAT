@@ -268,6 +268,8 @@ def dict_to_table_report(data, title="File Report", output_file="table_report.ht
                 'level': level,
                 'local_size': local_item.get('size') if local_item else None,
                 'remote_size': remote_item.get('size') if remote_item else None,
+                'local_mtime': local_item.get('mtime') if local_item else None,
+                'remote_mtime': remote_item.get('mtime') if remote_item else None,
                 'local_exists': local_item is not None,
                 'remote_exists': remote_item is not None,
                 'status': status
@@ -291,6 +293,8 @@ def dict_to_table_report(data, title="File Report", output_file="table_report.ht
                 'level': level,
                 'local_size': local_item.get('size') if local_item else None,
                 'remote_size': remote_item.get('size') if remote_item else None,
+                'local_mtime': local_item.get('mtime') if local_item else None,
+                'remote_mtime': remote_item.get('mtime') if remote_item else None,
                 'local_exists': local_item is not None,
                 'remote_exists': remote_item is not None,
                 'status': status
@@ -303,6 +307,7 @@ body{font-family:Arial, sans-serif;margin:1rem;}
 table{border-collapse:collapse;width:100%;}
 th,td{padding:4px 6px;border:1px solid #ccc;font-size:12px;}
 tr.dir{background:#f0f4ff;}
+tbody tr.dir.status-ok{background:#e8f5e8;}
 tbody tr.status-missing_remote{background:#ffe5e5;}
 tbody tr.status-size_mismatch{background:#fff4d6;}
 tbody tr.status-issue{background:#e6f3ff;}
@@ -310,6 +315,7 @@ tbody tr.status-issue{background:#e6f3ff;}
 thead th{position:sticky;top:0;background:#fff;}
 .toolbar{margin:0 0 0.6rem 0;font-size:13px;}
 .size{white-space:nowrap;}
+.date{white-space:nowrap;font-size:11px;}
 .dim{color:#888;}
 </style>
 <script>
@@ -317,23 +323,51 @@ function toggle(path){var base=document.querySelector('tr[data-path="'+path+'"]'
 function hideBranch(row){row.style.display='none';var id=row.dataset.path;var rows=document.querySelectorAll('tr[data-parent="'+id+'"]');for(var i=0;i<rows.length;i++){hideBranch(rows[i]);}}
 document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('statusFilter').addEventListener('change', function(){
-    var v=this.value; document.querySelectorAll('tbody tr').forEach(function(r){
+    var v=this.value; 
+    var rows=document.querySelectorAll('tbody tr');
+    
+    // First pass: show/hide based on filter
+    var visiblePaths = new Set();
+    rows.forEach(function(r){
       var s=r.getAttribute('data-status');
-      if(!v || s===v){r.style.display='table-row';} else {r.style.display='none';}
+      if(!v || s===v){
+        r.style.display='table-row';
+        visiblePaths.add(r.getAttribute('data-path'));
+      } else {
+        r.style.display='none';
+      }
     });
+    
+    // Second pass: ensure parent folders of visible items are also visible
+    if(v) {
+      visiblePaths.forEach(function(path){
+        var parts = path.split('/');
+        for(var i = 1; i < parts.length; i++){
+          var parentPath = parts.slice(0, i).join('/');
+          if(parentPath) {
+            var parentRow = document.querySelector('tr[data-path="' + parentPath + '"]');
+            if(parentRow && parentRow.classList.contains('dir')){
+              parentRow.style.display='table-row';
+            }
+          }
+        }
+      });
+    }
   });
 });
 </script>
 </head><body>
 <h1>{{ title }}</h1>
 <div class='toolbar'>Filter: <select id='statusFilter'><option value=''>All</option><option value='ok'>OK</option><option value='size_mismatch'>Size mismatch</option><option value='missing_remote'>Missing remote</option><option value='missing_local'>Missing local</option><option value='issue'>Dir w/ issue</option></select></div>
-<table><thead><tr><th>Local Path</th><th>Remote Path</th><th>Local Size</th><th>Remote Size</th><th>Status</th></tr></thead><tbody>
+<table><thead><tr><th>Local Path</th><th>Remote Path</th><th>Local Size</th><th>Remote Size</th><th>Local Modified</th><th>Remote Modified</th><th>Status</th></tr></thead><tbody>
 {% for r in rows %}
 <tr class='{{ r.type }}{% if r.status %} status-{{ r.status }}{% endif %}' data-path='{{ r.relpath }}' data-parent='{{ r.parent }}' data-status='{{ r.status }}' data-level='{{ r.level }}' {% if r.type=='dir' %}onclick="toggle('{{ r.relpath }}')"{% endif %}>
     <td><span class='indent' style='width: {{ r.level * 14 }}px'></span>{% if r.local_exists %}{% if r.type=='dir' %}📁 {{ r.name }}{% else %}{{ r.name }}{% endif %}{% else %}<span class='dim'>—</span>{% endif %}</td>
     <td>{% if r.remote_exists %}{% if r.type=='dir' %}📁 {{ r.name }}{% else %}{{ r.name }}{% endif %}{% else %}<span class='dim'>—</span>{% endif %}</td>
   <td class='size'>{% if r.local_size is not none %}{{ r.local_size|filesize }}{% endif %}</td>
   <td class='size'>{% if r.remote_size is not none %}{{ r.remote_size|filesize }}{% endif %}</td>
+  <td class='date'>{% if r.local_mtime is not none %}{{ r.local_mtime|strftime }}{% endif %}</td>
+  <td class='date'>{% if r.remote_mtime is not none %}{{ r.remote_mtime|strftime }}{% endif %}</td>
   <td>{{ r.status }}</td>
 </tr>
 {% endfor %}
