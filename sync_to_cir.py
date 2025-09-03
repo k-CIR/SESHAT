@@ -108,6 +108,9 @@ class ServerSync:
         # Add delete option (removes files on destination not in source)
         if delete:
             cmd.append('--delete')
+            # Also add itemize-changes to track what files are transferred
+            if '--itemize-changes' not in cmd:
+                cmd.append('--itemize-changes')
             
         # Add dry-run option
         if dry_run:
@@ -139,7 +142,7 @@ class ServerSync:
                       include_patterns: List[str] = None,
                       dry_run: bool = False,
                       delete: bool = False) -> bool:
-        """Sync a directory to remote server"""
+        """Sync a directory to remote server and optionally delete local files after successful transfer"""
         
         log_path = f'{local_path}/log' or './log'
         if not os.path.exists(log_path):
@@ -164,10 +167,12 @@ class ServerSync:
             if dry_run:
                 log("DRY RUN MODE - No files will be transferred", 'info',
                     logfile=self.log_file, logpath=log_path)
+                if delete:
+                    log("DRY RUN MODE - Local files would be deleted after successful sync", 'info',
+                        logfile=self.log_file, logpath=log_path)
                 print_dir_tree(local_path, max_depth=2)  # Print directory structure for verification
             
             # Execute rsync
-            
             result = subprocess.run(cmd, capture_output=True, text=True)
             
             # Log output
@@ -182,6 +187,11 @@ class ServerSync:
             if result.returncode == 0:
                 log(f"Successfully synced {local_path} to {server_name}", 'info',
                     logfile=self.log_file, logpath=log_path)
+                
+                # If delete flag is set and sync was successful, delete local files
+                if delete and not dry_run:
+                    self._delete_local_files_after_sync(local_path, result.stdout, log_path)
+                
                 return True
             else:
                 log(f"Rsync failed with return code {result.returncode}", 'error',
@@ -192,6 +202,69 @@ class ServerSync:
             log(f"Error syncing to {server_name}: {e}", 'error',
                 logfile=self.log_file, logpath=log_path)
             return False
+    
+    def _delete_local_files_after_sync(self, local_path: str, rsync_output: str, log_path: str):
+        """Delete local files that were successfully transferred to server"""
+        try:
+            import re
+            
+            # Parse rsync output to find transferred files
+            transferred_files = []
+            lines = rsync_output.strip().split('\n')
+            
+            for line in lines:
+                # Look for lines that indicate file transfers (starts with > or <)
+                # Format: >f+++++++++ path/to/file
+                match = re.match(r'^[><]f[\+\.\s]*\s+(.+)$', line.strip())
+                if match:
+                    relative_path = match.group(1)
+                    full_path = os.path.join(local_path, relative_path)
+                    if os.path.exists(full_path) and os.path.isfile(full_path):
+                        transferred_files.append(full_path)
+            
+            # Delete the transferred files
+            deleted_count = 0
+            for file_path in transferred_files:
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                    log(f"Deleted local file after successful sync: {file_path}", 'info',
+                        logfile=self.log_file, logpath=log_path)
+                except Exception as e:
+                    log(f"Failed to delete local file {file_path}: {e}", 'warning',
+                        logfile=self.log_file, logpath=log_path)
+            
+            if deleted_count > 0:
+                log(f"Deleted {deleted_count} local files after successful sync", 'info',
+                    logfile=self.log_file, logpath=log_path)
+                
+                # Clean up empty directories
+                self._cleanup_empty_directories(local_path, log_path)
+            
+        except Exception as e:
+            log(f"Error during local file cleanup: {e}", 'warning',
+                logfile=self.log_file, logpath=log_path)
+    
+    def _cleanup_empty_directories(self, base_path: str, log_path: str):
+        """Remove empty directories after file deletion"""
+        try:
+            for root, dirs, files in os.walk(base_path, topdown=False):
+                # Skip the log directory
+                if root == log_path or log_path in root:
+                    continue
+                    
+                # If directory is empty (no files and no subdirectories), remove it
+                if not files and not dirs:
+                    try:
+                        os.rmdir(root)
+                        log(f"Removed empty directory: {root}", 'info',
+                            logfile=self.log_file, logpath=log_path)
+                    except Exception as e:
+                        log(f"Failed to remove empty directory {root}: {e}", 'warning',
+                            logfile=self.log_file, logpath=log_path)
+        except Exception as e:
+            log(f"Error during directory cleanup: {e}", 'warning',
+                logfile=self.log_file, logpath=log_path)
     
     def check_server_connection(self, server_name: str) -> bool:
         """Test connection to server"""
@@ -334,7 +407,7 @@ Examples:
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be transferred without actually doing it')
     parser.add_argument('--delete', action='store_true',
-                       help='Delete files on server that are not in source', default=False)
+                       help='Delete local files after successful sync to server (use with caution!)', default=False)
     parser.add_argument('--exclude', action='append', metavar='PATTERN',
                        help='Exclude files matching pattern (can be used multiple times)')
     parser.add_argument('--include', action='append', metavar='PATTERN',

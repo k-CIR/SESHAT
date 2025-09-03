@@ -34,14 +34,15 @@ Examples:
   natmeg bidsify --config config.yml      # BIDS conversion only
   
   # Server synchronization workflow
-  natmeg sync create-config                               # Create example server config
-  natmeg sync test cir --config servers.yml               # Test server connection
-  natmeg sync directory /data/project cir --dry-run       # Preview sync operation
-  natmeg sync directory /data/project cir --delete        # Sync with deletion
-  natmeg sync directory /data/project cir --exclude "*.log" --include "*.fif"
+  natmeg sync --config project.yml [--dry-run]             # Sync operation using project config [preview]
+  natmeg sync --directory /data/project [--dry-run]        # Sync operation for custom directory [preview]
+  natmeg sync --create-config                             # Create example server config
+  natmeg sync --test --server cir --server-config servers.yml  # Test server connection
+  natmeg sync --config project.yml --delete               # Sync with deletion using project config
+  natmeg sync --directory /data/project --exclude "*.log" --include "*.fif"
   
   # Advanced sync options
-  natmeg sync directory ./processed_data server_name \\
+  natmeg sync --directory ./processed_data --server server_name \\
     --exclude "temp/*" --exclude "*.tmp" \\
     --include "derivatives/*" \\
     --dry-run --delete
@@ -86,17 +87,17 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     
     # Server sync command (updated to reflect new sync_to_cir interface)
     sync_parser = subparsers.add_parser('sync', help='Sync data to remote server')
+    sync_parser.add_argument('--config', help='Project configuration file (YAML or JSON) used to infer default sync directory')
+    sync_parser.add_argument('--directory', nargs='*', metavar=('PATH','SERVER'), help='Sync custom directory to specified server')
+    sync_parser.add_argument('--dry-run', action='store_true', help='Show what would be transferred without actually doing it')
     sync_parser.add_argument('--create-config', action='store_true', help='Create example server configuration file')
-    sync_parser.add_argument('--server-config', help='Server configuration file (YAML / JSON)')
+    sync_parser.add_argument('--server-config', help='Server configuration file (YAML or JSON)')
     sync_parser.add_argument('--server', help='Server name (default cir)', default='cir')
-    sync_parser.add_argument('--test', action='store_true', help='Only test connection then exit')
-    sync_parser.add_argument('--config', help='Project configuration file (YAML / JSON) used to infer default sync directory')
-    sync_parser.add_argument('--directory', nargs='*', metavar=('PATH','SERVER'), help='Directory to sync (optionally followed by server name)')
-    sync_parser.add_argument('--dry-run', action='store_true', help='Show what would be synced without transferring')
-    sync_parser.add_argument('--delete', action='store_true', help='Delete files on server not present locally', default=False)
-    sync_parser.add_argument('--exclude', action='append', help='Exclude pattern (repeatable)')
-    sync_parser.add_argument('--include', action='append', help='Include pattern (repeatable)')
-    sync_parser.add_argument('--no-append-basename', action='store_true', help='Do not append local basename to remote path')
+    sync_parser.add_argument('--test', action='store_true', help='Only test connection to server and exit (use --server to pick server)')
+    sync_parser.add_argument('--exclude', action='append', metavar='PATTERN', help='Exclude files matching pattern (can be used multiple times)')
+    sync_parser.add_argument('--include', action='append', metavar='PATTERN', help='Include files matching pattern (can be used multiple times)')
+    sync_parser.add_argument('--delete', action='store_true', help='Delete local files after successful sync to server (use with caution!)', default=False)
+
     
     args = parser.parse_args()
     
