@@ -747,7 +747,7 @@ class MaxFilter:
                 # Use absolute path
                 file = f"{subj_in}/{file}"
                 clean = f"{subj_out}/{clean}"
-                log = f'{self.logpath}/{basename(clean).replace(".fif",".log")}'
+                log = f'{subj_out}/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
