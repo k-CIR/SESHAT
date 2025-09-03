@@ -43,7 +43,7 @@ import matplotlib.patches as mpatches
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils import (
-    log,
+    log, configure_logging,
     proc_patterns,
     noise_patterns,
     file_contains,
@@ -232,7 +232,9 @@ class MaxFilter:
         parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
         self.logfile = parameters.get('logfile', 'maxfilter.log')
         self.logpath = parameters.get('data_path').replace('raw', 'log')
-        
+
+        configure_logging(log_dir=self.logpath, log_file=self.logfile)
+
         # Convert 'on'/'off' to True/False in parameters
         for key, value in parameters.items():
             if value == 'on':
@@ -707,6 +709,11 @@ class MaxFilter:
         # Remove if empty
         tasks_to_run = [t for t in tasks_to_run if t != '']
 
+        print(f'''
+                Processing subject: {subject}
+                Session: {session}
+                ''')
+
         for task in tasks_to_run:
 
             files = match_task_files(all_fifs, task)
@@ -740,7 +747,7 @@ class MaxFilter:
                 # Use absolute path
                 file = f"{subj_in}/{file}"
                 clean = f"{subj_out}/{clean}"
-                log = f'{subj_out}/{'log'}/{basename(clean).replace(".fif",".log")}'
+                log = f'{subj_out}/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
@@ -766,12 +773,13 @@ class MaxFilter:
                 self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
 
                 if not exists(clean):
-                    print(
-                        f'Running MaxFilter on {subject} | {session} | {task}')
+                    print(f'Running MaxFilter on {subject} | {session} | {task}')
                     if not debug:
-                        subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
-                        log('MaxFilter', f'{file} -> {clean}', logfile=self.logfile, log_path=self.logpath)
-
+                        try:
+                            subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
+                            log('MaxFilter', f'{file} -> {clean}', 'info', logfile=self.logfile, log_path=self.logpath)
+                        except Exception as e:
+                            print(f'Error occurred while running MaxFilter: {e}')
                     else:
                         print(self.command_mxf)
 

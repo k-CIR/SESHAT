@@ -103,6 +103,12 @@ natmeg hpi --config config.yml       # HPI coregistration only
 natmeg maxfilter --config config.yml # MaxFilter processing only
 natmeg bidsify --config config.yml   # BIDS conversion only
 
+# Sync data to remote server (new interface)
+natmeg sync --create-config                         # Generate example server config
+natmeg sync --server-config servers.yml --test      # Test default server connection
+natmeg sync --directory /data/project               # Sync directory (default server 'cir')
+natmeg sync --config project_config.yml --dry-run   # Derive dir from project config
+
 # Show help
 natmeg --help
 ```

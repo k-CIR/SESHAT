@@ -93,14 +93,14 @@ fi
 # Copy relevant files to local
 if [ -f "$HOME/.local/bin/NatMEG-utils" ]; then
     echo "NatMEG utils already exists at $HOME/.local/bin/NatMEG-utils"
-    read -p "Do you want to overwrite it? (y/N): " -n 1 -r
+    read -p "Do you want to install the conda environment now? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo "Installation cancelled."
         exit 0
     fi
 fi
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "README.md" "run_config.py") 
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py") 
 SOURCE_DIR=$(pwd)
 TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
 
@@ -241,7 +241,7 @@ if [ "\$env_exists" = false ]; then
     safe_conda_test env list 2>/dev/null || echo "  (could not list environments)"
     echo ""
     echo "To create the environment:"
-    echo "  conda create -n \$ENV_NAME python=3.9 -y"
+    echo "  conda create -n \$ENV_NAME python=3.12 mne mne-bids bids-validator pandas jinja2 -y"
     echo "  conda activate \$ENV_NAME"
     echo "  cd \$(dirname "\$0")"
     echo "  pip install -e ."
@@ -329,12 +329,22 @@ if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/natmeg"
     echo "✓ natmeg executable created successfully"
     
     # Test basic execution only if environment exists
-    if [ "$ENV_EXISTS" = true ] && "$HOME/.local/bin/NatMEG-utils/natmeg" --help &> /dev/null; then
-        echo "✓ natmeg executable runs correctly"
+    if [ "$ENV_EXISTS" = true ] && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" ] && head -n 1 "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" | grep -q "^#\!"; then
+        echo "✓ natmeg executable and main Python file exist with shebang"
         INSTALL_SUCCESS=true
     else
-        echo "⚠ natmeg executable created but needs conda environment setup"
-        INSTALL_SUCCESS=false
+        
+        # echo "⚠ natmeg executable created but needs conda environment setup"
+        read -p "Do you want to overwrite it? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "installing conda environment"
+            conda create -n natmeg_utils python=3.12 mne mne-bids bids-validator pandas jinja2 -y
+            INSTALL_SUCCESS=true
+        else
+            echo "⚠ natmeg executable created but needs conda environment setup"
+            INSTALL_SUCCESS=false   
+        fi
     fi
 else
     echo "✗ Failed to create natmeg executable"
@@ -344,16 +354,17 @@ fi
 echo ""
 echo "Usage:"
 echo "  natmeg gui                      # Launch GUI"
-echo "  natmeg run --config config.yml # Run pipeline"
+echo "  natmeg run --config config.yml   # Run pipeline"
+echo "  natmeg report --config config.yml # Generate HTML report only"
 echo ""
 
 # Conditional instructions based on installation status
 if [ "$ENV_EXISTS" = false ]; then
     echo "NEXT STEPS - Create conda environment:"
     echo "  1. source $SHELL_CONFIG"
-    echo "  2. conda create -n natmeg_utils python=3.9 -y"
+    echo "  2. conda create -n natmeg_utils mne mne-bids bids-validator pandas jinja2 -y"
     echo "  3. conda activate natmeg_utils"
-    echo "  4. cd \$(dirname "\$0")"
+    echo "  4. cd $(dirname "$0")"
     echo "  5. pip install -e ."
     echo "  6. Test with: natmeg --help"
 elif [ "$INSTALL_SUCCESS" = true ]; then

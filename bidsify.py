@@ -13,6 +13,7 @@ import numpy as np
 import argparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import subprocess
 
 
 from mne_bids import (
@@ -30,9 +31,12 @@ from mne_bids import (
 from mne_bids.utils import _write_json
 from mne_bids.write import _sidecar_json
 import mne
+import time
+from bids_validator import BIDSValidator
+from bids import BIDSLayout
 
 from utils import (
-    log,
+    log, configure_logging,
     noise_patterns,
     headpos_patterns,
     askForConfig,
@@ -121,9 +125,10 @@ def create_participants_files(config: dict):
         participants = glob('sub*', root_dir=config['BIDS'])
         # create empty table with 4 columns (participant_id, sex, age)
         df = pd.DataFrame(columns=['participant_id', 'sex', 'age', 'group'])
-        
-        df.to_csv(f'{config['BIDS']}/participants.tsv', sep='\t', index=False)
-        print(f'Writing {config['BIDS']}/participants.tsv')
+            
+        participants_tsv_path = os.path.join(config['BIDS'], 'participants.tsv')
+        df.to_csv(participants_tsv_path, sep='\t', index=False)
+        print(f"Writing {participants_tsv_path}")
 
     json_file = os.path.join(config['BIDS'], 'participants.json')
 
@@ -148,9 +153,10 @@ def create_participants_files(config: dict):
             }
         }
 
-        with open(f'{config['BIDS']}/participants.json', 'w') as f:
+    participants_json_path = os.path.join(config['BIDS'], 'participants.json')
+    with open(participants_json_path, 'w') as f:
             json.dump(participants_json, f, indent=4)
-        print(f'Writing {config['BIDS']}/participants.json')
+    print(f"Writing {participants_json_path}")
 
 ###############################################################################
 # Help functions
@@ -353,8 +359,11 @@ def add_channel_parameters(
     """
     if exists(opm_tsv):
         orig_df = pd.read_csv(opm_tsv, sep='\t')
-        bids_df = pd.read_csv(bids_tsv, sep='\t')
-        
+        if not exists(bids_tsv):
+            bids_df = orig_df.copy()
+        else:
+            bids_df = pd.read_csv(bids_tsv, sep='\t')
+
         # Compare file with file in BIDS folder
 
         add_cols = [c for c in orig_df.columns
@@ -587,6 +596,7 @@ def generate_new_conversion_table(config: dict):
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
+    return df
 
 # TODO: continue check here
 
@@ -633,9 +643,17 @@ def load_conversion_table(config: dict):
             print(f'Overwrite requested, generating new conversion table')
         else:
             print(f'Conversion file {conversion_file} not found, generating new')
+        
         generate_new_conversion_table(config)
+        conversion_file_path = f'{path_BIDS}/conversion_logs/bids_conversion.tsv'
+        while not exists(conversion_file_path):
+            time.sleep(0.5)
         # After generation, load the newly created file
-        conversion_files = sorted(glob(os.path.join(conversion_logs_path, '*_bids_conversion.tsv')))
+        conversion_files = sorted(
+            glob(os.path.join(conversion_logs_path, '*.tsv')),
+            key=os.path.getctime
+        )
+        print(f"Found conversion files: {conversion_files}")
         if conversion_files:
             latest_conversion_file = conversion_files[-1]
             print(f"Loading the most recent conversion table: {basename(latest_conversion_file)}")
@@ -680,7 +698,6 @@ def update_conversion_table(conversion_table: pd.DataFrame,
         if not files:
             conversion_table.at[i, 'run_conversion'] = 'yes'
             conversion_table.at[i, 'time_stamp'] = ts
-            print(f'Running conversion on {row['raw_name']}')
         
         # TODO: Add argument for update if file exists
     
@@ -737,16 +754,20 @@ def bidsify(config: dict):
     overwrite = config['overwrite']
     logfile = config['Logfile']
     logpath = config['BIDS'].replace('raw', 'log')
+
+    configure_logging(log_dir=logpath, log_file=logfile)
     # overwrite = config['Overwrite']
 
     df, conversion_file = load_conversion_table(config)
     #df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
+
+    df['participant_to'] = df['participant_to'].str.zfill(4)
     
     # Start by creating the BIDS directory structure
     unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
     for _, row in unique_participants_sessions.iterrows():
-        subject_padded = str(row['participant_to']).zfill(3)
+        subject_padded = str(row['participant_to']).zfill(4)
         session_padded = str(row['session_to']).zfill(2)
         bids_path = BIDSPath(
             subject=subject_padded,
@@ -766,9 +787,8 @@ def bidsify(config: dict):
     # Flag deviants and exist if found
     deviants = df[df['task_flag'] == 'check']
     if len(deviants) > 0:
-        log('BIDS', 'Deviants found, please check the conversion table', level='error', logfile=logfile, logpath=logpath)
-        print(deviants)
-        sys.exit(1)
+        log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
+        return
 
     for i, d in df.iterrows():
         
@@ -779,11 +799,16 @@ def bidsify(config: dict):
         
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
         if not file_contains(raw_file, headpos_patterns):
-            raw = mne.io.read_raw_fif(raw_file,
-                                    allow_maxshield=True,
-                                    verbose='error')
+            try:
+                raw = mne.io.read_raw_fif(raw_file,
+                                        allow_maxshield=True,
+                                        verbose='error')
+            except Exception as e:
+                log('BIDS', f'Error reading {raw_file}: {e}', level='error', logfile=logfile, logpath=logpath)
+                continue
 
             ch_types = set(raw.info.get_channel_types())
+            
 
             if 'mag' in ch_types:
                 datatype = 'meg'
@@ -793,9 +818,17 @@ def bidsify(config: dict):
                 datatype = 'eeg'
                 extension = None
                 suffix = None
-            
+            elif raw_file.endswith('.fif'):
+                datatype = 'meg'
+                extension = '.fif'
+                suffix = 'meg'
+
             # Added leading zero-padding to subject and session
-            subject = str(d['participant_to']).zfill(3)
+            if len(d['participant_to']) > 3:
+                subject = str(d['participant_to']).zfill(4)
+            else:
+                subject = str(d['participant_to']).zfill(3)
+            
             session = str(d['session_to']).zfill(2)
             task = d['task']
             acquisition = d['acquisition']
@@ -811,6 +844,7 @@ def bidsify(config: dict):
             else:
                 event_id = None
                 events = None
+            
 
             # Create BIDS path
             bids_path = BIDSPath(
@@ -825,7 +859,8 @@ def bidsify(config: dict):
                 extension=extension,
                 root=path_BIDS
             )
-        # Write the BIDS file
+            
+            # Write the BIDS file
             try:
                 write_raw_bids(
                     raw=raw,
@@ -858,10 +893,12 @@ def bidsify(config: dict):
 
             # Add channel parameters 
             if acquisition == 'hedscan' and not processing:
+                
                 opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
                 
                 bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
                 add_channel_parameters(bids_tsv, opm_tsv)
+
 
         # If the file is a head position file, copy it to the BIDS directory
         # and rename it to the BIDS format
@@ -921,6 +958,70 @@ It includes:
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     args = parser.parse_args()
     return args
+
+
+def validate_bids():
+    """
+    Validate BIDS directory structure and contents using bids-validator.
+    
+    Args:
+        config (dict): Configuration dictionary with BIDS path
+    
+    Returns:
+        bool: True if validation passes, False otherwise
+    """
+    
+    bids_root = config['BIDS']
+    logfile = config.get('Logfile', 'bidsify.log')
+    logpath = config.get('BIDS', '').replace('raw', 'log')
+    
+    if not os.path.exists(bids_root):
+        log('BIDS', f"BIDS directory {bids_root} does not exist", level='error', logfile=logfile, logpath=logpath)
+        return False
+    
+    try:
+        # Run bids-validator
+        result = subprocess.run(
+            ['bids-validator', bids_root, '--json'],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        if result.returncode == 0:
+            log('BIDS', 'BIDS validation passed', level='info', logfile=logfile, logpath=logpath)
+            return True
+        else:
+            # Parse JSON output for detailed errors
+            try:
+                validation_result = json.loads(result.stdout)
+                errors = validation_result.get('issues', {}).get('errors', [])
+                warnings = validation_result.get('issues', {}).get('warnings', [])
+                
+                for error in errors:
+                    log('BIDS', f"Validation error: {error.get('reason', 'Unknown error')}", 
+                        level='error', logfile=logfile, logpath=logpath)
+                
+                for warning in warnings:
+                    log('BIDS', f"Validation warning: {warning.get('reason', 'Unknown warning')}", 
+                        level='warning', logfile=logfile, logpath=logpath)
+                        
+            except json.JSONDecodeError:
+                # Fallback to plain text output
+                log('BIDS', f"Validation failed: {result.stderr}", level='error', logfile=logfile, logpath=logpath)
+            
+            return False
+            
+    except subprocess.TimeoutExpired:
+        log('BIDS', 'BIDS validation timed out', level='error', logfile=logfile, logpath=logpath)
+        return False
+    except FileNotFoundError:
+        log('BIDS', 'bids-validator not found. Install with: npm install -g bids-validator', 
+            level='error', logfile=logfile, logpath=logpath)
+        return False
+    except Exception as e:
+        log('BIDS', f"Validation error: {str(e)}", level='error', logfile=logfile, logpath=logpath)
+        return False
 
 def main(config:str=None):
     """

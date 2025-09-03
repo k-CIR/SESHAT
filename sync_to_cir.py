@@ -12,6 +12,7 @@ import json
 import subprocess
 import shlex
 from pathlib import Path
+from os.path import dirname, abspath, exists, isdir
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from copy import deepcopy
@@ -20,11 +21,12 @@ from mne_bids import print_dir_tree
 
 from utils import log
 
+sync_config = '/home/natmeg/.config/sync_config.yml'
 
 class ServerSync:
     """Handle syncing data to remote servers with rsync"""
-    
-    def __init__(self, config: Union[str, Dict] = 'server_sync_config.yml'):
+
+    def __init__(self, config: Union[str, Dict] = sync_config):
         """Initialize with configuration"""
         if isinstance(config, str):
             with open(config, 'r') as f:
@@ -78,6 +80,8 @@ class ServerSync:
         """Build rsync command with options"""
         
         cmd = ['rsync']
+
+        cmd.extend(self.config.get('default_rsync_options', []))
         
         global_excludes = self.config.get('sync_defaults', {}).get('global_excludes', [])
         
@@ -104,6 +108,9 @@ class ServerSync:
         # Add delete option (removes files on destination not in source)
         if delete:
             cmd.append('--delete')
+            # Also add itemize-changes to track what files are transferred
+            if '--itemize-changes' not in cmd:
+                cmd.append('--itemize-changes')
             
         # Add dry-run option
         if dry_run:
@@ -121,11 +128,13 @@ class ServerSync:
             cmd.extend(['-e', ' '.join(shlex.quote(arg) for arg in ssh_cmd)])
             
         # Source and destination
-        local_path = local_path.rstrip('/') # Remove trailing slash
-        remote_dest = f"{server_config['user']}@{server_config['host']}:{server_config['remote_path']}/{os.path.basename(local_path)}"
-        
+        local_path = local_path.rstrip('/')  # Remove trailing slash
+        remote_root = server_config['remote_path'].rstrip('/')
+        # Always avoid duplicating the local basename on the remote path
+        remote_dest = f"{server_config['user']}@{server_config['host']}:{remote_root}"
+
         cmd.extend([local_path, remote_dest])
-        
+
         return cmd
     
     def sync_directory(self, local_path: str, server_name: str,
@@ -133,7 +142,7 @@ class ServerSync:
                       include_patterns: List[str] = None,
                       dry_run: bool = False,
                       delete: bool = False) -> bool:
-        """Sync a directory to remote server"""
+        """Sync a directory to remote server and optionally delete local files after successful transfer"""
         
         log_path = f'{local_path}/log' or './log'
         if not os.path.exists(log_path):
@@ -144,11 +153,6 @@ class ServerSync:
                 logfile=self.log_file, logpath=log_path)
             return False
             
-        if not os.path.isdir(local_path):
-            log(f"Path is not a directory: {local_path}", 'error',
-                logfile=self.log_file, logpath=log_path)
-            return False
-        
         try:
             server_config = self.validate_server_config(server_name)
             cmd = self.build_rsync_command(
@@ -159,10 +163,13 @@ class ServerSync:
             # Log the command
             cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
             log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path)
-            
+
             if dry_run:
                 log("DRY RUN MODE - No files will be transferred", 'info',
                     logfile=self.log_file, logpath=log_path)
+                if delete:
+                    log("DRY RUN MODE - Local files would be deleted after successful sync", 'info',
+                        logfile=self.log_file, logpath=log_path)
                 print_dir_tree(local_path, max_depth=2)  # Print directory structure for verification
             
             # Execute rsync
@@ -180,6 +187,11 @@ class ServerSync:
             if result.returncode == 0:
                 log(f"Successfully synced {local_path} to {server_name}", 'info',
                     logfile=self.log_file, logpath=log_path)
+                
+                # If delete flag is set and sync was successful, delete local files
+                if delete and not dry_run:
+                    self._delete_local_files_after_sync(local_path, result.stdout, log_path)
+                
                 return True
             else:
                 log(f"Rsync failed with return code {result.returncode}", 'error',
@@ -190,6 +202,69 @@ class ServerSync:
             log(f"Error syncing to {server_name}: {e}", 'error',
                 logfile=self.log_file, logpath=log_path)
             return False
+    
+    def _delete_local_files_after_sync(self, local_path: str, rsync_output: str, log_path: str):
+        """Delete local files that were successfully transferred to server"""
+        try:
+            import re
+            
+            # Parse rsync output to find transferred files
+            transferred_files = []
+            lines = rsync_output.strip().split('\n')
+            
+            for line in lines:
+                # Look for lines that indicate file transfers (starts with > or <)
+                # Format: >f+++++++++ path/to/file
+                match = re.match(r'^[><]f[\+\.\s]*\s+(.+)$', line.strip())
+                if match:
+                    relative_path = match.group(1)
+                    full_path = os.path.join(local_path, relative_path)
+                    if os.path.exists(full_path) and os.path.isfile(full_path):
+                        transferred_files.append(full_path)
+            
+            # Delete the transferred files
+            deleted_count = 0
+            for file_path in transferred_files:
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                    log(f"Deleted local file after successful sync: {file_path}", 'info',
+                        logfile=self.log_file, logpath=log_path)
+                except Exception as e:
+                    log(f"Failed to delete local file {file_path}: {e}", 'warning',
+                        logfile=self.log_file, logpath=log_path)
+            
+            if deleted_count > 0:
+                log(f"Deleted {deleted_count} local files after successful sync", 'info',
+                    logfile=self.log_file, logpath=log_path)
+                
+                # Clean up empty directories
+                self._cleanup_empty_directories(local_path, log_path)
+            
+        except Exception as e:
+            log(f"Error during local file cleanup: {e}", 'warning',
+                logfile=self.log_file, logpath=log_path)
+    
+    def _cleanup_empty_directories(self, base_path: str, log_path: str):
+        """Remove empty directories after file deletion"""
+        try:
+            for root, dirs, files in os.walk(base_path, topdown=False):
+                # Skip the log directory
+                if root == log_path or log_path in root:
+                    continue
+                    
+                # If directory is empty (no files and no subdirectories), remove it
+                if not files and not dirs:
+                    try:
+                        os.rmdir(root)
+                        log(f"Removed empty directory: {root}", 'info',
+                            logfile=self.log_file, logpath=log_path)
+                    except Exception as e:
+                        log(f"Failed to remove empty directory {root}: {e}", 'warning',
+                            logfile=self.log_file, logpath=log_path)
+        except Exception as e:
+            log(f"Error during directory cleanup: {e}", 'warning',
+                logfile=self.log_file, logpath=log_path)
     
     def check_server_connection(self, server_name: str) -> bool:
         """Test connection to server"""
@@ -219,6 +294,38 @@ class ServerSync:
         except Exception as e:
             print(f"❌ Error testing connection to {server_name}: {e}")
             return False
+
+def get_parameters(config: Union[str, Dict]) -> Dict:
+    """
+    Extract and merge BIDS configuration parameters from file or dictionary.
+    
+    Reads configuration from JSON/YAML file or processes existing dictionary,
+    combining project and BIDS-specific parameters into a unified configuration.
+
+    Args:
+        config (str or dict): Path to config file (.json/.yml/.yaml) or
+                             configuration dictionary
+
+    Returns:
+        dict: Merged configuration dictionary combining project and BIDS settings
+
+    Raises:
+        ValueError: If unsupported file format is provided
+    """
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config_dict = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config_dict = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    elif isinstance(config, dict):
+        config_dict = deepcopy(config)
+
+    sync_dict = deepcopy(config_dict['project'])
+    return sync_dict
 
 
 def create_example_config():
@@ -277,13 +384,13 @@ def main(path:str=None):
         epilog="""
 Examples:
   # Test connection to server
-  python sync_to_cor.py --test-connection cir
+  python sync_to_cir.py --test cir
   
   # Sync custom directory
-  python sync_to_cor.py --sync-directory /path/to/data cir
-  
+  python sync_to_cir.py --directory /path/to/data cir
+
   # Generate example config
-  python sync_to_cor.py --create-config
+  python sync_to_cir.py --create-config
         """
     )
 
@@ -291,21 +398,24 @@ Examples:
     parser.add_argument('--server-config', help='Server configuration file (YAML or JSON)')
     parser.add_argument('--create-config', action='store_true', 
                        help='Create example server configuration file')
-    parser.add_argument('--test', metavar='SERVER', default='cir',
-                       help='Test connection to specified server')
+    parser.add_argument('--test', action='store_true',
+                       help='Only test connection to server and exit (use --server to pick server)')
+    parser.add_argument('--server', help='Server name (default cir)')
     
     parser.add_argument('--directory', nargs='*', metavar=('PATH', 'SERVER'),
                        help='Sync custom directory to specified server')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be transferred without actually doing it')
     parser.add_argument('--delete', action='store_true',
-                       help='Delete files on server that are not in source', default=False)
+                       help='Delete local files after successful sync to server (use with caution!)', default=False)
     parser.add_argument('--exclude', action='append', metavar='PATTERN',
                        help='Exclude files matching pattern (can be used multiple times)')
     parser.add_argument('--include', action='append', metavar='PATTERN',
                        help='Include files matching pattern (can be used multiple times)')
     
     args = parser.parse_args()
+
+    server_name = args.server or 'cir'
     
     # Create example config
     if args.create_config:
@@ -318,32 +428,38 @@ Examples:
         return
     
     # Load configuration
-    server_config_file = args.server_config
-    if not os.path.exists(server_config_file):
-        print(f"Configuration file not found: {server_config_file}")
-        print("Use --create-config to generate an example configuration.")
-        return
+    if args.server_config:
+        server_config_file = args.server_config
+        if not os.path.exists(server_config_file):
+            print(f"Configuration file not found: {server_config_file}")
+            print("Use --create-config to generate an example configuration.")
+            return
     
-    try:
-        syncer = ServerSync(server_config_file)
-    except Exception as e:
-        print(f"Error loading configuration: {e}")
-        return
-    
-    # Test connection
+        try:
+            syncer = ServerSync(server_config_file)
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
+            return
+    else:
+        syncer = ServerSync()
+
+    # Test connection only
     if args.test:
-        server_name = args.test
-        success = syncer.check_server_connection(server_name)
+        syncer.check_server_connection(server_name)
         return
     
     # Sync operations
-    
-    server_name = 'cir'  # Default server name
 
-    if args.directory:
-        local_path = args.directory[0] or syncer.get_local_path(path)
-        if len(args.directory) > 1:
-            server_name = args.directory[1]
+    if args.config:
+        try:
+            config = get_parameters(args.config)
+            print(config)
+        except Exception as e:
+            print(f"Error loading project configuration: {e}")
+            return
+
+        directory = dirname(config.get('squidMEG', None)) or dirname(config.get('squidMEG', None))
+        local_path = directory
         success = syncer.sync_directory(
             local_path, server_name,
             exclude_patterns=args.exclude,
@@ -351,10 +467,20 @@ Examples:
             dry_run=args.dry_run,
             delete=args.delete
         )
-    
+
+    if args.directory:
+        local_path = args.directory[0]
+        if len(args.directory) > 1 and not args.server:
+            server_name = args.directory[1]
+        syncer.sync_directory(
+            local_path, server_name,
+            exclude_patterns=args.exclude,
+            include_patterns=args.include,
+            dry_run=args.dry_run,
+            delete=args.delete
+        )
     else:
         parser.print_help()
-        return
 
 
 if __name__ == "__main__":
