@@ -6,7 +6,7 @@ import yaml
 import os
 from shutil import copy2
 from copy import deepcopy
-from os.path import exists, basename, dirname
+from os.path import exists, basename, dirname, join
 import sys
 from glob import glob
 import numpy as np
@@ -33,7 +33,7 @@ from mne_bids.write import _sidecar_json
 import mne
 import time
 from bids_validator import BIDSValidator
-from bids import BIDSLayout
+#from bids import BIDSLayout
 
 from utils import (
     log, configure_logging,
@@ -308,13 +308,17 @@ def update_sidecars(config: dict):
                     if file_contains(proc, ['sss', 'tsss']):
                         sss_info = max_info['sss_info']
                         sidecar['SoftwareFilters']['MaxFilterVersion'] = info['proc_history'][0]['creator']
+
                         sidecar['SoftwareFilters']['SignalSpaceSeparation'] = {
                             'Origin': sss_info['origin'].tolist(),
                             'NComponents': sss_info['nfree'],
-                            'HPIGLimit': sss_info['hpi_g_limit'],
-                            'HPIDistanceLimit': sss_info['hpi_dist_limit']
                             
                         }
+
+                        if any(['hpi' in key for key in sss_info.keys()]):
+                            sidecar['SoftwareFilters']['SignalSpaceSeparation'][ 'HpiGoodLimit'] = sss_info['hpi_g_limit']
+                            sidecar['SoftwareFilters']['SignalSpaceSeparation']['HPIDistanceLimit'] = sss_info['hpi_dist_limit']
+
                         if ['tsss'] in proc_list:
                             max_st = max_info['max_st']
                             sidecar['SoftwareFilters']['TemporalSignalSpaceSeparation'] = {
@@ -430,10 +434,11 @@ def generate_new_conversion_table(config: dict):
     """
     # TODO: parallelize the conversion
     ts = datetime.now().strftime('%Y%m%d')
+    path_project = config['opmMEG'].replace('raw', '') or config['squidMEG'].replace('raw', '')
     path_triux = config['squidMEG']
     path_opm = config['opmMEG']
     path_BIDS = config['BIDS']
-    participant_mapping = config['Participants_mapping_file']
+    participant_mapping = join(path_project,config['Participants_mapping_file'])
     old_subj_id = config['Original_subjID_name']
     new_subj_id = config['New_subjID_name']
     old_session = config['Original_session_name']
@@ -585,7 +590,8 @@ def generate_new_conversion_table(config: dict):
 
     if not df.empty:
         df.insert(2, 'task_flag', df.apply(
-            lambda x: 'check' if x['task'] not in tasks else 'ok', axis=1))
+            lambda x: 'check' if x['task'] not in tasks + ['Noise'] else 'ok', axis=1))
+            # Added Noise to accepted task patterns
     else:
         df = pd.DataFrame(columns=[
             'time_stamp', 'run_conversion', 'participant_from', 'participant_to',
@@ -762,12 +768,12 @@ def bidsify(config: dict):
     #df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
 
-    df['participant_to'] = df['participant_to'].str.zfill(4)
+    df['participant_to'] = df['participant_to'].str.zfill(3)
     
     # Start by creating the BIDS directory structure
     unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
     for _, row in unique_participants_sessions.iterrows():
-        subject_padded = str(row['participant_to']).zfill(4)
+        subject_padded = str(row['participant_to']).zfill(3)
         session_padded = str(row['session_to']).zfill(2)
         bids_path = BIDSPath(
             subject=subject_padded,
@@ -825,7 +831,7 @@ def bidsify(config: dict):
 
             # Added leading zero-padding to subject and session
             if len(d['participant_to']) > 3:
-                subject = str(d['participant_to']).zfill(4)
+                subject = str(d['participant_to']).zfill(3)
             else:
                 subject = str(d['participant_to']).zfill(3)
             
@@ -960,7 +966,7 @@ It includes:
     return args
 
 
-def validate_bids():
+def validate_bids(config: dict):
     """
     Validate BIDS directory structure and contents using bids-validator.
     
