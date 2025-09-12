@@ -1,5 +1,4 @@
-# #!/opt/miniconda3/envs/mne/bin/python
-# #!/home/natmeg/miniforge3/envs/mne/bin/python
+
 import pandas as pd
 import json
 import yaml
@@ -754,8 +753,10 @@ def bidsify(config: dict):
     
     # TODO: parallelize the conversion
     ts = datetime.now().strftime('%Y%m%d')
+    local_path = config['squidMEG'] if config['squidMEG'] != '' else config['opmMEG']
     path_BIDS = config['BIDS']
-    calibration = config['Calibration']
+    calibration = f"{local_path}/{config['Calibration']}"
+    crosstalk = f"{local_path}/{config['Crosstalk']}"
     crosstalk = config['Crosstalk']
     overwrite = config['overwrite']
     logfile = config['Logfile']
