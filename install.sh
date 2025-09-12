@@ -1,9 +1,9 @@
 #!/bin/bash
-# Cross-platform NatMEG Pipeline installer
+# Cross-platform NatMEG Pipeline installer using Python virtual environment
 
-#set -e
+set -e
 
-echo "Installing NatMEG Pipeline..."
+echo "Installing NatMEG Pipeline with Python virtual environment..."
 
 # Detect operating system
 OS=$(uname -s)
@@ -11,111 +11,167 @@ ARCH=$(uname -m)
 
 echo "Detected platform: $OS ($ARCH)"
 
-# Function to find conda installation
-find_conda_path() {
-    # Check if conda is already in PATH
-    if command -v conda &> /dev/null; then
-        local conda_exe=$(which conda)
-        local conda_base=$(dirname $(dirname "$conda_exe"))
-        echo "$conda_base"
-        return 0
-    fi
+# Function to find Python installation
+find_python() {
+    # Check for Python 3.8+ (required for modern packages)
+    local python_with_tkinter=""
+    local python_without_tkinter=""
     
-    # Common conda installation paths by platform
-    local conda_paths=()
-    case "$OS" in
-        "Darwin")  # macOS
-            conda_paths=(
-                "/opt/homebrew/Caskroom/miniconda/base"
-                "/usr/local/Caskroom/miniconda/base"
-                "/usr/local/Caskroom/miniforge3/base"
-                "$HOME/miniconda3"
-                "$HOME/miniforge3"
-                "$HOME/anaconda3"
-                "$HOME/conda"
-                "/opt/miniconda3"
-                "/opt/miniforge3"
-                "/opt/anaconda3"
-            )
-            ;;
-        "Linux")
-            conda_paths=(
-                "$HOME/miniconda3"
-                "$HOME/miniforge3"
-                "$HOME/anaconda3"
-                "/opt/miniconda3"
-                "/opt/miniforge3"
-                "/opt/anaconda3"
-                "/usr/local/miniconda3"
-                "/usr/local/miniforge3"
-                "/usr/local/anaconda3"
-            )
-            ;;
-        *)
-            echo "Unsupported operating system: $OS"
-            exit 1
-            ;;
-    esac
-    
-    # Check common installation paths
-    for path in "${conda_paths[@]}"; do
-        if [ -d "$path" ] && [ -f "$path/etc/profile.d/conda.sh" ]; then
-            echo "$path"
-            return 0
+    # Prioritize system Python which usually has tkinter, then check other versions
+    for python_cmd in /usr/bin/python3 python3.12 python3.11 python3.10 python3.9 python3.8 python3 python; do
+        if command -v "$python_cmd" &> /dev/null; then
+            local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
+            local major=$(echo "$version" | cut -d'.' -f1)
+            local minor=$(echo "$version" | cut -d'.' -f2)
+            
+            if [ "$major" -eq 3 ] && [ "$minor" -ge 8 ]; then
+                # Test if tkinter is available (preferred for GUI)
+                if $python_cmd -c "import tkinter" 2>/dev/null; then
+                    if [ -z "$python_with_tkinter" ]; then
+                        python_with_tkinter="$python_cmd"
+                    fi
+                else
+                    if [ -z "$python_without_tkinter" ]; then
+                        python_without_tkinter="$python_cmd"
+                    fi
+                fi
+            fi
         fi
     done
+    
+    # Prefer Python with tkinter, but accept one without if that's all we have
+    if [ -n "$python_with_tkinter" ]; then
+        echo "$python_with_tkinter"
+        return 0
+    elif [ -n "$python_without_tkinter" ]; then
+        echo "$python_without_tkinter"
+        return 0
+    fi
     
     return 1
 }
 
-# Find conda installation
-echo "Looking for conda installation..."
-if CONDA_BASE=$(find_conda_path); then
-    echo "Found conda at: $CONDA_BASE"
-else
-    echo "Error: Could not find conda installation"
-    echo ""
-    echo "Please install conda first:"
-    case "$OS" in
-        "Darwin")
-            echo "  brew install miniconda"
-            echo "  or download from: https://docs.conda.io/en/latest/miniconda.html"
-            ;;
-        "Linux")
-            echo "  wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
-            echo "  bash Miniconda3-latest-Linux-x86_64.sh"
-            ;;
-    esac
+# Find suitable Python installation
+# Find Python interpreter
+echo "🔍 Finding Python interpreter..."
+if ! PYTHON=$(find_python); then
+    echo "❌ Error: Python 3.8+ is required but not found" >&2
+    echo "   Please install Python 3.8 or higher" >&2
     exit 1
 fi
 
+echo "✅ Found Python: $PYTHON ($($PYTHON --version))"
 
-# Copy relevant files to local
-if [ -f "$HOME/.local/bin/NatMEG-utils" ]; then
-    echo "NatMEG utils already exists at $HOME/.local/bin/NatMEG-utils"
-    read -p "Do you want to install the conda environment now? (y/N): " -n 1 -r
+# Check for GUI library availability and show appropriate info
+if $PYTHON -c "import tkinter" 2>/dev/null; then
+    echo "✅ GUI support: tkinter available"
+elif $PYTHON -c "import PyQt5.QtWidgets" 2>/dev/null; then
+    echo "✅ GUI support: PyQt5 available"
+else
+    echo "ℹ️  GUI libraries will be installed via PyQt5 for full functionality"
+fi
+
+# Check for uv and mention the benefits
+if command -v uv &> /dev/null; then
+    echo "✓ uv found - will use for faster package installation"
+else
+    echo "💡 uv will be installed in the virtual environment for faster package installation"
+    echo "   (uv is 10-100x faster than pip for installing packages)"
+fi
+
+# Check if installation directory already exists and ask for confirmation
+TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
+
+if [ -d "$TARGET_DIR" ]; then
+    echo "NatMEG-utils installation already exists at $TARGET_DIR"
+    echo "This will:"
+    echo "  - Overwrite all Python scripts and configuration files"
+    echo "  - Recreate the virtual environment (.venv)"
+    echo "  - Reinstall all Python packages"
+    echo ""
+    read -p "Do you want to continue and overwrite the existing installation? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         echo "Installation cancelled."
         exit 0
     fi
+    echo "Proceeding with overwrite..."
 fi
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py") 
+
+# Copy relevant files to local
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt") 
 SOURCE_DIR=$(pwd)
-TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
 
 # Create local bin directory
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$TARGET_DIR"
 
+echo "Copying project files..."
 for file in "${RELEVANT_FILES[@]}"; do
     if [ -f "$SOURCE_DIR/$file" ]; then
-        cp "$SOURCE_DIR/$file" "$TARGET_DIR"
-        echo "Copied $file to $TARGET_DIR"
+        if [ -f "$TARGET_DIR/$file" ]; then
+            # File exists, we already got permission above, so just copy
+            cp "$SOURCE_DIR/$file" "$TARGET_DIR"
+            echo "✓ Overwritten $file"
+        else
+            # New file, copy directly
+            cp "$SOURCE_DIR/$file" "$TARGET_DIR"
+            echo "✓ Copied $file"
+        fi
     else
-        echo "Warning: $file does not exist in $SOURCE_DIR"
+        echo "⚠ Warning: $file does not exist in $SOURCE_DIR"
     fi
 done
+
+# Create virtual environment
+echo "Creating Python virtual environment..."
+VENV_PATH="$TARGET_DIR/.venv"
+
+if [ -d "$VENV_PATH" ]; then
+    echo "Removing existing virtual environment..."
+    rm -rf "$VENV_PATH"
+fi
+
+# Always create venv with standard Python first
+$PYTHON -m venv "$VENV_PATH"
+source "$VENV_PATH/bin/activate"
+
+# Check if uv is available globally, if not install it in the venv
+if command -v uv &> /dev/null; then
+    echo "✓ Using system uv for package installation"
+    USE_UV=true
+else
+    echo "Installing uv in virtual environment for faster package installation..."
+    pip install --upgrade pip
+    pip install uv
+    if command -v uv &> /dev/null; then
+        echo "✓ uv installed successfully in virtual environment"
+        USE_UV=true
+    else
+        echo "⚠ uv installation failed, falling back to pip"
+        USE_UV=false
+    fi
+fi
+
+# Install requirements with uv or pip
+echo "Installing Python dependencies..."
+if [ "$USE_UV" = true ]; then
+    if [ -f "$TARGET_DIR/requirements.txt" ]; then
+        uv pip install -r "$TARGET_DIR/requirements.txt"
+    else
+        echo "Warning: requirements.txt not found, installing basic dependencies..."
+        uv pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil
+    fi
+else
+    if [ -f "$TARGET_DIR/requirements.txt" ]; then
+        pip install -r "$TARGET_DIR/requirements.txt"
+    else
+        echo "Warning: requirements.txt not found, installing basic dependencies..."
+        pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil
+    fi
+fi
+
+echo "✓ Virtual environment created and dependencies installed"
 
 # Determine shell config file
 SHELL_CONFIG=""
@@ -131,166 +187,68 @@ echo "Using shell config: $SHELL_CONFIG"
 
 # Create the natmeg executable
 echo "Creating natmeg executable..."
-if [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
-    echo "natmeg executable already exists at $HOME/.local/bin/NatMEG-utils/natmeg"
-    read -p "Do you want to overwrite it? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
-    fi
-fi
 
 cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << EOF
 #!/bin/bash
-# NatMEG Pipeline Executable - Auto-generated
+# NatMEG Pipeline Executable - Auto-generated with Python venv
 
 # SAFETY CHECKS - Prevent terminal crashes at all costs
 set +e  # Don't exit on errors
 set +u  # Don't exit on undefined variables
 set +o pipefail  # Don't exit on pipe failures
 
-# Disable bash strict mode completely to prevent crashes
-unset BASH_ENV
-unset ENV
-
 # Multiple layers of error handling
 trap 'echo "Warning: Error in natmeg script, but terminal will remain open." >&2; exit 1' ERR
 trap 'echo "Warning: Script interrupted, but terminal will remain open." >&2; exit 130' INT
 trap 'echo "Warning: Script terminated, but terminal will remain open." >&2; exit 143' TERM
 
-# Safety function to test conda without crashing
-safe_conda_test() {
-    local cmd="\$1"
-    shift
-    if command -v conda >/dev/null 2>&1; then
-        # Use timeout to prevent hanging
-        if command -v timeout >/dev/null 2>&1; then
-            timeout 10 conda "\$cmd" "\$@" 2>/dev/null || return 1
-        else
-            conda "\$cmd" "\$@" 2>/dev/null || return 1
-        fi
-    else
-        return 1
-    fi
-}
-
-# Function to find and initialize conda with safety checks
-find_and_init_conda() {
-    # Check if conda is already available
-    if command -v conda >/dev/null 2>&1; then
-        if safe_conda_test --version >/dev/null; then
-            return 0
-        fi
-    fi
-    
-    # Try sourcing the detected conda installation first
-    if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ] && [ -r "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
-        if source "$CONDA_BASE/etc/profile.d/conda.sh" >/dev/null 2>&1; then
-            if command -v conda >/dev/null 2>&1 && safe_conda_test --version >/dev/null; then
-                return 0
-            fi
-        fi
-    fi
-    
-    # Fallback: try sourcing shell config files
-    for config in "\$HOME/.zshrc" "\$HOME/.bashrc" "\$HOME/.profile"; do
-        if [ -f "\$config" ] && [ -r "\$config" ]; then
-            if source "\$config" >/dev/null 2>&1; then
-                if command -v conda >/dev/null 2>&1 && safe_conda_test --version >/dev/null; then
-                    return 0
-                fi
-            fi
-        fi
-    done
-    
-    echo "Error: Could not initialize conda"
-    echo "Detected conda base: $CONDA_BASE"
-    echo "Please ensure conda is properly installed and accessible."
-    return 1
-}
-
-# Initialize conda with safety checks
-if ! find_and_init_conda; then
-    echo "Failed to initialize conda. Exiting safely."
-    exit 1
-fi
-
-# Verify conda is working before proceeding (silent check)
-if ! safe_conda_test --version >/dev/null; then
-    echo "Error: Conda found but not working properly"
-    echo "Try running manually: conda --version"
-    exit 1
-fi
-
-# Check if environment exists with safety checks
-ENV_NAME="natmeg_utils"
-
-# Safe environment check (silent)
-env_exists=false
-if env_list=\$(safe_conda_test env list 2>/dev/null); then
-    if echo "\$env_list" | grep -q "\$ENV_NAME"; then
-        env_exists=true
-    fi
-fi
-
-if [ "\$env_exists" = false ]; then
-    echo "Error: Conda environment '\$ENV_NAME' not found"
-    echo ""
-    echo "Available environments:"
-    safe_conda_test env list 2>/dev/null || echo "  (could not list environments)"
-    echo ""
-    echo "To create the environment:"
-    echo "  conda create -n \$ENV_NAME python=3.12 mne mne-bids bids-validator pandas jinja2 -y"
-    echo "  conda activate \$ENV_NAME"
-    echo "  cd \$(dirname "\$0")"
-    echo "  pip install -e ."
-    exit 1
-fi
-
-# Safe environment execution with multiple fallbacks
-# Check if we're already in the right environment
-current_env="\${CONDA_DEFAULT_ENV:-none}"
-if [ "\$current_env" = "\$ENV_NAME" ]; then
-    execution_method="direct"
-else
-    execution_method="conda_run"
-fi
-
-# Run natmeg pipeline with safety checks
+# Path to the virtual environment
+VENV_PATH="\$HOME/.local/bin/NatMEG-utils/.venv"
 SCRIPT_PATH="\$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py"
+PYTHON_VENV="\$VENV_PATH/bin/python"
+
+# Check if virtual environment exists
+if [ ! -d "\$VENV_PATH" ]; then
+    echo "Error: Virtual environment not found at \$VENV_PATH"
+    echo "Please re-run the installation script."
+    exit 1
+fi
+
+# Check if Python executable exists in venv
+if [ ! -f "\$PYTHON_VENV" ]; then
+    echo "Error: Python executable not found in virtual environment"
+    echo "Virtual environment may be corrupted. Please re-run the installation script."
+    exit 1
+fi
+
+# Check if main script exists
 if [ ! -f "\$SCRIPT_PATH" ]; then
     echo "Error: Could not find natmeg_pipeline.py at \$SCRIPT_PATH"
-    echo "Please ensure the NatMEG-utils repository is at the correct location"
+    echo "Please ensure the NatMEG-utils installation is complete"
     exit 1
 fi
 
+# Check if main script is readable
 if [ ! -r "\$SCRIPT_PATH" ]; then
     echo "Error: Cannot read natmeg_pipeline.py at \$SCRIPT_PATH"
     echo "Please check file permissions"
     exit 1
 fi
 
-# Execute with appropriate method and safety checks
-case "\$execution_method" in
-    "direct")
-        python "\$SCRIPT_PATH" "\$@"
-        ;;
-    "conda_run")
-        # Test conda run first
-        if safe_conda_test run -n "\$ENV_NAME" python --version >/dev/null; then
-            conda run -n "\$ENV_NAME" python "\$SCRIPT_PATH" "\$@"
-        else
-            echo "Error: Cannot execute in environment \$ENV_NAME"
-            echo "Try manually: conda activate \$ENV_NAME && python \$SCRIPT_PATH"
-            exit 1
-        fi
-        ;;
-    *)
-        echo "Error: Unknown execution method"
-        exit 1
-        ;;
-esac
+# Use the virtual environment's Python directly
+# This ensures we use the exact Python from the venv with all its packages
+"\$PYTHON_VENV" "\$SCRIPT_PATH" "\$@"
+
+# If the above fails and it's a GUI command, provide helpful error message
+if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
+    echo ""
+    echo "GUI failed to start. This is likely due to tkinter not being available."
+    echo "Try these solutions:"
+    echo "  1. Install tkinter: brew install python-tk"
+    echo "  2. Use system Python: /usr/bin/python3 (if available)"
+    echo "  3. Install Python from python.org (includes tkinter)"
+    echo "  4. Use command-line interface instead: natmeg run --config config.yml"
+fi
 EOF
 
 # Make it executable
@@ -305,17 +263,34 @@ else
     echo "$HOME/.local/bin/NatMEG-utils is already in PATH"
 fi
 
-# Check conda environment (reuse existing conda initialization)
-echo "Checking conda environment..."
-if [ -f "$CONDA_BASE/etc/profile.d/conda.sh" ]; then
-    source "$CONDA_BASE/etc/profile.d/conda.sh" 2>/dev/null
-fi
+# Check virtual environment
+echo "Checking virtual environment..."
+VENV_PATH="$TARGET_DIR/.venv"
 
-if command -v conda &> /dev/null && conda env list 2>/dev/null | grep -q "natmeg_utils"; then
-    echo "✓ Conda environment 'natmeg_utils' found"
-    ENV_EXISTS=true
+if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
+    echo "✓ Virtual environment found at $VENV_PATH"
+    
+    # Test if we can import key packages
+    source "$VENV_PATH/bin/activate"
+    if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
+        echo "✓ Core packages (mne, pandas, numpy) successfully installed"
+        
+        # Test tkinter for GUI functionality
+        if python -c "import tkinter" 2>/dev/null; then
+            echo "✓ tkinter available - GUI will work"
+            ENV_EXISTS=true
+        else
+            echo "⚠ Warning: tkinter not available - GUI features disabled"
+            echo "  Command-line interface will still work"
+            ENV_EXISTS=true
+        fi
+    else
+        echo "⚠ Warning: Some required packages may be missing"
+        ENV_EXISTS=false
+    fi
+    deactivate
 else
-    echo "⚠ Warning: Conda environment 'natmeg_utils' not found"
+    echo "⚠ Warning: Virtual environment not found or corrupted"
     ENV_EXISTS=false
 fi
 
@@ -329,22 +304,12 @@ if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/natmeg"
     echo "✓ natmeg executable created successfully"
     
     # Test basic execution only if environment exists
-    if [ "$ENV_EXISTS" = true ] && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" ] && head -n 1 "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" | grep -q "^#\!"; then
-        echo "✓ natmeg executable and main Python file exist with shebang"
+    if [ "$ENV_EXISTS" = true ] && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" ]; then
+        echo "✓ Virtual environment and main Python file ready"
         INSTALL_SUCCESS=true
     else
-        
-        # echo "⚠ natmeg executable created but needs conda environment setup"
-        read -p "Do you want to overwrite it? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            echo "installing conda environment"
-            conda create -n natmeg_utils python=3.12 mne mne-bids bids-validator pandas jinja2 -y
-            INSTALL_SUCCESS=true
-        else
-            echo "⚠ natmeg executable created but needs conda environment setup"
-            INSTALL_SUCCESS=false   
-        fi
+        echo "⚠ natmeg executable created but virtual environment needs setup"
+        INSTALL_SUCCESS=false   
     fi
 else
     echo "✗ Failed to create natmeg executable"
@@ -360,19 +325,20 @@ echo ""
 
 # Conditional instructions based on installation status
 if [ "$ENV_EXISTS" = false ]; then
-    echo "NEXT STEPS - Create conda environment:"
+    echo "NEXT STEPS - Fix virtual environment:"
     echo "  1. source $SHELL_CONFIG"
-    echo "  2. conda create -n natmeg_utils mne mne-bids bids-validator pandas jinja2 -y"
-    echo "  3. conda activate natmeg_utils"
-    echo "  4. cd $(dirname "$0")"
-    echo "  5. pip install -e ."
-    echo "  6. Test with: natmeg --help"
+    echo "  2. cd $TARGET_DIR"
+    echo "  3. rm -rf .venv  # Remove corrupted environment"
+    echo "  4. $PYTHON_CMD -m venv .venv  # Recreate environment"
+    echo "  5. source .venv/bin/activate"
+    echo "  6. pip install -r requirements.txt"
+    echo "  7. Test with: natmeg --help"
 elif [ "$INSTALL_SUCCESS" = true ]; then
     echo "✅ Installation complete and ready to use!"
     echo "Test with: natmeg --help"
 else
     echo "TROUBLESHOOTING:"
-    echo "  - Ensure conda is working: conda --version"
+    echo "  - Ensure Python 3.8+ is working: $PYTHON_CMD --version"
     echo "  - Check PATH: echo \$PATH"
     echo "  - View executable: cat ~/.local/bin/NatMEG-utils/natmeg"
     echo "  - Re-run installer if needed"

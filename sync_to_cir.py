@@ -16,8 +16,30 @@ from os.path import dirname, abspath, exists, isdir
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from copy import deepcopy
-from tkinter.filedialog import askdirectory
 from mne_bids import print_dir_tree
+
+# PyQt5 file dialog imports
+try:
+    from PyQt5.QtWidgets import QApplication, QFileDialog
+    PYQT5_AVAILABLE = True
+    
+    def askdirectory(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.askdirectory"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        directory = QFileDialog.getExistingDirectory(
+            None,
+            kwargs.get('title', 'Select Directory'),
+            kwargs.get('initialdir', '')
+        )
+        return directory
+
+except ImportError:
+    PYQT5_AVAILABLE = False
+    def askdirectory(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
 
 from utils import log
 

@@ -20,8 +20,6 @@ import os
 from os.path import exists, basename, dirname, isdir
 import sys
 import re
-import tkinter as tk
-from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfile
 import json
 import yaml
 from typing import Union
@@ -29,6 +27,63 @@ import pandas as pd
 import subprocess
 import argparse
 from datetime import datetime
+
+# PyQt5 file dialog imports
+try:
+    from PyQt5.QtWidgets import QApplication, QFileDialog
+    PYQT5_AVAILABLE = True
+    
+    def askdirectory(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.askdirectory"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        directory = QFileDialog.getExistingDirectory(
+            None,
+            kwargs.get('title', 'Select Directory'),
+            kwargs.get('initialdir', '')
+        )
+        return directory
+    
+    def askopenfilename(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.askopenfilename"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        filename, _ = QFileDialog.getOpenFileName(
+            None,
+            kwargs.get('title', 'Open File'),
+            kwargs.get('initialdir', ''),
+            kwargs.get('filetypes', 'All Files (*)')
+        )
+        return filename
+    
+    def asksaveasfile(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.asksaveasfile"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            None,
+            kwargs.get('title', 'Save File'),
+            kwargs.get('initialdir', ''),
+            kwargs.get('filetypes', 'All Files (*)')
+        )
+        if filename:
+            return open(filename, kwargs.get('mode', 'w'))
+        return None
+
+except ImportError:
+    PYQT5_AVAILABLE = False
+    def askdirectory(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
+    def askopenfilename(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
+    def asksaveasfile(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
 from shutil import copy2
 from copy import deepcopy
 import mne
@@ -248,7 +303,7 @@ class MaxFilter:
                             data_path: str,
                             out_path: str,
                             task: str,
-                            files: list | str,
+                            files,  # list or str
                             overwrite=False,
                             **kwargs):
         """
@@ -584,7 +639,8 @@ class MaxFilter:
             if tsss_default:
                 proc.append(_tsss.string)
                 if parameters.get('correlation'):
-                    proc.append(f'corr{round(float(parameters.get('correlation'))*100)}')
+                    corr_value = parameters.get('correlation')
+                    proc.append(f'corr{round(float(corr_value)*100)}')
             else:
                 proc.append('sss')
 
@@ -675,7 +731,7 @@ class MaxFilter:
         subj_out = f'{output_path}/{subject}/{session}/triux'
         
         # Create maxfilter log directory if it doesn't exist
-        os.makedirs(f'{subj_out}/{'log'}', exist_ok=True)
+        os.makedirs(f'{subj_out}/log', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
 
@@ -722,10 +778,11 @@ class MaxFilter:
                 print(f'No files found for task: {task}')
                 continue
             
+            newline = '\n'
             print(f'''
                 Processing task: {task}
                 Using files: 
-                    {'\n'.join(files)}
+                    {newline.join(files)}
                 ''')
 
             # Average head position

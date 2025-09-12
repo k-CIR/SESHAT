@@ -9,7 +9,6 @@ Author: Andreas Gerhardsson
 
 from datetime import datetime
 import sys
-from tkinter.filedialog import askopenfilename, asksaveasfile
 import re
 from os.path import basename, join, isdir, exists
 import os
@@ -20,6 +19,50 @@ import os
 import logging
 from logging import handlers
 from typing import Optional, Dict, Tuple
+
+# PyQt5 file dialog imports
+try:
+    from PyQt5.QtWidgets import QApplication, QFileDialog
+    import sys
+    PYQT5_AVAILABLE = True
+    
+    def askopenfilename(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.askopenfilename"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        filename, _ = QFileDialog.getOpenFileName(
+            None,
+            kwargs.get('title', 'Open File'),
+            kwargs.get('initialdir', ''),
+            kwargs.get('filetypes', 'All Files (*)')
+        )
+        return filename
+    
+    def asksaveasfile(**kwargs):
+        """PyQt5 replacement for tkinter.filedialog.asksaveasfile"""
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            None,
+            kwargs.get('title', 'Save File'),
+            kwargs.get('initialdir', ''),
+            kwargs.get('filetypes', 'All Files (*)')
+        )
+        if filename:
+            return open(filename, kwargs.get('mode', 'w'))
+        return None
+
+except ImportError:
+    PYQT5_AVAILABLE = False
+    # Fallback functions for when PyQt5 is not available
+    def askopenfilename(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
+    def asksaveasfile(**kwargs):
+        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
 
 default_output_path = 'neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
@@ -334,7 +377,7 @@ def askForConfig():
         str: Full path to selected configuration file
         
     Side Effects:
-        - Opens tkinter file dialog window
+        - Opens PyQt5 file dialog window
         - Prints selected file path to console
         - Exits program with code 1 if no file selected
         

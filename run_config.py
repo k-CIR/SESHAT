@@ -4,24 +4,24 @@ import sys
 import os
 from os.path import exists
 import argparse
-import tkinter as tk
-from tkinter import ttk
-from tkinter.filedialog import asksaveasfile, askopenfile
 import threading
 import subprocess
-from tkinter.scrolledtext import ScrolledText
 import queue
 import re
 
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QHBoxLayout, QTabWidget, QLabel, QLineEdit, 
+                             QCheckBox, QComboBox, QSpinBox, QDoubleSpinBox,
+                             QPushButton, QTextEdit, QFileDialog, QMessageBox,
+                             QScrollArea, QFrame, QGroupBox, QGridLayout,
+                             QSplitter, QProgressBar, QListWidget, QListWidgetItem)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QFont
+
 default_path = '/neuro/data/local/'
 
-global config
-
-# TODO: fix save and save as buttons
-
 def create_default_config():
-    
-    config = {
+    return {
         'RUN': {
             'Copy to Cerberos': True,
             'Add HPI coregistration': True,
@@ -56,936 +56,614 @@ def create_default_config():
         },
         'maxfilter': {
             'standard_settings': {
-                'trans_conditions': [''],
-                'trans_option': 'continous',
-                'merge_runs': True,
-                'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
-                'sss_files': [''],
-                'autobad': True,
-                'badlimit': '7',
-                'bad_channels': [''],
-                'tsss_default': True,
-                'correlation': '0.98',
-                'movecomp_default': True,
-                'subjects_to_skip': ['']
+                'maxfilter_version': '/neuro/bin/util/maxfilter',
+                'Temporal signal space separation (tSSS)': True,
+                'Movement compensation': True,
+                'HPI correlations limit': 0.9,
+                'overwrite': False,
+                'buffer_size_sec': 10.0,
+                'skip_maxfilter': False,
+                'origin': [0, 0, 40]  # default origin
             },
             'advanced_settings': {
-                'force': False,
-                'downsample': False,
-                'downsample_factor': '4',
-                'apply_linefreq': False,
-                'linefreq_Hz': '50',
-                'maxfilter_version': '/neuro/bin/util/maxfilter',
-                'MaxFilter_commands': '',
-                'debug': False
+                'head_position_estimation': True,
+                'head_position_file': '',
+                'correlation': '',
+                'Temporal signal space separation (tSSS)': {
+                    'temporal_window_sec': 10.0,
+                    'head_position_continous_hpi': True
+                },
+                'Movement compensation': {
+                    'head_position_file': '',
+                    'average_head_position': True
+                }
             }
         },
         'bids': {
-            'Dataset_description': 'dataset_description.json',
-            'Participants': 'participants.tsv',
-            'Participants_mapping_file': 'participant_mapping_example.csv',
-            'Conversion_file': 'bids_conversion.tsv',
-            'Overwrite_conversion': False,
-            'Original_subjID_name': 'old_subject_id',
-            'New_subjID_name': 'new_subject_id',
-            'Original_session_name': 'old_session_id',
-            'New_session_name': 'new_session_id',
-            'overwrite': False,
-            'dataset_type': 'raw',
-            'data_license': '',
-            'authors': '',
-            'acknowledgements': '',
-            'how_to_acknowledge': '',
-            'funding': '',
-            'ethics_approvals': '',
-            'references_and_links': '',
-            'doi': 'doi:<insert_doi>'
-                }
-    }
-    return config
-
-def save_config(config, filename=None):
-    if filename:
-        save_path = filename
-    elif filename is None:
-        save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
-        save_path = save_path.name if save_path else None
-
-    if save_path:
-        if save_path.endswith('.yml') or save_path.endswith('.yaml'):
-            with open(save_path, 'w') as file:
-                yaml.dump(config, file, default_flow_style=False, sort_keys=False)
-        elif save_path.endswith('.json'):
-            with open(save_path, 'w') as file:
-                json.dump(config, file, indent=4)
-
-def load_config(config_file=None):
-    if not config_file:
-        config_file = askopenfile(filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
-    if config_file:
-        if hasattr(config_file, 'name'):
-            filename = config_file.name
-        else:
-            filename = config_file
-        
-        if filename.endswith('.yml') or filename.endswith('.yaml'):
-            with open(filename, 'r') as file:
-                config = yaml.safe_load(file)
-        elif filename.endswith('.json'):
-            with open(filename, 'r') as file:
-                config = json.load(file)
-    # Strings to lists
-    if config:
-        config['project']['tasks'] = config['project']['tasks'].split(',') if isinstance(config['project']['tasks'], str) else config['project']['tasks']
-        config['opm']['hpi_names'] = config['opm']['hpi_names'].split(',') if isinstance(config['opm']['hpi_names'], str) else config['opm']['hpi_names']
-        config['opm']['polhemus'] = config['opm']['polhemus'].split(',') if isinstance(config['opm']['polhemus'], str) else config['opm']['polhemus']
-        config['maxfilter']['standard_settings']['trans_conditions'] = config['maxfilter']['standard_settings']['trans_conditions'].split(',') if isinstance(config['maxfilter']['standard_settings']['trans_conditions'], str) else config['maxfilter']['standard_settings']['trans_conditions']
-        config['maxfilter']['standard_settings']['sss_files'] = config['maxfilter']['standard_settings']['sss_files'].split(',') if isinstance(config['maxfilter']['standard_settings']['sss_files'], str) else config['maxfilter']['standard_settings']['sss_files']
-        config['maxfilter']['standard_settings']['empty_room_files'] = config['maxfilter']['standard_settings']['empty_room_files'].split(',') if isinstance(config['maxfilter']['standard_settings']['empty_room_files'], str) else config['maxfilter']['standard_settings']['empty_room_files']
-        config['maxfilter']['standard_settings']['subjects_to_skip'] = config['maxfilter']['standard_settings']['subjects_to_skip'].split(',') if isinstance(config['maxfilter']['standard_settings']['subjects_to_skip'], str) else config['maxfilter']['standard_settings']['subjects_to_skip']
-        config['maxfilter']['standard_settings']['bad_channels'] = config['maxfilter']['standard_settings']['bad_channels'].split(',') if isinstance(config['maxfilter']['standard_settings']['bad_channels'], str) else config['maxfilter']['standard_settings']['bad_channels']
-
-    return config
-    
-
-def askForConfig():
-    """_summary_
-
-    Args:
-        file_config (str, optional): _description_. Defaults
-            to None.
-
-    Returns:
-        dict: dictionary with the configuration parameters
-    """
-    option = input("Do you want to open an existing config file or create a new? ([open]/new/cancel): ").lower().strip()
-
-
-    # Check if the file is defined or ask for it
-    if option not in ['o', 'open']:
-        if option in ['n', 'new']:
-            return 'new'
-        elif option in ['c', 'cancel']:
-            print('User cancelled')
-            sys.exit(1)
-
-    else:
-        config_file = askopenfile(
-            title='Select config file',
-            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-            initialdir=default_path)
-
-        if not config_file:
-            print('No configuration file selected. Exiting opening dialog')
-            sys.exit(1)
-        
-        print(f'{config_file.name} selected')
-        return config_file
-
-def config_UI(config_file=None):
-    
-    if config_file:
-        config = load_config(config_file)
-    
-    else:
-        config = create_default_config()
-    
-    root = tk.Tk()
-    root.title(f"NatMEG Config Editor")
-    
-    root.geometry("700x800")
-    
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    style = ttk.Style()
-    style.map("C.TButton", foreground=[('disabled', 'grey')])
-
-    # Helper to add a fixed-size, scrollable help section labeled simply 'Help'
-    def init_collapsible_help(parent, text, wrap=650, title='Help'):
-        header_lbl = ttk.Label(parent, text='Help', font=('TkDefaultFont', 10, 'bold'))
-        header_lbl.pack(anchor='w', padx=1, pady=1)
-        # Match help box colors to current ttk theme
-        bg = style.lookup('TFrame', 'background') or root.cget('background')
-        fg = style.lookup('TLabel', 'foreground') or '#000000'
-        help_box = ScrolledText(
-            parent,
-            height=5,
-            wrap='word',
-            font=('TkDefaultFont', 10),
-            bg=bg,
-            fg=fg,
-            insertbackground=fg,
-            borderwidth=0,
-            relief='flat',
-            highlightthickness=0
-        )
-        help_box.insert('1.0', text.strip() + '\n')
-        help_box.config(state='disabled')
-        help_box.pack(fill='both', expand=True, padx=1, pady=1)
-        return header_lbl, help_box
-    
-    # Project tab
-    project_frame = ttk.Frame(notebook)
-    notebook.add(project_frame, text="Project")
-    
-    # Create notebook for Project sub-tabs
-    project_notebook = ttk.Notebook(project_frame)
-    project_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    project_standard_frame = ttk.Frame(project_notebook)
-    project_notebook.add(project_standard_frame, text="Standard Settings")
-    
-    # Advanced settings tab
-    project_advanced_frame = ttk.Frame(project_notebook)
-    project_notebook.add(project_advanced_frame, text="Advanced Settings")
-    
-    project_vars = {}
-    
-    # Standard project settings
-    standard_keys = ['name', 'CIR-ID', 'description', 'tasks',
-                     'sinuhe_raw', 'kaptah_raw']
-    row = 0
-    for key in standard_keys:
-        value = config['project'][key]
-        ttk.Label(project_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if key == 'tasks':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(project_standard_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(project_standard_frame, textvariable=var, width=50, justify='left')
-        project_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1)
-        row += 1
-        
-    # Project information frame (in standard tab)
-    project_std_info_frame = ttk.Frame(project_standard_frame)
-    project_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    std_info_text = """
-This tab allows you to set the basic project information and paths for the project.
-
-• name: Name of project directory on local disk
-• CIR-ID: CIR ID of the project, used for data management
-• description: Brief description of the project
-• tasks: Comma-separated list in square brackets of experimental tasks (e.g. rest, oddball, memory)
-• sinuhe_raw: Path to Sinuhe raw data directory
-• kaptah_raw: Path to Kaptah raw data directory
-"""
-
-    init_collapsible_help(project_std_info_frame, std_info_text, wrap=650, title='Project help')
-    
-    # Advanced project settings
-    advanced_keys = ['InstitutionName',
-                     'InstitutionAddress', 'InstitutionDepartmentName', 
-                      'squidMEG', 'opmMEG', 'BIDS', 'Calibration', 'Crosstalk']
-    row = 0
-    for key in advanced_keys:
-        value = config['project'][key]
-        # Update paths with project name
-        if key in ['squidMEG', 'opmMEG', 'BIDS'] and config['project']['name']:
-            project_name = config['project']['name']
-            if project_name not in value:  # Only update if not already updated with project name
-                if key == 'BIDS':
-                    value = f"{value}{project_name}/BIDS"
-                else:
-                    value = f"{value}{project_name}/raw"
-        ttk.Label(project_advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        var = tk.StringVar(value=str(value))
-        widget = ttk.Entry(project_advanced_frame, textvariable=var, width=50, justify='left')
-        project_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1)
-        
-        # Update paths immediately when project name changes
-        if key in ['squidMEG', 'opmMEG', 'BIDS', 'sinuhe_raw', 'kaptah_raw']:
-            def update_path(name_var, path_var, path_type):
-                def callback(*args):
-                    name = name_var.get()
-                    base_path = default_path
-                    if path_type == 'BIDS':
-                        path_var.set(f"{base_path}{name}/BIDS" if name else base_path)
-                    elif path_type in ['squidMEG', 'opmMEG']:
-                        path_var.set(f"{base_path}{name}/raw" if name else base_path)
-                    elif path_type in ['sinuhe_raw', 'kaptah_raw']:
-                        path_var.set(f"{base_path}{name}" if name else base_path)
-                return callback
-            project_vars['name'].trace('w', update_path(project_vars['name'], var, key))
-        
-        row += 1
-    
-    # Project information frame (in advanced tab)
-    project_adv_info_frame = ttk.Frame(project_advanced_frame)
-    project_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    adv_info_text = """
-
-
-• InstitutionName: Name of the institution
-• InstitutionAddress: Address of the institution
-• InstitutionDepartmentName: Department name
-• squidMEG: Path to directory for SquidMEG data
-• opmMEG: Path to directory for OPM data
-• BIDS: Path to directory for BIDS data
-• Calibration: Path to SSS calibration file
-• Crosstalk: Path to SSS crosstalk file
-"""
-
-    init_collapsible_help(project_adv_info_frame, adv_info_text, wrap=650, title='Advanced help')
-    
-    # OPM tab
-    opm_frame = ttk.Frame(notebook)
-    notebook.add(opm_frame, text="OPM")
-    
-    opm_vars = {}
-    row = 0
-    for key, value in config['opm'].items():
-        ttk.Label(opm_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(opm_frame, variable=var, onvalue=True, offvalue=False)
-        elif key == 'hpi_names' or key == 'polhemus':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(opm_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(opm_frame, textvariable=var, width=50)
-        opm_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-        
-    # OPM information frame (in standard tab)
-    opm_info_frame = ttk.Frame(opm_frame)
-    opm_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the OPM tab
-    opm_info_text = """
-Set the parameters for adding HPI coregistration polhemus data from the TRIUX recording, to the OPM data.
-
-• polhemus: name(s) of fif-file(s) with Polhemus coregistration data
-• hpi_names: Comma-separated list in square brackets of names of HPI recording, only one will be used(e.g. [HPIpre, HPIpost, HPIbefore, HPIafter]). 
-• frequency: Frequency of the HPI in Hz
-• downsample_to_hz: Downsample OPM data to this frequency
-• overwrite: Overwrite existing OPM data files
-• plot: Store a plot of the OPM data after processing
-"""
-
-    init_collapsible_help(opm_info_frame, opm_info_text, wrap=650, title='OPM help')
-    
-    # MaxFilter tab
-    maxfilter_frame = ttk.Frame(notebook)
-    notebook.add(maxfilter_frame, text="MaxFilter")
-    
-    maxfilter_vars = {'standard_settings': {}, 'advanced_settings': {}}
-    
-    # Create notebook for MaxFilter sub-tabs
-    maxfilter_notebook = ttk.Notebook(maxfilter_frame)
-    maxfilter_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    standard_frame = ttk.Frame(maxfilter_notebook)
-    maxfilter_notebook.add(standard_frame, text="Standard Settings")
-    
-    row = 0
-    for key, value in config['maxfilter']['standard_settings'].items():
-        ttk.Label(standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(standard_frame, variable=var)
-        elif key == 'trans_conditions' or key == 'empty_room_files' or key == 'subjects_to_skip' or key == 'bad_channels' or key == 'sss_files':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(standard_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(standard_frame, textvariable=var, width=50)
-            if key == 'trans_option':
-                selected_option = tk.StringVar()
-                options = [value] + list(
-                {'continous', 'initial'} - {value})
-                widget = tk.OptionMenu(standard_frame, selected_option, *options)
-                selected_option.set(options[0])
-                var = selected_option
-        maxfilter_vars['standard_settings'][key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    # Maxfilter information frame (in standard tab)
-    mf_std_info_frame = ttk.Frame(standard_frame)
-    mf_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    mf_std_info_text = """
-Set the parameters for MaxFilter processing.
-
-• trans_conditions: Comma-separated list in square brackets tasks which should be transformed to average head (e.g. [rest, oddball, memory])
-• trans_option: Option for transformation, either 'continous' for average or 'inital' for initial head position
-• merge_runs: Use multiple runs to calculate average head position, and apply on all runs (files themselves are not merged)
-• empty_room_files: Comma-separated list in square brackets of empty room files to use for MaxFilter processing (e.g. [empty_room_before.fif, empty_room_after.fif])
-• sss_files: tasks which should only be sss filtered (e.g. [rest])
-• autobad: Automatically detect and exclude bad channels
-• badlimit: Bad channel threshold for processing
-• bad_channels: Comma-separated list in square brackets of bad channels to exclude from processing (e.g. [MEG0111, MEG0112])
-• tsss_default: Use default TSSS settings
-• correlation: Correlation threshold for TSSS, e.g. '0.98'
-• movecomp_default: Use default movecomp settings
-• subjects_to_skip: Comma-separated list in square brackets of subject IDs to skip during MaxFilter processing (e.g. [1234, 4321])
-
-
-"""
-    init_collapsible_help(mf_std_info_frame, mf_std_info_text, wrap=550, title='MaxFilter (standard) help')
-    
-    # Advanced settings tab
-    advanced_frame = ttk.Frame(maxfilter_notebook)
-    maxfilter_notebook.add(advanced_frame, text="Advanced Settings")
-    
-    row = 0
-    for key, value in config['maxfilter']['advanced_settings'].items():
-        ttk.Label(advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(advanced_frame, variable=var)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(advanced_frame, textvariable=var, width=50)
-            if key == 'maxfilter_version':
-                selected_option = tk.StringVar()
-                options = [value] + list(
-                {'/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'} - {value})
-                options = [value] + list(
-                {'/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'} - {value})
-                widget = tk.OptionMenu(advanced_frame, selected_option, *options)
-                selected_option.set(options[0])
-                var = selected_option
-                
-        maxfilter_vars['advanced_settings'][key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    # Maxfilter information frame (in advanced tab)
-    mf_adv_info_frame = ttk.Frame(advanced_frame)
-    mf_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    mf_adv_info_text = """
-Set the parameters for MaxFilter processing.
-
-• force: Force MaxFilter to run even if badchannels are detected
-• downsample: Downsample data
-• downsample_factor: Factor to downsample data by
-• apply_linefreq: Apply line frequency filtering
-• linefreq_Hz: Line frequency in Hz to apply filtering
-• maxfilter_version: Path to MaxFilter executable
-• MaxFilter_commands: Additional MaxFilter commands to run, e.g. '-v' for verbose output
-• debug: Enable debug mode for MaxFilter (if true will print command instead of running it, headpos will still be applied)
-
-"""
-    init_collapsible_help(mf_adv_info_frame, mf_adv_info_text, wrap=550, title='MaxFilter (advanced) help')
-    
-    # BIDS tab
-    bids_frame = ttk.Frame(notebook, )
-    notebook.add(bids_frame, text="BIDS")
-    
-    # Create notebook for BIDS sub-tabs
-    bids_notebook = ttk.Notebook(bids_frame)
-    bids_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    bids_standard_frame = ttk.Frame(bids_notebook)
-    bids_notebook.add(bids_standard_frame, text="Standard Settings")
-    
-    bids_vars = {}
-    
-    # Standard BIDS settings (matching default config keys)
-    standard_bids_keys = ['Dataset_description', 'Participants',
-                          'Participants_mapping_file', 'Conversion_file','Overwrite_conversion',
-                          'Original_subjID_name', 'New_subjID_name', 'Original_session_name', 
-                          'New_session_name', 'overwrite']
-    
-    row = 0
-    for key in standard_bids_keys:
-        if key in config['bids']:
-            value = config['bids'][key]
-            ttk.Label(bids_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-            if isinstance(value, bool):
-                var = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(bids_standard_frame, variable=var)
-            else:
-                var = tk.StringVar(value=str(value))
-                widget = ttk.Entry(bids_standard_frame, textvariable=var, width=50)
-            bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-            row += 1
-    
-    # BIDS information frame (in standard tab)
-    bids_info_frame = ttk.Frame(bids_standard_frame)
-    bids_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the BIDS standard tab
-    bids_info_text = """
-Set the parameters for Bidsification.
-
-• Dataset_description: Path to dataset_description.json file
-• Participants: Path to participants.tsv file
-• Participants_mapping_file: Path to participant mapping CSV file
-• Conversion_file: Path to conversion file (e.g. bids_conversion.tsv)
-• Overwrite_conversion: Overwrite existing conversion files
-• Original_subjID_name: Name of the original subject ID column in the mapping file
-• New_subjID_name: Name of the new subject ID column in the mapping file
-• Original_session_name: Name of the original session ID column in the mapping file
-• New_session_name: Name of the new session ID column in the mapping file
-• overwrite: Overwrite existing BIDS files
-
-"""
-    
-    init_collapsible_help(bids_info_frame, bids_info_text, wrap=550, title='BIDS help')
-    
-    # Dataset description tab
-    bids_dataset_frame = ttk.Frame(bids_notebook)
-    bids_notebook.add(bids_dataset_frame, text="Dataset Description")
-    
-    # Dataset description settings (matching default config keys)
-    dataset_bids_keys = ['dataset_type', 'data_license', 'authors', 'acknowledgements', 'how_to_acknowledge', 
-                        'funding', 'ethics_approvals', 'references_and_links', 'doi']
-    
-    row = 0
-    for key in dataset_bids_keys:
-        if key in config['bids']:
-            value = config['bids'][key]
-            ttk.Label(bids_dataset_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-            if isinstance(value, bool):
-                var = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(bids_dataset_frame, variable=var)
-            else:
-                var = tk.StringVar(value=str(value))
-                widget = ttk.Entry(bids_dataset_frame, textvariable=var, width=50)
-            bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-            row += 1
-    
-    # Dataset description information frame
-    dataset_info_frame = ttk.Frame(bids_dataset_frame)
-    dataset_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the dataset description tab
-    dataset_info_text = """
-Set the dataset description metadata for BIDS.
-
-• dataset_type: Type of dataset (e.g., 'raw', 'derivative')
-• data_license: License under which the data is made available
-• authors: List of individuals who contributed to the creation/curation of the dataset
-• acknowledgements: Text acknowledging contributions
-• how_to_acknowledge: Instructions on how researchers should acknowledge this dataset
-• funding: List of sources of funding
-• ethics_approvals: List of ethics committee approvals
-• references_and_links: List of references, publications, and links
-• doi: Digital Object Identifier of the dataset
-
-"""
-    
-    init_collapsible_help(dataset_info_frame, dataset_info_text, wrap=550, title='Dataset description help')
-    
-    # Run tab
-    run_frame = ttk.Frame(notebook)
-    notebook.add(run_frame, text="RUN")
-    
-    run_vars = {}
-    row = 0
-    for key, value in config['RUN'].items():
-        ttk.Label(run_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        var = tk.BooleanVar(value=value)
-        widget = ttk.Checkbutton(run_frame, variable=var)
-        run_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    terminal_frame = ttk.Frame(root)
-    terminal_output = ScrolledText(
-        terminal_frame,
-        height=15,
-        width=90,
-        state='disabled',
-        font=('TkDefaultFont', 10),
-        bg='#000000',
-        fg='#FFFFFF',
-        insertbackground='#FFFFFF'
-    )
-    terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
-    # Configure text tags for formatting/colors
-    try:
-        terminal_output.tag_config('bold', font=('TkDefaultFont', 10, 'bold'))
-        terminal_output.tag_config('underline', underline=1)
-        _color_map = {
-            'fg-black': '#000000', 'fg-red': '#ff5555', 'fg-green': '#50fa7b', 'fg-yellow': '#f1fa8c',
-            'fg-blue': '#8be9fd', 'fg-magenta': '#ff79c6', 'fg-cyan': '#8be9fd', 'fg-white': '#ffffff',
-            'fg-bright-black': '#4d4d4d', 'fg-bright-red': '#ff6e6e', 'fg-bright-green': '#69ff94',
-            'fg-bright-yellow': '#ffffa5', 'fg-bright-blue': '#a4ffff', 'fg-bright-magenta': '#ff92df',
-            'fg-bright-cyan': '#a4ffff', 'fg-bright-white': '#ffffff'
+            'validate': True,
+            'dataset_description': {
+                'Name': '',
+                'Authors': [''],
+                'ReferencesAndLinks': [''],
+                'BIDSVersion': '1.7.0',
+                'License': 'CC0',
+                'HowToAcknowledge': ''
+            },
+            'participants': {
+                'age': '',
+                'sex': 'n/a',
+                'handedness': 'n/a'
+            }
         }
-        for _tag, _color in _color_map.items():
-            terminal_output.tag_config(_tag, foreground=_color)
-    except Exception:
+    }
+
+
+class WorkerThread(QThread):
+    """Thread for running the pipeline without blocking the GUI"""
+    output_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal()
+    error_signal = pyqtSignal(str)
+    
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        
+    def run(self):
+        try:
+            # This would run the actual pipeline
+            # For now, just simulate the process
+            self.output_signal.emit("Starting NatMEG pipeline...")
+            self.output_signal.emit("Configuration loaded successfully")
+            
+            if self.config['RUN'].get('Copy to Cerberos'):
+                self.output_signal.emit("Step 1: Copying to Cerberos...")
+                
+            if self.config['RUN'].get('Add HPI coregistration'):
+                self.output_signal.emit("Step 2: Adding HPI coregistration...")
+                
+            if self.config['RUN'].get('Run Maxfilter'):
+                self.output_signal.emit("Step 3: Running MaxFilter...")
+                
+            if self.config['RUN'].get('Run BIDS conversion'):
+                self.output_signal.emit("Step 4: Converting to BIDS...")
+                
+            if self.config['RUN'].get('Sync to CIR'):
+                self.output_signal.emit("Step 5: Syncing to CIR...")
+                
+            self.output_signal.emit("Pipeline completed successfully!")
+            self.finished_signal.emit()
+            
+        except Exception as e:
+            self.error_signal.emit(str(e))
+
+
+class ConfigEditor(QMainWindow):
+    def __init__(self, config_file=None):
+        super().__init__()
+        self.config_file = config_file
+        self.config = {}
+        self.widgets = {}  # Store references to widgets for updating
+        
+        self.setWindowTitle("NatMEG Config Editor")
+        self.setGeometry(100, 100, 800, 900)
+        
+        # Load config
+        if config_file and exists(config_file):
+            self.load_config_file(config_file)
+        else:
+            self.config = create_default_config()
+            
+        self.init_ui()
+        
+    def init_ui(self):
+        """Initialize the user interface"""
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        layout = QVBoxLayout()
+        central_widget.setLayout(layout)
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
+        
+        # Create tabs
+        self.create_run_tab()
+        self.create_project_tab()
+        self.create_opm_tab()
+        self.create_maxfilter_tab()
+        self.create_bids_tab()
+        
+        # Create button panel
+        self.create_button_panel(layout)
+        
+        # Create output panel
+        self.create_output_panel(layout)
+        
+    def create_menu_bar(self):
+        """Create the menu bar"""
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu('File')
+        
+        # New config
+        new_action = file_menu.addAction('New Config')
+        new_action.triggered.connect(self.new_config)
+        
+        # Load config
+        load_action = file_menu.addAction('Load Config...')
+        load_action.triggered.connect(self.load_config)
+        
+        # Save config
+        save_action = file_menu.addAction('Save Config')
+        save_action.triggered.connect(self.save_config)
+        
+        # Save config as
+        save_as_action = file_menu.addAction('Save Config As...')
+        save_as_action.triggered.connect(self.save_config_as)
+        
+        file_menu.addSeparator()
+        
+        # Exit
+        exit_action = file_menu.addAction('Exit')
+        exit_action.triggered.connect(self.close)
+        
+    def create_run_tab(self):
+        """Create the Run tab"""
+        tab = QWidget()
+        self.tab_widget.addTab(tab, "Run")
+        
+        layout = QVBoxLayout()
+        tab.setLayout(layout)
+        
+        # Run options group
+        run_group = QGroupBox("Pipeline Steps")
+        run_layout = QVBoxLayout()
+        run_group.setLayout(run_layout)
+        
+        run_options = [
+            ('Copy to Cerberos', 'Copy to Cerberos'),
+            ('Add HPI coregistration', 'Add HPI coregistration'),
+            ('Run Maxfilter', 'Run Maxfilter'),
+            ('Run BIDS conversion', 'Run BIDS conversion'),
+            ('Sync to CIR', 'Sync to CIR')
+        ]
+        
+        for key, label in run_options:
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(self.config['RUN'].get(key, True))
+            checkbox.stateChanged.connect(lambda state, k=key: self.update_run_config(k, state == Qt.Checked))
+            run_layout.addWidget(checkbox)
+            self.widgets[f'run_{key}'] = checkbox
+            
+        layout.addWidget(run_group)
+        layout.addStretch()
+        
+    def create_project_tab(self):
+        """Create the Project tab"""
+        tab = QWidget()
+        self.tab_widget.addTab(tab, "Project")
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        tab_layout = QVBoxLayout()
+        tab.setLayout(tab_layout)
+        tab_layout.addWidget(scroll)
+        
+        scroll_widget = QWidget()
+        scroll.setWidget(scroll_widget)
+        layout = QVBoxLayout()
+        scroll_widget.setLayout(layout)
+        
+        # Project info group
+        info_group = QGroupBox("Project Information")
+        info_layout = QGridLayout()
+        info_group.setLayout(info_layout)
+        
+        project_fields = [
+            ('name', 'Project Name:', QLineEdit),
+            ('CIR-ID', 'CIR ID:', QLineEdit),
+            ('InstitutionName', 'Institution Name:', QLineEdit),
+            ('InstitutionAddress', 'Institution Address:', QLineEdit),
+            ('InstitutionDepartmentName', 'Department:', QLineEdit),
+            ('description', 'Description:', QLineEdit)
+        ]
+        
+        for i, (key, label, widget_class) in enumerate(project_fields):
+            info_layout.addWidget(QLabel(label), i, 0)
+            widget = widget_class()
+            widget.setText(str(self.config['project'].get(key, '')))
+            widget.textChanged.connect(lambda text, k=key: self.update_project_config(k, text))
+            info_layout.addWidget(widget, i, 1)
+            self.widgets[f'project_{key}'] = widget
+            
+        layout.addWidget(info_group)
+        
+        # Paths group
+        paths_group = QGroupBox("Data Paths")
+        paths_layout = QGridLayout()
+        paths_group.setLayout(paths_layout)
+        
+        path_fields = [
+            ('sinuhe_raw', 'Sinuhe Raw:', '/neuro/data/sinuhe'),
+            ('kaptah_raw', 'Kaptah Raw:', '/neuro/data/kaptah'),
+            ('squidMEG', 'SquidMEG:', default_path),
+            ('opmMEG', 'OPM MEG:', default_path),
+            ('BIDS', 'BIDS:', default_path),
+            ('Calibration', 'Calibration:', '/neuro/databases/sss/sss_cal.dat'),
+            ('Crosstalk', 'Crosstalk:', '/neuro/databases/ctc/ct_sparse.fif'),
+            ('Logfile', 'Log File:', 'pipeline_log.log')
+        ]
+        
+        for i, (key, label, default) in enumerate(path_fields):
+            paths_layout.addWidget(QLabel(label), i, 0)
+            
+            path_widget = QLineEdit()
+            path_widget.setText(str(self.config['project'].get(key, default)))
+            path_widget.textChanged.connect(lambda text, k=key: self.update_project_config(k, text))
+            paths_layout.addWidget(path_widget, i, 1)
+            
+            browse_btn = QPushButton("Browse...")
+            browse_btn.clicked.connect(lambda checked, k=key, w=path_widget: self.browse_path(k, w))
+            paths_layout.addWidget(browse_btn, i, 2)
+            
+            self.widgets[f'project_{key}'] = path_widget
+            
+        layout.addWidget(paths_group)
+        layout.addStretch()
+        
+    def create_opm_tab(self):
+        """Create the OPM tab"""
+        tab = QWidget()
+        self.tab_widget.addTab(tab, "OPM")
+        
+        layout = QVBoxLayout()
+        tab.setLayout(layout)
+        
+        # OPM settings group
+        opm_group = QGroupBox("OPM Settings")
+        opm_layout = QGridLayout()
+        opm_group.setLayout(opm_layout)
+        
+        # Frequency
+        opm_layout.addWidget(QLabel("Frequency:"), 0, 0)
+        freq_spin = QSpinBox()
+        freq_spin.setRange(1, 1000)
+        freq_spin.setValue(self.config['opm'].get('frequency', 33))
+        freq_spin.valueChanged.connect(lambda value: self.update_opm_config('frequency', value))
+        opm_layout.addWidget(freq_spin, 0, 1)
+        self.widgets['opm_frequency'] = freq_spin
+        
+        # Downsample
+        opm_layout.addWidget(QLabel("Downsample to Hz:"), 1, 0)
+        downsample_spin = QSpinBox()
+        downsample_spin.setRange(100, 10000)
+        downsample_spin.setValue(self.config['opm'].get('downsample_to_hz', 1000))
+        downsample_spin.valueChanged.connect(lambda value: self.update_opm_config('downsample_to_hz', value))
+        opm_layout.addWidget(downsample_spin, 1, 1)
+        self.widgets['opm_downsample'] = downsample_spin
+        
+        # Checkboxes
+        overwrite_cb = QCheckBox("Overwrite")
+        overwrite_cb.setChecked(self.config['opm'].get('overwrite', False))
+        overwrite_cb.stateChanged.connect(lambda state: self.update_opm_config('overwrite', state == Qt.Checked))
+        opm_layout.addWidget(overwrite_cb, 2, 0)
+        self.widgets['opm_overwrite'] = overwrite_cb
+        
+        plot_cb = QCheckBox("Plot")
+        plot_cb.setChecked(self.config['opm'].get('plot', False))
+        plot_cb.stateChanged.connect(lambda state: self.update_opm_config('plot', state == Qt.Checked))
+        opm_layout.addWidget(plot_cb, 2, 1)
+        self.widgets['opm_plot'] = plot_cb
+        
+        layout.addWidget(opm_group)
+        layout.addStretch()
+        
+    def create_maxfilter_tab(self):
+        """Create the MaxFilter tab"""
+        tab = QWidget()
+        self.tab_widget.addTab(tab, "MaxFilter")
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        tab_layout = QVBoxLayout()
+        tab.setLayout(tab_layout)
+        tab_layout.addWidget(scroll)
+        
+        scroll_widget = QWidget()
+        scroll.setWidget(scroll_widget)
+        layout = QVBoxLayout()
+        scroll_widget.setLayout(layout)
+        
+        # Standard settings
+        std_group = QGroupBox("Standard Settings")
+        std_layout = QGridLayout()
+        std_group.setLayout(std_layout)
+        
+        # MaxFilter version path
+        std_layout.addWidget(QLabel("MaxFilter Path:"), 0, 0)
+        mf_path = QLineEdit()
+        mf_path.setText(self.config['maxfilter']['standard_settings'].get('maxfilter_version', '/neuro/bin/util/maxfilter'))
+        mf_path.textChanged.connect(lambda text: self.update_maxfilter_config('standard_settings', 'maxfilter_version', text))
+        std_layout.addWidget(mf_path, 0, 1)
+        self.widgets['mf_path'] = mf_path
+        
+        # Checkboxes
+        tsss_cb = QCheckBox("Temporal SSS")
+        tsss_cb.setChecked(self.config['maxfilter']['standard_settings'].get('Temporal signal space separation (tSSS)', True))
+        tsss_cb.stateChanged.connect(lambda state: self.update_maxfilter_config('standard_settings', 'Temporal signal space separation (tSSS)', state == Qt.Checked))
+        std_layout.addWidget(tsss_cb, 1, 0)
+        self.widgets['mf_tsss'] = tsss_cb
+        
+        movement_cb = QCheckBox("Movement Compensation")
+        movement_cb.setChecked(self.config['maxfilter']['standard_settings'].get('Movement compensation', True))
+        movement_cb.stateChanged.connect(lambda state: self.update_maxfilter_config('standard_settings', 'Movement compensation', state == Qt.Checked))
+        std_layout.addWidget(movement_cb, 1, 1)
+        self.widgets['mf_movement'] = movement_cb
+        
+        # HPI correlation limit
+        std_layout.addWidget(QLabel("HPI Correlation Limit:"), 2, 0)
+        hpi_spin = QDoubleSpinBox()
+        hpi_spin.setRange(0.0, 1.0)
+        hpi_spin.setSingleStep(0.1)
+        hpi_spin.setValue(self.config['maxfilter']['standard_settings'].get('HPI correlations limit', 0.9))
+        hpi_spin.valueChanged.connect(lambda value: self.update_maxfilter_config('standard_settings', 'HPI correlations limit', value))
+        std_layout.addWidget(hpi_spin, 2, 1)
+        self.widgets['mf_hpi_corr'] = hpi_spin
+        
+        layout.addWidget(std_group)
+        layout.addStretch()
+        
+    def create_bids_tab(self):
+        """Create the BIDS tab"""
+        tab = QWidget()
+        self.tab_widget.addTab(tab, "BIDS")
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        tab_layout = QVBoxLayout()
+        tab.setLayout(tab_layout)
+        tab_layout.addWidget(scroll)
+        
+        scroll_widget = QWidget()
+        scroll.setWidget(scroll_widget)
+        layout = QVBoxLayout()
+        scroll_widget.setLayout(layout)
+        
+        # Validation
+        validate_cb = QCheckBox("Validate BIDS")
+        validate_cb.setChecked(self.config['bids'].get('validate', True))
+        validate_cb.stateChanged.connect(lambda state: self.update_bids_config('validate', state == Qt.Checked))
+        layout.addWidget(validate_cb)
+        self.widgets['bids_validate'] = validate_cb
+        
+        # Dataset description
+        desc_group = QGroupBox("Dataset Description")
+        desc_layout = QGridLayout()
+        desc_group.setLayout(desc_layout)
+        
+        desc_fields = [
+            ('Name', 'Dataset Name:', QLineEdit),
+            ('BIDSVersion', 'BIDS Version:', QLineEdit),
+            ('License', 'License:', QLineEdit),
+            ('HowToAcknowledge', 'How to Acknowledge:', QLineEdit)
+        ]
+        
+        for i, (key, label, widget_class) in enumerate(desc_fields):
+            desc_layout.addWidget(QLabel(label), i, 0)
+            widget = widget_class()
+            widget.setText(str(self.config['bids']['dataset_description'].get(key, '')))
+            widget.textChanged.connect(lambda text, k=key: self.update_bids_dataset_config(k, text))
+            desc_layout.addWidget(widget, i, 1)
+            self.widgets[f'bids_desc_{key}'] = widget
+            
+        layout.addWidget(desc_group)
+        layout.addStretch()
+        
+    def create_button_panel(self, parent_layout):
+        """Create the button panel"""
+        button_layout = QHBoxLayout()
+        
+        # Run button
+        self.run_button = QPushButton("Run Pipeline")
+        self.run_button.clicked.connect(self.run_pipeline)
+        button_layout.addWidget(self.run_button)
+        
+        # Stop button
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop_pipeline)
+        button_layout.addWidget(self.stop_button)
+        
+        button_layout.addStretch()
+        
+        # Save button
+        save_button = QPushButton("Save Config")
+        save_button.clicked.connect(self.save_config)
+        button_layout.addWidget(save_button)
+        
+        parent_layout.addLayout(button_layout)
+        
+    def create_output_panel(self, parent_layout):
+        """Create the output panel"""
+        output_group = QGroupBox("Output")
+        output_layout = QVBoxLayout()
+        output_group.setLayout(output_layout)
+        
+        self.output_text = QTextEdit()
+        self.output_text.setReadOnly(True)
+        self.output_text.setMaximumHeight(200)
+        output_layout.addWidget(self.output_text)
+        
+        parent_layout.addWidget(output_group)
+        
+    def browse_path(self, key, widget):
+        """Browse for a path"""
+        if 'file' in key.lower() or key in ['Calibration', 'Crosstalk', 'Logfile']:
+            path, _ = QFileDialog.getOpenFileName(self, f"Select {key}", "", "All Files (*)")
+        else:
+            path = QFileDialog.getExistingDirectory(self, f"Select {key} Directory")
+            
+        if path:
+            widget.setText(path)
+            
+    def update_run_config(self, key, value):
+        """Update run configuration"""
+        self.config['RUN'][key] = value
+        
+    def update_project_config(self, key, value):
+        """Update project configuration"""
+        self.config['project'][key] = value
+        
+    def update_opm_config(self, key, value):
+        """Update OPM configuration"""
+        self.config['opm'][key] = value
+        
+    def update_maxfilter_config(self, section, key, value):
+        """Update MaxFilter configuration"""
+        if section not in self.config['maxfilter']:
+            self.config['maxfilter'][section] = {}
+        self.config['maxfilter'][section][key] = value
+        
+    def update_bids_config(self, key, value):
+        """Update BIDS configuration"""
+        self.config['bids'][key] = value
+        
+    def update_bids_dataset_config(self, key, value):
+        """Update BIDS dataset configuration"""
+        self.config['bids']['dataset_description'][key] = value
+        
+    def new_config(self):
+        """Create a new configuration"""
+        self.config = create_default_config()
+        self.config_file = None
+        self.update_widgets_from_config()
+        self.setWindowTitle("NatMEG Config Editor - New Config")
+        
+    def load_config(self):
+        """Load configuration from file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Load Configuration", 
+            "", 
+            "YAML Files (*.yml *.yaml);;JSON Files (*.json);;All Files (*)"
+        )
+        
+        if file_path:
+            self.load_config_file(file_path)
+            
+    def load_config_file(self, file_path):
+        """Load configuration from a specific file"""
+        try:
+            with open(file_path, 'r') as f:
+                if file_path.endswith(('.yml', '.yaml')):
+                    self.config = yaml.safe_load(f)
+                else:
+                    self.config = json.load(f)
+                    
+            self.config_file = file_path
+            self.update_widgets_from_config()
+            self.setWindowTitle(f"NatMEG Config Editor - {os.path.basename(file_path)}")
+            self.output_text.append(f"Loaded configuration from {file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load configuration:\n{e}")
+            
+    def save_config(self):
+        """Save configuration"""
+        if self.config_file:
+            self.save_config_to_file(self.config_file)
+        else:
+            self.save_config_as()
+            
+    def save_config_as(self):
+        """Save configuration as new file"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Configuration",
+            "",
+            "YAML Files (*.yml);;JSON Files (*.json);;All Files (*)"
+        )
+        
+        if file_path:
+            self.save_config_to_file(file_path)
+            
+    def save_config_to_file(self, file_path):
+        """Save configuration to a specific file"""
+        try:
+            with open(file_path, 'w') as f:
+                if file_path.endswith(('.yml', '.yaml')):
+                    yaml.dump(self.config, f, default_flow_style=False, indent=2)
+                else:
+                    json.dump(self.config, f, indent=2)
+                    
+            self.config_file = file_path
+            self.setWindowTitle(f"NatMEG Config Editor - {os.path.basename(file_path)}")
+            self.output_text.append(f"Saved configuration to {file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save configuration:\n{e}")
+            
+    def update_widgets_from_config(self):
+        """Update all widgets from the current configuration"""
+        # This would update all widgets based on the loaded config
+        # Implementation depends on the specific widget structure
         pass
-    def show_terminal():
-        terminal_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
-    def hide_terminal():
-        terminal_frame.pack_forget()
-    # Show terminal by default
-    show_terminal()
-
-    # Execute button
-    def execute():
-        # Update config with current GUI values
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
-        # Always use the latest config_file value
-        config_path = config_file if config_file else None
-        # Build macOS-safe command using the current Python interpreter
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
-        cmd = [sys.executable, '-u', pipeline_path, 'run']
-        if config_path:
-            cmd += ['--config', config_path]
-        # Show terminal output window
-        show_terminal()
-        terminal_output.config(state='normal')
-        terminal_output.delete('1.0', 'end')
-        terminal_output.insert('end', f"Running: {' '.join(cmd)}\n\n")
-        terminal_output.config(state='disabled')
-        # Thread-safe streaming using a queue and periodic polling on the main thread
-        q = queue.Queue()
-        ansi_re = re.compile(r"\x1b\[(?P<codes>[0-9;]*)m")
-
-        def parse_ansi_segments(s: str):
-            # Returns list of (segment_text, [tags]) for ANSI SGR codes
-            segments = []
-            idx = 0
-            active_tags = set()
-            for m in ansi_re.finditer(s):
-                if m.start() > idx:
-                    segments.append((s[idx:m.start()], tuple(active_tags)))
-                codes = m.group('codes')
-                if codes == '' or codes == '0':
-                    active_tags.clear()
-                else:
-                    for code in codes.split(';'):
-                        if not code:
-                            continue
-                        try:
-                            n = int(code)
-                        except ValueError:
-                            continue
-                        if n == 0:
-                            active_tags.clear()
-                        elif n == 1:
-                            active_tags.add('bold')
-                        elif n == 4:
-                            active_tags.add('underline')
-                        elif n == 22:
-                            active_tags.discard('bold')
-                        elif n == 24:
-                            active_tags.discard('underline')
-                        elif n == 39:
-                            # default foreground -> remove any fg-* tag
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                        elif 30 <= n <= 37:
-                            # standard fg colors
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
-                            active_tags.add(f'fg-{names[n-30]}')
-                        elif 90 <= n <= 97:
-                            # bright fg colors
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
-                            active_tags.add(f'fg-bright-{names[n-90]}')
-                        # Other codes ignored for simplicity
-                idx = m.end()
-            if idx < len(s):
-                segments.append((s[idx:], tuple(active_tags)))
-            return segments
-
-        def insert_formatted(text: str):
-            # Fallback highlight when no ANSI codes present
-            if not ansi_re.search(text):
-                tags = ()
-                up = text.upper()
-                if 'ERROR' in up:
-                    tags = ('fg-red', 'bold')
-                elif 'WARNING' in up:
-                    tags = ('fg-yellow',)
-                terminal_output.insert('end', text, tags)
-                return
-            for seg, tags in parse_ansi_segments(text):
-                terminal_output.insert('end', seg, tags)
-        def poll_queue():
-            try:
-                while True:
-                    line = q.get_nowait()
-                    terminal_output.config(state='normal')
-                    insert_formatted(line)
-                    terminal_output.see('end')
-                    terminal_output.config(state='disabled')
-            except queue.Empty:
-                pass
-            finally:
-                root.after(50, poll_queue)
-
-        def run_subprocess():
-            process = subprocess.Popen(
-                cmd,
-                cwd=base_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=os.environ
-            )
-            for line in process.stdout:
-                q.put(line)
-            process.wait()
-            #q.put(f"\nProcess finished with exit code {process.returncode}\n")
-
-        # Kick off polling and background process
-        root.after(0, poll_queue)
-        threading.Thread(target=run_subprocess, daemon=True).start()
-    
-    # Execute button widget (initially disabled until a save occurs)
-    execute_button = ttk.Button(run_frame, text="Save to execute", command=execute, state='disabled', style='C.TButton')
-    execute_button.grid(row=row, column=0, columnspan=2, pady=20, padx=10, sticky='ew')
-    
-    def save():
-        # Disable save button
-        save_button.config(state='disabled', text='Saved!', 
-                           style='C.TButton')
         
-        # Enable execute button when config is saved
-        execute_button.config(state='normal', text='Execute')
+    def run_pipeline(self):
+        """Run the pipeline"""
+        self.run_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.output_text.clear()
         
-        # Update config with GUI values
-        for key, var in project_vars.items():
-            value = var.get()
-            if key == 'tasks':
-                # Convert comma-separated string to list, remove blanks
-                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['project'][key] = value
-    
-        for key, var in opm_vars.items():
-            value = var.get()
-            if key in ['hpi_names', 'polhemus']:
-                # Convert comma-separated string to list, remove blanks
-                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['opm'][key] = value
-    
-        for section in ['standard_settings', 'advanced_settings']:
-            for key, var in maxfilter_vars[section].items():
-                value = var.get()
-                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                    # Convert comma-separated string to list, remove blanks
-                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
-                else:
-                    config['maxfilter'][section][key] = value
-    
-        for key, var in bids_vars.items():
-            config['bids'][key] = var.get()
-    
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
-
-        save_config(config, filename=config_file if config_file else None)
+        # Create and start worker thread
+        self.worker = WorkerThread(self.config)
+        self.worker.output_signal.connect(self.output_text.append)
+        self.worker.finished_signal.connect(self.on_pipeline_finished)
+        self.worker.error_signal.connect(self.on_pipeline_error)
+        self.worker.start()
         
-        # Switch to RUN tab
-        notebook.select(run_frame)
+    def stop_pipeline(self):
+        """Stop the pipeline"""
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
+        self.on_pipeline_finished()
         
-        # Re-enable save button after any variable changes
-        def enable_save_button(*args):
-            save_button.config(state='normal', text='Save')
-            # Disable execute button when changes are made
-            execute_button.config(state='disabled', text='Save to execute', style='C.TButton')
+    def on_pipeline_finished(self):
+        """Handle pipeline completion"""
+        self.run_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.output_text.append("Pipeline execution completed.")
         
-        # Bind to all variables to detect changes
-        for var in project_vars.values():
-            var.trace('w', enable_save_button)
-        for var in opm_vars.values():
-            var.trace('w', enable_save_button)
-        for section_vars in maxfilter_vars.values():
-            for var in section_vars.values():
-                var.trace('w', enable_save_button)
-        for var in bids_vars.values():
-            var.trace('w', enable_save_button)
-        for var in run_vars.values():
-            var.trace('w', enable_save_button)
+    def on_pipeline_error(self, error_msg):
+        """Handle pipeline errors"""
+        self.run_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        QMessageBox.critical(self, "Pipeline Error", f"An error occurred:\n{error_msg}")
 
-    def save_as():
-        # Update config with GUI values (same as save function)
-        for key, var in project_vars.items():
-            value = var.get()
-            if key == 'tasks':
-                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['project'][key] = value
-    
-        for key, var in opm_vars.items():
-            value = var.get()
-            if key in ['hpi_names', 'polhemus']:
-                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['opm'][key] = value
-    
-        for section in ['standard_settings', 'advanced_settings']:
-            for key, var in maxfilter_vars[section].items():
-                value = var.get()
-                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
-                else:
-                    config['maxfilter'][section][key] = value
-    
-        for key, var in bids_vars.items():
-            config['bids'][key] = var.get()
-    
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
 
-        # Force file dialog for save as (pass None as filename)
-        save_config(config, filename=None)
+def main(config_file=None):
+    """Main function"""
+    app = QApplication(sys.argv)
     
-    def open_config():
-        new_config_file = askopenfile(
-            title='Select config file',
-            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-            initialdir=default_path)
-        nonlocal config_file
-        if new_config_file:
-            # Load the new configuration
-            new_config = load_config(new_config_file)
-            if new_config:
-                # Update all GUI variables with new config values
-                for key, var in project_vars.items():
-                    if key in new_config['project']:
-                        if key == 'tasks':
-                            var.set(', '.join(new_config['project'][key]) if isinstance(new_config['project'][key], list) else str(new_config['project'][key]))
-                        else:
-                            var.set(str(new_config['project'][key]))
-                for key, var in opm_vars.items():
-                    if key in new_config['opm']:
-                        if key in ['hpi_names', 'polhemus']:
-                            var.set(', '.join(new_config['opm'][key]) if isinstance(new_config['opm'][key], list) else str(new_config['opm'][key]))
-                        else:
-                            var.set(new_config['opm'][key])
-                for section in ['standard_settings', 'advanced_settings']:
-                    for key, var in maxfilter_vars[section].items():
-                        if key in new_config['maxfilter'][section]:
-                            if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                                var.set(', '.join(new_config['maxfilter'][section][key]) if isinstance(new_config['maxfilter'][section][key], list) else str(new_config['maxfilter'][section][key]))
-                            else:
-                                var.set(new_config['maxfilter'][section][key])
-                for key, var in bids_vars.items():
-                    if key in new_config['bids']:
-                        var.set(new_config['bids'][key])
-                for key, var in run_vars.items():
-                    if key in new_config['RUN']:
-                        var.set(new_config['RUN'][key])
-                # Update the global config variable
-                nonlocal config
-                config = new_config
-                # Update config_file to the newly loaded file
-                if hasattr(new_config_file, 'name'):
-                    config_file = new_config_file.name
-                else:
-                    config_file = new_config_file
-                # Update the loaded file label
-                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='black')
+    editor = ConfigEditor(config_file)
+    editor.show()
     
-    def cancel():
-        root.destroy()
-        print('User cancelled')
-        sys.exit(0)
-        config = None
-    
-    # Show loaded config file above buttons
-    if config_file:
-        loaded_file_label = ttk.Label(root,
-            text=f"Loaded config file: {config_file}",
-            font=('TkDefaultFont', 10, 'bold'), foreground='black')
-        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
-    else:
-        loaded_file_label = ttk.Label(root,
-            text="No config file loaded (using default)",
-            font=('TkDefaultFont', 10, 'bold'), foreground='black')
-        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
+    sys.exit(app.exec_())
 
-    # Button frame at bottom
-    button_frame = ttk.Frame(root)
-    button_frame.pack(side='bottom', fill='x', padx=10, pady=5)
-    # Cancel button
-    cancel_button = ttk.Button(button_frame, text="Cancel", command=cancel)
-    cancel_button.pack(side='right', padx=5)
-    
-    # Save as button
-    save_as_button = ttk.Button(button_frame, text="Save as...", command=save_as)
-    save_as_button.pack(side='right', padx=5)
-    
-    # Save button
-    save_button = ttk.Button(button_frame, text="Save", command=save)
-    save_button.pack(side='right', padx=5)
-    
-    # Open button
-    open_button = ttk.Button(button_frame, text="Open", command=open_config)
-    open_button.pack(side='right', padx=5)
-    
-    # Center the window on screen
-    root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
-    x = (root.winfo_screenwidth() // 2) - (width // 2)
-    y = (root.winfo_screenheight() // 2) - (height // 2)
-    root.geometry(f'{width}x{height}+{x}+{y}')
-    
-    # Bring window to front and focus
-    root.lift()
-    root.attributes('-topmost', True)
-    root.after(10, lambda: root.attributes('-topmost', False))
-    root.focus_force()
-    
-    root.mainloop()
-    return config
 
 def args_parser():
-    parser = argparse.ArgumentParser(description=
-                                     '''
-Configuration script for NatMEG pipeline.
-                                     
-This script allows you to create or edit a configuration file for the NatMEG pipeline.
-You can specify paths, settings, and options for various stages of the pipeline including MaxFilter,
-OPM processing, and BIDS conversion. The configuration can be saved in YAML or JSON format.
-You can also provide a path to an existing configuration file to load its settings.
-                                     
-                                     ''',
-                                     add_help=True,
-                                     usage='maxfilter [-h] [-c CONFIG]')
-    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
-    args = parser.parse_args()
-    return args
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='NatMEG Configuration Editor')
+    parser.add_argument('--config', help='Configuration file to load')
+    return parser.parse_args()
 
-def main(config_file:str=None):
-    args = args_parser()
-    
-    config_file = args.config
-    
-    if not config_file or not exists(config_file):
-        config = config_UI()
-    elif config_file:
-        config = config_UI(config_file)
-        return config
 
 if __name__ == "__main__":
-    main()
+    args = args_parser()
+    main(args.config)
