@@ -8,6 +8,8 @@ depricated
 # Ignore test files
 *test*
 
+.venv
+venv
 # Ignore node_modules directory
 node_modules/
 

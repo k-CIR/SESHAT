@@ -6,15 +6,15 @@ import argparse
 import yaml
 from copy import deepcopy
 import os
+from os.path import basename, exists, isdir, getmtime, getsize, join, dirname
 from shutil import copy2, copytree
 from typing import Union
 from datetime import datetime
 import filecmp
 import pandas as pd
 
-sinuhe_root = 'neuro/data/sinuhe'
-kaptah_root = 'neuro/data/kaptah'
-local_root = 'neuro/data/local'
+calibration = '/neuro/databases/sss/sss_cal.dat'
+crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
 
 from utils import (
     log, configure_logging,
@@ -52,14 +52,14 @@ def copy_if_newer_or_larger(source, destination):
     """
     Copy file from source to destination if source is newer or larger than destination.
     """
-    if not os.path.exists(destination):
-        if os.path.isdir(source):
+    if not exists(destination):
+        if isdir(source):
             copytree(source, destination)
         else:
             copy2(source, destination)
-    elif (os.path.getmtime(source) > os.path.getmtime(destination) or
-    os.path.getsize(source) > os.path.getsize(destination)):
-        if os.path.isdir(source):
+    elif (getmtime(source) > getmtime(destination) or
+    getsize(source) > getsize(destination)):
+        if isdir(source):
             copytree(source, destination, dirs_exist_ok=True)
         else:
             copy2(source, destination)
@@ -95,7 +95,7 @@ def check_fif(source, destination):
 def check_size_fif(source):
     raw_src = read_raw(source, allow_maxshield=True, verbose='error')
     raw_size = raw_src._size
-    print(f'{os.path.basename(source)}: {raw_size / 10000} GB')
+    print(f'{basename(source)}: {raw_size / 10000} GB')
     if raw_size > 20000:
         return True
     else:
@@ -107,15 +107,34 @@ def is_binary(file_path):
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
 
+def copy_squid_databases(config: dict):
+    
+    local_dir = config['squidMEG'] or config['opmMEG']
+    databases = join(local_dir, 'databases')
+    if not exists(databases):
+        os.makedirs(databases, exist_ok=True)
+    
+    if calibration and exists(crosstalk):
+        cal_destination = join(databases, 'sss')
+        if not exists(cal_destination):
+            os.makedirs(cal_destination, exist_ok=True)
+        copy_if_newer_or_larger(calibration, join(cal_destination, basename(calibration)))
+    if crosstalk and exists(crosstalk):
+        ct_destination = join(databases, 'ctc')
+        if not exists(ct_destination):
+            os.makedirs(ct_destination, exist_ok=True)
+        copy_if_newer_or_larger(crosstalk, join(ct_destination, basename(crosstalk)))
+
+
 def copy_from_sinuhe(config, check_existing=False):
     # Create the local directory if it doesn't exist
     local_dir = config['squidMEG']
-    if not os.path.exists(local_dir):
+    if not exists(local_dir):
         os.makedirs(local_dir, exist_ok=True)
 
     # Create log directory in the project root (parent of local_dir)
-    project_root = os.path.dirname(local_dir)
-    log_path = os.path.join(project_root, 'log')
+    project_root = dirname(local_dir)
+    log_path = join(project_root, 'log')
     os.makedirs(log_path, exist_ok=True)
     logfile = config.get('Logfile', 'pipeline_log.log')
     configure_logging(log_dir=log_path, log_file=logfile)
@@ -125,7 +144,7 @@ def copy_from_sinuhe(config, check_existing=False):
     if not config['sinuhe_raw']:
         log('Copy', 'No TRIUX directory defined', 'warning', logfile=logfile, logpath=log_path)
 
-    elif not os.path.isdir(config['sinuhe_raw']):
+    elif not isdir(config['sinuhe_raw']):
         log('Copy', f"{config['sinuhe_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
 
     elif not glob('*', root_dir=config['sinuhe_raw']):
@@ -133,7 +152,7 @@ def copy_from_sinuhe(config, check_existing=False):
     
     else:
         sinuhe = config['sinuhe_raw']
-        natmeg_subjects  = [s for s in glob(f'NatMEG_*', root_dir=sinuhe) if os.path.isdir(f'{sinuhe}/{s}')]
+        natmeg_subjects  = [s for s in glob(f'NatMEG_*', root_dir=sinuhe) if isdir(f'{sinuhe}/{s}')]
         
         other_files_and_dirs = [f for f in glob(f'*', root_dir=sinuhe) if f not in natmeg_subjects]
         
@@ -142,7 +161,7 @@ def copy_from_sinuhe(config, check_existing=False):
         for item in other_files_and_dirs:
             source = f'{sinuhe}/{item}'
             destination = f'{local_dir}/{item}'
-            if os.path.exists(destination):
+            if exists(destination):
                 check = filecmp.cmp(source, destination, shallow=True)
                 if check:
                     continue
@@ -152,20 +171,20 @@ def copy_from_sinuhe(config, check_existing=False):
                 copy_if_newer_or_larger(source, destination)
         for subject in subjects:
             sessions = sorted([session for session in glob('*', root_dir = f'{sinuhe}/NatMEG_{subject}')
-            if os.path.isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
+            if isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
             ])
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
             
             other_files_and_dirs = [f for f in glob(f'*', root_dir=sinuhe_subject_dir) if f not in sessions]
             
             local_subject_dir = f'{local_dir}/sub-{subject}'
-            if not os.path.exists(local_subject_dir):
+            if not exists(local_subject_dir):
                 os.makedirs(local_subject_dir, exist_ok=True)
         
             for item in other_files_and_dirs:
                 source = f'{sinuhe_subject_dir}/{item}'
                 destination = f'{local_subject_dir}/{item}'
-                if os.path.exists(destination):
+                if exists(destination):
                     check = filecmp.cmp(source, destination, shallow=True)
                     if check:
                         continue
@@ -182,7 +201,7 @@ def copy_from_sinuhe(config, check_existing=False):
                     # Other files are copied as they are
                 triux_other = [f for f in triux_files if f not in triux_fif]
                 triux_dst_path = f'{local_dir}/sub-{subject}/{session}/triux'
-                if not os.path.exists(triux_dst_path):
+                if not exists(triux_dst_path):
                     os.makedirs(triux_dst_path, exist_ok=True)
                 
                 triux_compare = filecmp.dircmp(triux_src_path, triux_dst_path, ignore=['.DS_Store'])
@@ -232,12 +251,12 @@ def copy_from_sinuhe(config, check_existing=False):
 def copy_from_kaptah(config: Union[str, dict], check_existing=False):
     
     local_dir = config['opmMEG']
-    if not os.path.exists(local_dir):
+    if not exists(local_dir):
         os.makedirs(local_dir, exist_ok=True)
 
     # Create log directory in the project root (parent of local_dir)
-    project_root = os.path.dirname(local_dir)
-    log_path = os.path.join(project_root, 'log')
+    project_root = dirname(local_dir)
+    log_path = join(project_root, 'log')
     os.makedirs(log_path, exist_ok=True)
     logfile = config.get('Logfile', 'pipeline_log.log')
     new_files = True
@@ -245,7 +264,7 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
     if not config['kaptah_raw']:
         log('Copy', 'No Hedscan directory defined', 'warning', logfile=logfile, logpath=log_path)
 
-    elif not os.path.isdir(config['kaptah_raw']):
+    elif not isdir(config['kaptah_raw']):
         log('Copy', f"{config['kaptah_raw']} is not a directory", 'error', logfile=logfile, logpath=log_path)
     
     elif not glob('*', root_dir=config['kaptah_raw']):
@@ -254,7 +273,7 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
     else:
 
         kaptah = config['kaptah_raw']
-        kaptah_subjects  = [s for s in glob(f'sub-*', root_dir=kaptah) if os.path.isdir(f'{kaptah}/{s}')]
+        kaptah_subjects  = [s for s in glob(f'sub-*', root_dir=kaptah) if isdir(f'{kaptah}/{s}')]
         
         other_files_and_dirs = [f for f in glob(f'*', root_dir=kaptah) if f not in kaptah_subjects]
         
@@ -263,7 +282,7 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
         for item in other_files_and_dirs:
             source = f'{kaptah}/{item}'
             destination = f'{local_dir}/{item}'
-            if os.path.exists(destination):
+            if exists(destination):
                 check = filecmp.cmp(source, destination, shallow=True)
                 if check:
                     continue
@@ -288,7 +307,7 @@ def copy_from_kaptah(config: Union[str, dict], check_existing=False):
                 hedscan_src_path = f'{kaptah}/sub-{subject}'
                 hedscan_files = glob(f'20{session}*', root_dir = hedscan_src_path)
                 hedscan_dst_path = f'{local_dir}/sub-{subject}/{session}/hedscan'
-                if not os.path.exists(hedscan_dst_path):
+                if not exists(hedscan_dst_path):
                     os.makedirs(hedscan_dst_path, exist_ok=True)
 
                 files_in_dst = glob('*', root_dir=hedscan_dst_path)
@@ -382,7 +401,7 @@ def main(config: Union[str, dict]=None):
     if config is None:
         args = args_parser()
         config_file = args.config
-        if not config_file or not os.path.exists(config_file):
+        if not config_file or not exists(config_file):
             config_file = askForConfig()
         if config_file:
             config = get_parameters(config_file)
@@ -394,7 +413,7 @@ def main(config: Union[str, dict]=None):
     elif isinstance(config, str):
         # If config is a string, treat it as a file path
         config_file = config
-        if os.path.exists(config_file):
+        if exists(config_file):
             config = get_parameters(config_file)
             print(f'Using configuration file: {config_file}')
         else:
@@ -402,6 +421,7 @@ def main(config: Union[str, dict]=None):
             return
 
     # If config is already a dict, use it as-is
+    copy_squid_databases(config)
     copy_from_sinuhe(config, check_existing=False)
     copy_from_kaptah(config, check_existing=False)
     return True
