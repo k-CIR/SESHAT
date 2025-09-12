@@ -241,7 +241,7 @@ if [ "\$env_exists" = false ]; then
     safe_conda_test env list 2>/dev/null || echo "  (could not list environments)"
     echo ""
     echo "To create the environment:"
-    echo "  conda create -n \$ENV_NAME python=3.12 mne mne-bids bids-validator pandas jinja2 -y"
+    echo "  conda create -n \$ENV_NAME python=3.12 mne mne-bids pybids bids-validator pandas jinja2 -y"
     echo "  conda activate \$ENV_NAME"
     echo "  cd \$(dirname "\$0")"
     echo "  pip install -e ."
@@ -339,7 +339,7 @@ if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/natmeg"
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             echo "installing conda environment"
-            conda create -n natmeg_utils python=3.12 mne mne-bids bids-validator pandas jinja2 -y
+            conda create -n natmeg_utils python=3.12 mne mne-bids pybids bids-validator pandas jinja2 -y
             INSTALL_SUCCESS=true
         else
             echo "⚠ natmeg executable created but needs conda environment setup"
@@ -362,7 +362,7 @@ echo ""
 if [ "$ENV_EXISTS" = false ]; then
     echo "NEXT STEPS - Create conda environment:"
     echo "  1. source $SHELL_CONFIG"
-    echo "  2. conda create -n natmeg_utils mne mne-bids bids-validator pandas jinja2 -y"
+    echo "  2. conda create -n natmeg_utils mne mne-bids pybids bids-validator pandas jinja2 -y"
     echo "  3. conda activate natmeg_utils"
     echo "  4. cd $(dirname "$0")"
     echo "  5. pip install -e ."
