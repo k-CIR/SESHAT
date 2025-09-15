@@ -2,668 +2,757 @@ import yaml
 import json
 import sys
 import os
-from os.path import exists
 import argparse
-import threading
-import subprocess
-import queue
 import re
 
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QTabWidget, QLabel, QLineEdit, 
-                             QCheckBox, QComboBox, QSpinBox, QDoubleSpinBox,
-                             QPushButton, QTextEdit, QFileDialog, QMessageBox,
-                             QScrollArea, QFrame, QGroupBox, QGridLayout,
-                             QSplitter, QProgressBar, QListWidget, QListWidgetItem)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QFormLayout, QLineEdit, QCheckBox, QComboBox, QPushButton, QLabel, QGroupBox,
+    QTextEdit, QScrollArea, QFileDialog, QMessageBox
+)
+from PyQt6.QtCore import Qt, QProcess
 
 default_path = '/neuro/data/local/'
 
-def create_default_config():
-    return {
-        'RUN': {
-            'Copy to Cerberos': True,
-            'Add HPI coregistration': True,
-            'Run Maxfilter': True,
-            'Run BIDS conversion': True,
-            'Sync to CIR': True
-        },
-        'project': {
-            'name': '',
-            'CIR-ID': '',
-            'InstitutionName': 'Karolinska Institutet',
-            'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
-            'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
-            'description': 'project for MEG data',
-            'tasks': [''],
-            'sinuhe_raw': '/neuro/data/sinuhe',
-            'kaptah_raw': '/neuro/data/kaptah',
-            'squidMEG': default_path,
-            'opmMEG': default_path,
-            'BIDS': default_path,
-            'Calibration': '/neuro/databases/sss/sss_cal.dat',
-            'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
-            'Logfile': 'pipeline_log.log'
-        },
-        'opm': {
-            'polhemus': [''],
-            'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
-            'frequency': 33,
-            'downsample_to_hz': 1000,
-            'overwrite': False,
-            'plot': False,
-        },
-        'maxfilter': {
-            'standard_settings': {
-                'maxfilter_version': '/neuro/bin/util/maxfilter',
-                'Temporal signal space separation (tSSS)': True,
-                'Movement compensation': True,
-                'HPI correlations limit': 0.9,
-                'overwrite': False,
-                'buffer_size_sec': 10.0,
-                'skip_maxfilter': False,
-                'origin': [0, 0, 40]  # default origin
-            },
-            'advanced_settings': {
-                'head_position_estimation': True,
-                'head_position_file': '',
-                'correlation': '',
-                'Temporal signal space separation (tSSS)': {
-                    'temporal_window_sec': 10.0,
-                    'head_position_continous_hpi': True
-                },
-                'Movement compensation': {
-                    'head_position_file': '',
-                    'average_head_position': True
-                }
-            }
-        },
-        'bids': {
-            'validate': True,
-            'dataset_description': {
-                'Name': '',
-                'Authors': [''],
-                'ReferencesAndLinks': [''],
-                'BIDSVersion': '1.7.0',
-                'License': 'CC0',
-                'HowToAcknowledge': ''
-            },
-            'participants': {
-                'age': '',
-                'sex': 'n/a',
-                'handedness': 'n/a'
-            }
-        }
-    }
-
-
-class WorkerThread(QThread):
-    """Thread for running the pipeline without blocking the GUI"""
-    output_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal()
-    error_signal = pyqtSignal(str)
+class ConfigMainWindow(QMainWindow):
+    """PyQt main window for NatMEG configuration editor"""
     
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        
-    def run(self):
-        try:
-            # This would run the actual pipeline
-            # For now, just simulate the process
-            self.output_signal.emit("Starting NatMEG pipeline...")
-            self.output_signal.emit("Configuration loaded successfully")
-            
-            if self.config['RUN'].get('Copy to Cerberos'):
-                self.output_signal.emit("Step 1: Copying to Cerberos...")
-                
-            if self.config['RUN'].get('Add HPI coregistration'):
-                self.output_signal.emit("Step 2: Adding HPI coregistration...")
-                
-            if self.config['RUN'].get('Run Maxfilter'):
-                self.output_signal.emit("Step 3: Running MaxFilter...")
-                
-            if self.config['RUN'].get('Run BIDS conversion'):
-                self.output_signal.emit("Step 4: Converting to BIDS...")
-                
-            if self.config['RUN'].get('Sync to CIR'):
-                self.output_signal.emit("Step 5: Syncing to CIR...")
-                
-            self.output_signal.emit("Pipeline completed successfully!")
-            self.finished_signal.emit()
-            
-        except Exception as e:
-            self.error_signal.emit(str(e))
-
-
-class ConfigEditor(QMainWindow):
     def __init__(self, config_file=None):
         super().__init__()
         self.config_file = config_file
-        self.config = {}
-        self.widgets = {}  # Store references to widgets for updating
+        self.config_data = {}
+        self.widgets = {}  # Store widget references for data binding
+        self.terminal_process = None
+        self.config_saved = bool(config_file)  # True if loading existing config, False for new
+        self.execute_btn = None  # Will be set in create_run_tab
         
-        self.setWindowTitle("NatMEG Config Editor")
-        self.setGeometry(100, 100, 800, 900)
-        
-        # Load config
-        if config_file and exists(config_file):
-            self.load_config_file(config_file)
+        # Load configuration
+        if self.config_file:
+            self.config_data = self.load_config(self.config_file)
         else:
-            self.config = create_default_config()
-            
+            self.config_data = self.create_default_config()
+        
         self.init_ui()
         
     def init_ui(self):
         """Initialize the user interface"""
+        self.setWindowTitle("NatMEG Config Editor")
+        self.setGeometry(100, 100, 900, 800)
+        
+        # Central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
-        
-        # Create menu bar
-        self.create_menu_bar()
+        # Main layout
+        main_layout = QVBoxLayout(central_widget)
         
         # Create tab widget
         self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
+        main_layout.addWidget(self.tab_widget)
         
         # Create tabs
-        self.create_run_tab()
         self.create_project_tab()
         self.create_opm_tab()
         self.create_maxfilter_tab()
         self.create_bids_tab()
+        self.create_run_tab()
         
-        # Create button panel
-        self.create_button_panel(layout)
-        
-        # Create output panel
-        self.create_output_panel(layout)
-        
-    def create_menu_bar(self):
-        """Create the menu bar"""
-        menubar = self.menuBar()
-        
-        # File menu
-        file_menu = menubar.addMenu('File')
-        
-        # New config
-        new_action = file_menu.addAction('New Config')
-        new_action.triggered.connect(self.new_config)
-        
-        # Load config
-        load_action = file_menu.addAction('Load Config...')
-        load_action.triggered.connect(self.load_config)
-        
-        # Save config
-        save_action = file_menu.addAction('Save Config')
-        save_action.triggered.connect(self.save_config)
-        
-        # Save config as
-        save_as_action = file_menu.addAction('Save Config As...')
-        save_as_action.triggered.connect(self.save_config_as)
-        
-        file_menu.addSeparator()
-        
-        # Exit
-        exit_action = file_menu.addAction('Exit')
-        exit_action.triggered.connect(self.close)
-        
-    def create_run_tab(self):
-        """Create the Run tab"""
-        tab = QWidget()
-        self.tab_widget.addTab(tab, "Run")
-        
-        layout = QVBoxLayout()
-        tab.setLayout(layout)
-        
-        # Run options group
-        run_group = QGroupBox("Pipeline Steps")
-        run_layout = QVBoxLayout()
-        run_group.setLayout(run_layout)
-        
-        run_options = [
-            ('Copy to Cerberos', 'Copy to Cerberos'),
-            ('Add HPI coregistration', 'Add HPI coregistration'),
-            ('Run Maxfilter', 'Run Maxfilter'),
-            ('Run BIDS conversion', 'Run BIDS conversion'),
-            ('Sync to CIR', 'Sync to CIR')
-        ]
-        
-        for key, label in run_options:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(self.config['RUN'].get(key, True))
-            checkbox.stateChanged.connect(lambda state, k=key: self.update_run_config(k, state == Qt.Checked))
-            run_layout.addWidget(checkbox)
-            self.widgets[f'run_{key}'] = checkbox
-            
-        layout.addWidget(run_group)
-        layout.addStretch()
-        
-    def create_project_tab(self):
-        """Create the Project tab"""
-        tab = QWidget()
-        self.tab_widget.addTab(tab, "Project")
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        tab_layout = QVBoxLayout()
-        tab.setLayout(tab_layout)
-        tab_layout.addWidget(scroll)
-        
-        scroll_widget = QWidget()
-        scroll.setWidget(scroll_widget)
-        layout = QVBoxLayout()
-        scroll_widget.setLayout(layout)
-        
-        # Project info group
-        info_group = QGroupBox("Project Information")
-        info_layout = QGridLayout()
-        info_group.setLayout(info_layout)
-        
-        project_fields = [
-            ('name', 'Project Name:', QLineEdit),
-            ('CIR-ID', 'CIR ID:', QLineEdit),
-            ('InstitutionName', 'Institution Name:', QLineEdit),
-            ('InstitutionAddress', 'Institution Address:', QLineEdit),
-            ('InstitutionDepartmentName', 'Department:', QLineEdit),
-            ('description', 'Description:', QLineEdit)
-        ]
-        
-        for i, (key, label, widget_class) in enumerate(project_fields):
-            info_layout.addWidget(QLabel(label), i, 0)
-            widget = widget_class()
-            widget.setText(str(self.config['project'].get(key, '')))
-            widget.textChanged.connect(lambda text, k=key: self.update_project_config(k, text))
-            info_layout.addWidget(widget, i, 1)
-            self.widgets[f'project_{key}'] = widget
-            
-        layout.addWidget(info_group)
-        
-        # Paths group
-        paths_group = QGroupBox("Data Paths")
-        paths_layout = QGridLayout()
-        paths_group.setLayout(paths_layout)
-        
-        path_fields = [
-            ('sinuhe_raw', 'Sinuhe Raw:', '/neuro/data/sinuhe'),
-            ('kaptah_raw', 'Kaptah Raw:', '/neuro/data/kaptah'),
-            ('squidMEG', 'SquidMEG:', default_path),
-            ('opmMEG', 'OPM MEG:', default_path),
-            ('BIDS', 'BIDS:', default_path),
-            ('Calibration', 'Calibration:', '/neuro/databases/sss/sss_cal.dat'),
-            ('Crosstalk', 'Crosstalk:', '/neuro/databases/ctc/ct_sparse.fif'),
-            ('Logfile', 'Log File:', 'pipeline_log.log')
-        ]
-        
-        for i, (key, label, default) in enumerate(path_fields):
-            paths_layout.addWidget(QLabel(label), i, 0)
-            
-            path_widget = QLineEdit()
-            path_widget.setText(str(self.config['project'].get(key, default)))
-            path_widget.textChanged.connect(lambda text, k=key: self.update_project_config(k, text))
-            paths_layout.addWidget(path_widget, i, 1)
-            
-            browse_btn = QPushButton("Browse...")
-            browse_btn.clicked.connect(lambda checked, k=key, w=path_widget: self.browse_path(k, w))
-            paths_layout.addWidget(browse_btn, i, 2)
-            
-            self.widgets[f'project_{key}'] = path_widget
-            
-        layout.addWidget(paths_group)
-        layout.addStretch()
-        
-    def create_opm_tab(self):
-        """Create the OPM tab"""
-        tab = QWidget()
-        self.tab_widget.addTab(tab, "OPM")
-        
-        layout = QVBoxLayout()
-        tab.setLayout(layout)
-        
-        # OPM settings group
-        opm_group = QGroupBox("OPM Settings")
-        opm_layout = QGridLayout()
-        opm_group.setLayout(opm_layout)
-        
-        # Frequency
-        opm_layout.addWidget(QLabel("Frequency:"), 0, 0)
-        freq_spin = QSpinBox()
-        freq_spin.setRange(1, 1000)
-        freq_spin.setValue(self.config['opm'].get('frequency', 33))
-        freq_spin.valueChanged.connect(lambda value: self.update_opm_config('frequency', value))
-        opm_layout.addWidget(freq_spin, 0, 1)
-        self.widgets['opm_frequency'] = freq_spin
-        
-        # Downsample
-        opm_layout.addWidget(QLabel("Downsample to Hz:"), 1, 0)
-        downsample_spin = QSpinBox()
-        downsample_spin.setRange(100, 10000)
-        downsample_spin.setValue(self.config['opm'].get('downsample_to_hz', 1000))
-        downsample_spin.valueChanged.connect(lambda value: self.update_opm_config('downsample_to_hz', value))
-        opm_layout.addWidget(downsample_spin, 1, 1)
-        self.widgets['opm_downsample'] = downsample_spin
-        
-        # Checkboxes
-        overwrite_cb = QCheckBox("Overwrite")
-        overwrite_cb.setChecked(self.config['opm'].get('overwrite', False))
-        overwrite_cb.stateChanged.connect(lambda state: self.update_opm_config('overwrite', state == Qt.Checked))
-        opm_layout.addWidget(overwrite_cb, 2, 0)
-        self.widgets['opm_overwrite'] = overwrite_cb
-        
-        plot_cb = QCheckBox("Plot")
-        plot_cb.setChecked(self.config['opm'].get('plot', False))
-        plot_cb.stateChanged.connect(lambda state: self.update_opm_config('plot', state == Qt.Checked))
-        opm_layout.addWidget(plot_cb, 2, 1)
-        self.widgets['opm_plot'] = plot_cb
-        
-        layout.addWidget(opm_group)
-        layout.addStretch()
-        
-    def create_maxfilter_tab(self):
-        """Create the MaxFilter tab"""
-        tab = QWidget()
-        self.tab_widget.addTab(tab, "MaxFilter")
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        tab_layout = QVBoxLayout()
-        tab.setLayout(tab_layout)
-        tab_layout.addWidget(scroll)
-        
-        scroll_widget = QWidget()
-        scroll.setWidget(scroll_widget)
-        layout = QVBoxLayout()
-        scroll_widget.setLayout(layout)
-        
-        # Standard settings
-        std_group = QGroupBox("Standard Settings")
-        std_layout = QGridLayout()
-        std_group.setLayout(std_layout)
-        
-        # MaxFilter version path
-        std_layout.addWidget(QLabel("MaxFilter Path:"), 0, 0)
-        mf_path = QLineEdit()
-        mf_path.setText(self.config['maxfilter']['standard_settings'].get('maxfilter_version', '/neuro/bin/util/maxfilter'))
-        mf_path.textChanged.connect(lambda text: self.update_maxfilter_config('standard_settings', 'maxfilter_version', text))
-        std_layout.addWidget(mf_path, 0, 1)
-        self.widgets['mf_path'] = mf_path
-        
-        # Checkboxes
-        tsss_cb = QCheckBox("Temporal SSS")
-        tsss_cb.setChecked(self.config['maxfilter']['standard_settings'].get('Temporal signal space separation (tSSS)', True))
-        tsss_cb.stateChanged.connect(lambda state: self.update_maxfilter_config('standard_settings', 'Temporal signal space separation (tSSS)', state == Qt.Checked))
-        std_layout.addWidget(tsss_cb, 1, 0)
-        self.widgets['mf_tsss'] = tsss_cb
-        
-        movement_cb = QCheckBox("Movement Compensation")
-        movement_cb.setChecked(self.config['maxfilter']['standard_settings'].get('Movement compensation', True))
-        movement_cb.stateChanged.connect(lambda state: self.update_maxfilter_config('standard_settings', 'Movement compensation', state == Qt.Checked))
-        std_layout.addWidget(movement_cb, 1, 1)
-        self.widgets['mf_movement'] = movement_cb
-        
-        # HPI correlation limit
-        std_layout.addWidget(QLabel("HPI Correlation Limit:"), 2, 0)
-        hpi_spin = QDoubleSpinBox()
-        hpi_spin.setRange(0.0, 1.0)
-        hpi_spin.setSingleStep(0.1)
-        hpi_spin.setValue(self.config['maxfilter']['standard_settings'].get('HPI correlations limit', 0.9))
-        hpi_spin.valueChanged.connect(lambda value: self.update_maxfilter_config('standard_settings', 'HPI correlations limit', value))
-        std_layout.addWidget(hpi_spin, 2, 1)
-        self.widgets['mf_hpi_corr'] = hpi_spin
-        
-        layout.addWidget(std_group)
-        layout.addStretch()
-        
-    def create_bids_tab(self):
-        """Create the BIDS tab"""
-        tab = QWidget()
-        self.tab_widget.addTab(tab, "BIDS")
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        tab_layout = QVBoxLayout()
-        tab.setLayout(tab_layout)
-        tab_layout.addWidget(scroll)
-        
-        scroll_widget = QWidget()
-        scroll.setWidget(scroll_widget)
-        layout = QVBoxLayout()
-        scroll_widget.setLayout(layout)
-        
-        # Validation
-        validate_cb = QCheckBox("Validate BIDS")
-        validate_cb.setChecked(self.config['bids'].get('validate', True))
-        validate_cb.stateChanged.connect(lambda state: self.update_bids_config('validate', state == Qt.Checked))
-        layout.addWidget(validate_cb)
-        self.widgets['bids_validate'] = validate_cb
-        
-        # Dataset description
-        desc_group = QGroupBox("Dataset Description")
-        desc_layout = QGridLayout()
-        desc_group.setLayout(desc_layout)
-        
-        desc_fields = [
-            ('Name', 'Dataset Name:', QLineEdit),
-            ('BIDSVersion', 'BIDS Version:', QLineEdit),
-            ('License', 'License:', QLineEdit),
-            ('HowToAcknowledge', 'How to Acknowledge:', QLineEdit)
-        ]
-        
-        for i, (key, label, widget_class) in enumerate(desc_fields):
-            desc_layout.addWidget(QLabel(label), i, 0)
-            widget = widget_class()
-            widget.setText(str(self.config['bids']['dataset_description'].get(key, '')))
-            widget.textChanged.connect(lambda text, k=key: self.update_bids_dataset_config(k, text))
-            desc_layout.addWidget(widget, i, 1)
-            self.widgets[f'bids_desc_{key}'] = widget
-            
-        layout.addWidget(desc_group)
-        layout.addStretch()
-        
-    def create_button_panel(self, parent_layout):
-        """Create the button panel"""
+        # Button layout
         button_layout = QHBoxLayout()
-        
-        # Run button
-        self.run_button = QPushButton("Run Pipeline")
-        self.run_button.clicked.connect(self.run_pipeline)
-        button_layout.addWidget(self.run_button)
-        
-        # Stop button
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.stop_pipeline)
-        button_layout.addWidget(self.stop_button)
-        
         button_layout.addStretch()
         
-        # Save button
-        save_button = QPushButton("Save Config")
-        save_button.clicked.connect(self.save_config)
-        button_layout.addWidget(save_button)
+        open_btn = QPushButton("Open")
+        open_btn.clicked.connect(self.open_config)
+        button_layout.addWidget(open_btn)
         
-        parent_layout.addLayout(button_layout)
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.save_config)
+        button_layout.addWidget(save_btn)
         
-    def create_output_panel(self, parent_layout):
-        """Create the output panel"""
-        output_group = QGroupBox("Output")
-        output_layout = QVBoxLayout()
-        output_group.setLayout(output_layout)
+        save_as_btn = QPushButton("Save As...")
+        save_as_btn.clicked.connect(self.save_as_config)
+        button_layout.addWidget(save_as_btn)
         
-        self.output_text = QTextEdit()
-        self.output_text.setReadOnly(True)
-        self.output_text.setMaximumHeight(200)
-        output_layout.addWidget(self.output_text)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.close)
+        button_layout.addWidget(cancel_btn)
         
-        parent_layout.addWidget(output_group)
+        main_layout.addLayout(button_layout)
         
-    def browse_path(self, key, widget):
-        """Browse for a path"""
-        if 'file' in key.lower() or key in ['Calibration', 'Crosstalk', 'Logfile']:
-            path, _ = QFileDialog.getOpenFileName(self, f"Select {key}", "", "All Files (*)")
+        # Status bar
+        self.statusBar().showMessage(f"Config file: {self.config_file if self.config_file else 'None'}")
+        
+        # Set initial execute button state
+        if self.config_saved:
+            self.mark_config_saved()
         else:
-            path = QFileDialog.getExistingDirectory(self, f"Select {key} Directory")
+            self.mark_config_changed()
+    
+    def create_default_config(self):
+        """Create default configuration dictionary"""
+        config = {
+            'RUN': {
+                'Copy to Cerberos': True,
+                'Add HPI coregistration': True,
+                'Run Maxfilter': True,
+                'Run BIDS conversion': True,
+                'Sync to CIR': True
+            },
+            'project': {
+                'name': '',
+                'CIR-ID': '',
+                'InstitutionName': 'Karolinska Institutet',
+                'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
+                'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
+                'description': 'project for MEG data',
+                'tasks': [''],
+                'sinuhe_raw': '/neuro/data/sinuhe',
+                'kaptah_raw': '/neuro/data/kaptah',
+                'squidMEG': default_path,
+                'opmMEG': default_path,
+                'BIDS': default_path,
+                'Calibration': '/neuro/databases/sss/sss_cal.dat',
+                'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
+                'Logfile': 'pipeline_log.log'
+            },
+            'opm': {
+                'polhemus': [''],
+                'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
+                'frequency': 33,
+                'downsample_to_hz': 1000,
+                'overwrite': False,
+                'plot': False,
+            },
+            'maxfilter': {
+                'standard_settings': {
+                    'trans_conditions': [''],
+                    'trans_option': 'continous',
+                    'merge_runs': True,
+                    'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+                    'sss_files': [''],
+                    'autobad': True,
+                    'badlimit': '7',
+                    'bad_channels': [''],
+                    'tsss_default': True,
+                    'correlation': '0.98',
+                    'movecomp_default': True,
+                    'subjects_to_skip': ['']
+                },
+                'advanced_settings': {
+                    'force': False,
+                    'downsample': False,
+                    'downsample_factor': '4',
+                    'apply_linefreq': False,
+                    'linefreq_Hz': '50',
+                    'maxfilter_version': '/neuro/bin/util/maxfilter',
+                    'MaxFilter_commands': '',
+                    'debug': False
+                }
+            },
+            'bids': {
+                'Dataset_description': 'dataset_description.json',
+                'Participants': 'participants.tsv',
+                'Participants_mapping_file': 'participant_mapping_example.csv',
+                'Conversion_file': 'bids_conversion.tsv',
+                'Overwrite_conversion': False,
+                'Original_subjID_name': 'old_subject_id',
+                'New_subjID_name': 'new_subject_id',
+                'Original_session_name': 'old_session_id',
+                'New_session_name': 'new_session_id',
+                'overwrite': False,
+                'dataset_type': 'raw',
+                'data_license': '',
+                'authors': '',
+                'acknowledgements': '',
+                'how_to_acknowledge': '',
+                'funding': '',
+                'ethics_approvals': '',
+                'references_and_links': '',
+                'doi': 'doi:<insert_doi>'
+            }
+        }
+        return config
+    
+    def mark_config_changed(self):
+        """Mark configuration as changed and update UI accordingly"""
+        self.config_saved = False
+        if self.execute_btn:
+            self.execute_btn.setText("Save to Execute")
+            self.execute_btn.setEnabled(False)
+    
+    def mark_config_saved(self):
+        """Mark configuration as saved and update UI accordingly"""
+        self.config_saved = True
+        if self.execute_btn:
+            self.execute_btn.setText("Execute Pipeline")
+            self.execute_btn.setEnabled(True)
+    
+    def create_run_form_widget(self, parent_layout, key, value):
+        """Create a form widget for RUN items"""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(5, 2, 5, 2)
+        
+        # Checkbox for the RUN item
+        widget = QCheckBox(f"{key}")
+        widget.setChecked(value)
+        widget.stateChanged.connect(lambda state, k=key: [self.update_config_value(k, widget.isChecked()), self.mark_config_changed()])
+        widget.setMinimumWidth(250)
+        row_layout.addWidget(widget)
+        
+        row_layout.addStretch()
+        
+        # Store widget reference
+        self.widgets[key] = widget
+        
+        parent_layout.addWidget(row_widget)
+
+    def create_form_widget(self, parent_layout, key, value, help_text=None):
+        """Create a form widget based on the value type"""
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(5, 2, 5, 2)
+        
+        # Label
+        label = QLabel(f"{key}:")
+        label.setMinimumWidth(200)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row_layout.addWidget(label)
+        
+        # Widget based on value type
+        if isinstance(value, bool):
+            widget = QCheckBox()
+            widget.setChecked(value)
+            widget.stateChanged.connect(lambda state, k=key: [self.update_config_value(k, widget.isChecked()), self.mark_config_changed()])
+        elif isinstance(value, list):
+            widget = QLineEdit(', '.join(str(v) for v in value))
+            widget.textChanged.connect(lambda text, k=key: [self.update_config_list(k, text), self.mark_config_changed()])
+        elif key == 'trans_option':
+            widget = QComboBox()
+            widget.addItems(['continous', 'initial'])
+            widget.setCurrentText(str(value))
+            widget.currentTextChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
+        elif key == 'maxfilter_version':
+            widget = QComboBox()
+            widget.addItems(['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'])
+            widget.setCurrentText(str(value))
+            widget.currentTextChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
+        else:
+            widget = QLineEdit(str(value))
+            widget.textChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
             
-        if path:
-            widget.setText(path)
+            # Special handling for project name field to auto-update paths
+            if key == 'name':
+                widget.textChanged.connect(self.update_project_paths)
+        
+        row_layout.addWidget(widget)
+        row_layout.addStretch()
+        
+        # Store widget reference
+        self.widgets[key] = widget
+        
+        parent_layout.addWidget(row_widget)
+        
+        # Add help text if provided
+        if help_text:
+            help_label = QLabel(help_text)
+            help_label.setWordWrap(True)
+            help_label.setStyleSheet("color: gray; font-size: 10px; margin-left: 210px;")
+            help_label.setMaximumHeight(40)
+            parent_layout.addWidget(help_label)
+    
+    def create_scrollable_form(self, config_section, keys=None, help_texts=None):
+        """Create a scrollable form for a configuration section"""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        form_widget = QWidget()
+        form_layout = QVBoxLayout(form_widget)
+        form_layout.setSpacing(5)
+        
+        # Determine which keys to use
+        if keys is None:
+            keys = list(config_section.keys())
+        
+        # Create form fields
+        for key in keys:
+            if key in config_section:
+                value = config_section[key]
+                help_text = help_texts.get(key) if help_texts else None
+                self.create_form_widget(form_layout, key, value, help_text)
+        
+        form_layout.addStretch()
+        scroll_area.setWidget(form_widget)
+        return scroll_area
+    
+    def create_project_tab(self):
+        """Create the Project configuration tab"""
+        project_widget = QWidget()
+        project_layout = QVBoxLayout(project_widget)
+        
+        # Create sub-tabs for project
+        project_tabs = QTabWidget()
+        
+        # Standard settings
+        standard_keys = ['name', 'CIR-ID', 'description', 'tasks', 'sinuhe_raw', 'kaptah_raw']
+        standard_help = {
+            'name': 'Name of project directory on local disk',
+            'CIR-ID': 'CIR ID of the project, used for data management',
+            'description': 'Brief description of the project',
+            'tasks': 'Comma-separated list of experimental tasks',
+            'sinuhe_raw': 'Path to Sinuhe raw data directory',
+            'kaptah_raw': 'Path to Kaptah raw data directory'
+        }
+        
+        standard_form = self.create_scrollable_form(
+            self.config_data['project'], 
+            standard_keys, 
+            standard_help
+        )
+        project_tabs.addTab(standard_form, "Standard Settings")
+        
+        # Advanced settings
+        advanced_keys = [
+            'InstitutionName', 'InstitutionAddress', 'InstitutionDepartmentName',
+            'squidMEG', 'opmMEG', 'BIDS', 'Calibration', 'Crosstalk', 'Logfile'
+        ]
+        advanced_help = {
+            'InstitutionName': 'Name of the institution',
+            'InstitutionAddress': 'Address of the institution',
+            'InstitutionDepartmentName': 'Department name',
+            'squidMEG': 'Path to directory for SquidMEG data',
+            'opmMEG': 'Path to directory for OPM data',
+            'BIDS': 'Path to directory for BIDS data',
+            'Calibration': 'Path to SSS calibration file',
+            'Crosstalk': 'Path to SSS crosstalk file',
+            'Logfile': 'Name of the log file'
+        }
+        
+        advanced_form = self.create_scrollable_form(
+            self.config_data['project'], 
+            advanced_keys, 
+            advanced_help
+        )
+        project_tabs.addTab(advanced_form, "Advanced Settings")
+        
+        project_layout.addWidget(project_tabs)
+        self.tab_widget.addTab(project_widget, "Project")
+    
+    def create_opm_tab(self):
+        """Create the OPM configuration tab"""
+        opm_help = {
+            'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data',
+            'hpi_names': 'Comma-separated list of names of HPI recording',
+            'frequency': 'Frequency of the HPI in Hz',
+            'downsample_to_hz': 'Downsample OPM data to this frequency',
+            'overwrite': 'Overwrite existing OPM data files',
+            'plot': 'Store a plot of the OPM data after processing'
+        }
+        
+        opm_form = self.create_scrollable_form(self.config_data['opm'], help_texts=opm_help)
+        self.tab_widget.addTab(opm_form, "OPM")
+    
+    def create_maxfilter_tab(self):
+        """Create the MaxFilter configuration tab"""
+        maxfilter_widget = QWidget()
+        maxfilter_layout = QVBoxLayout(maxfilter_widget)
+        
+        # Create sub-tabs for maxfilter
+        maxfilter_tabs = QTabWidget()
+        
+        # Standard settings
+        standard_help = {
+            'trans_conditions': 'Comma-separated list of tasks which should be transformed to average head',
+            'trans_option': 'Option for transformation, either "continous" for average or "initial" for initial head position',
+            'merge_runs': 'Use multiple runs to calculate average head position',
+            'empty_room_files': 'Comma-separated list of empty room files to use for MaxFilter processing',
+            'sss_files': 'Tasks which should only be sss filtered',
+            'autobad': 'Automatically detect and exclude bad channels',
+            'badlimit': 'Bad channel threshold for processing',
+            'bad_channels': 'Comma-separated list of bad channels to exclude from processing',
+            'tsss_default': 'Use default TSSS settings',
+            'correlation': 'Correlation threshold for TSSS',
+            'movecomp_default': 'Use default movecomp settings',
+            'subjects_to_skip': 'Comma-separated list of subject IDs to skip during MaxFilter processing'
+        }
+        
+        standard_form = self.create_scrollable_form(
+            self.config_data['maxfilter']['standard_settings'],
+            help_texts=standard_help
+        )
+        maxfilter_tabs.addTab(standard_form, "Standard Settings")
+        
+        # Advanced settings
+        advanced_help = {
+            'force': 'Force MaxFilter to run even if bad channels are detected',
+            'downsample': 'Downsample data',
+            'downsample_factor': 'Factor to downsample data by',
+            'apply_linefreq': 'Apply line frequency filtering',
+            'linefreq_Hz': 'Line frequency in Hz to apply filtering',
+            'maxfilter_version': 'Path to MaxFilter executable',
+            'MaxFilter_commands': 'Additional MaxFilter commands to run',
+            'debug': 'Enable debug mode for MaxFilter'
+        }
+        
+        advanced_form = self.create_scrollable_form(
+            self.config_data['maxfilter']['advanced_settings'],
+            help_texts=advanced_help
+        )
+        maxfilter_tabs.addTab(advanced_form, "Advanced Settings")
+        
+        maxfilter_layout.addWidget(maxfilter_tabs)
+        self.tab_widget.addTab(maxfilter_widget, "MaxFilter")
+    
+    def create_bids_tab(self):
+        """Create the BIDS configuration tab"""
+        bids_widget = QWidget()
+        bids_layout = QVBoxLayout(bids_widget)
+        
+        # Create sub-tabs for BIDS
+        bids_tabs = QTabWidget()
+        
+        # Standard settings
+        standard_bids_keys = [
+            'Dataset_description', 'Participants', 'Participants_mapping_file', 
+            'Conversion_file', 'Overwrite_conversion', 'Original_subjID_name',
+            'New_subjID_name', 'Original_session_name', 'New_session_name', 'overwrite'
+        ]
+        
+        standard_bids_help = {
+            'Dataset_description': 'Path to dataset_description.json file',
+            'Participants': 'Path to participants.tsv file',
+            'Participants_mapping_file': 'Path to participant mapping CSV file',
+            'Conversion_file': 'Path to conversion file',
+            'Overwrite_conversion': 'Overwrite existing conversion files',
+            'Original_subjID_name': 'Name of the original subject ID column in the mapping file',
+            'New_subjID_name': 'Name of the new subject ID column in the mapping file',
+            'Original_session_name': 'Name of the original session ID column in the mapping file',
+            'New_session_name': 'Name of the new session ID column in the mapping file',
+            'overwrite': 'Overwrite existing BIDS files'
+        }
+        
+        standard_form = self.create_scrollable_form(
+            self.config_data['bids'],
+            standard_bids_keys,
+            standard_bids_help
+        )
+        bids_tabs.addTab(standard_form, "Standard Settings")
+        
+        # Dataset description
+        dataset_keys = [
+            'dataset_type', 'data_license', 'authors', 'acknowledgements',
+            'how_to_acknowledge', 'funding', 'ethics_approvals', 
+            'references_and_links', 'doi'
+        ]
+        
+        dataset_help = {
+            'dataset_type': 'Type of dataset (e.g., "raw", "derivative")',
+            'data_license': 'License under which the data is made available',
+            'authors': 'List of individuals who contributed to the creation/curation of the dataset',
+            'acknowledgements': 'Text acknowledging contributions',
+            'how_to_acknowledge': 'Instructions on how researchers should acknowledge this dataset',
+            'funding': 'List of sources of funding',
+            'ethics_approvals': 'List of ethics committee approvals',
+            'references_and_links': 'List of references, publications, and links',
+            'doi': 'Digital Object Identifier of the dataset'
+        }
+        
+        dataset_form = self.create_scrollable_form(
+            self.config_data['bids'],
+            dataset_keys,
+            dataset_help
+        )
+        bids_tabs.addTab(dataset_form, "Dataset Description")
+        
+        bids_layout.addWidget(bids_tabs)
+        self.tab_widget.addTab(bids_widget, "BIDS")
+    
+    def create_run_tab(self):
+        """Create the RUN configuration tab"""
+        run_widget = QWidget()
+        run_layout = QVBoxLayout(run_widget)
+        
+        # RUN settings form
+        form_widget = QWidget()
+        form_layout = QVBoxLayout(form_widget)
+        
+        for key, value in self.config_data['RUN'].items():
+            self.create_run_form_widget(form_layout, key, value)
+        
+        form_layout.addStretch()
+        run_layout.addWidget(form_widget)
+        
+        # Execute button
+        self.execute_btn = QPushButton("Save to Execute" if not self.config_saved else "Execute Pipeline")
+        self.execute_btn.setMinimumHeight(40)
+        self.execute_btn.setEnabled(self.config_saved)
+        self.execute_btn.clicked.connect(self.execute_pipeline)
+        run_layout.addWidget(self.execute_btn)
+        
+        # Terminal output
+        self.terminal_output = QTextEdit()
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setMinimumHeight(300)
+        self.terminal_output.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                font-family: 'Courier New', monospace, 'SF Mono', 'Monaco', 'Menlo', 'Consolas';
+                font-size: 10pt;
+                border: 1px solid #555555;
+            }
+        """)
+        self.terminal_output.append("Terminal output will appear here...")
+        run_layout.addWidget(self.terminal_output)
+        
+        self.tab_widget.addTab(run_widget, "RUN")
+    
+    def update_config_value(self, key, value):
+        """Update configuration value"""
+        # Find the correct nested location for the key
+        for section in ['RUN', 'project', 'opm', 'maxfilter', 'bids']:
+            if section in self.config_data:
+                if key in self.config_data[section]:
+                    self.config_data[section][key] = value
+                    return
+                elif section == 'maxfilter':
+                    for subsection in ['standard_settings', 'advanced_settings']:
+                        if key in self.config_data[section][subsection]:
+                            self.config_data[section][subsection][key] = value
+                            return
+    
+    def update_config_list(self, key, text):
+        """Update configuration list value from comma-separated text"""
+        value = [item.strip() for item in text.split(',') if item.strip()]
+        self.update_config_value(key, value)
+    
+    def update_project_paths(self, project_name):
+        """Update project-related paths when project name changes"""
+        if not project_name.strip():
+            return
+        
+        # Update paths in config
+        base_path = default_path
+        if project_name:
+            # Update squidMEG path
+            new_squid_path = f"{base_path}{project_name}/raw"
+            self.config_data['project']['squidMEG'] = new_squid_path
             
-    def update_run_config(self, key, value):
-        """Update run configuration"""
-        self.config['RUN'][key] = value
-        
-    def update_project_config(self, key, value):
-        """Update project configuration"""
-        self.config['project'][key] = value
-        
-    def update_opm_config(self, key, value):
-        """Update OPM configuration"""
-        self.config['opm'][key] = value
-        
-    def update_maxfilter_config(self, section, key, value):
-        """Update MaxFilter configuration"""
-        if section not in self.config['maxfilter']:
-            self.config['maxfilter'][section] = {}
-        self.config['maxfilter'][section][key] = value
-        
-    def update_bids_config(self, key, value):
-        """Update BIDS configuration"""
-        self.config['bids'][key] = value
-        
-    def update_bids_dataset_config(self, key, value):
-        """Update BIDS dataset configuration"""
-        self.config['bids']['dataset_description'][key] = value
-        
-    def new_config(self):
-        """Create a new configuration"""
-        self.config = create_default_config()
-        self.config_file = None
-        self.update_widgets_from_config()
-        self.setWindowTitle("NatMEG Config Editor - New Config")
-        
-    def load_config(self):
+            # Update opmMEG path  
+            new_opm_path = f"{base_path}{project_name}/raw"
+            self.config_data['project']['opmMEG'] = new_opm_path
+            
+            # Update BIDS path
+            new_bids_path = f"{base_path}{project_name}/BIDS"
+            self.config_data['project']['BIDS'] = new_bids_path
+            
+            # Update the widgets if they exist
+            if 'squidMEG' in self.widgets:
+                self.widgets['squidMEG'].setText(new_squid_path)
+            if 'opmMEG' in self.widgets:
+                self.widgets['opmMEG'].setText(new_opm_path)
+            if 'BIDS' in self.widgets:
+                self.widgets['BIDS'].setText(new_bids_path)
+    
+    def load_config(self, config_file=None):
         """Load configuration from file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Load Configuration", 
-            "", 
-            "YAML Files (*.yml *.yaml);;JSON Files (*.json);;All Files (*)"
-        )
-        
-        if file_path:
-            self.load_config_file(file_path)
+        if not config_file:
+            return self.create_default_config()
             
-    def load_config_file(self, file_path):
-        """Load configuration from a specific file"""
         try:
-            with open(file_path, 'r') as f:
-                if file_path.endswith(('.yml', '.yaml')):
-                    self.config = yaml.safe_load(f)
-                else:
-                    self.config = json.load(f)
-                    
-            self.config_file = file_path
-            self.update_widgets_from_config()
-            self.setWindowTitle(f"NatMEG Config Editor - {os.path.basename(file_path)}")
-            self.output_text.append(f"Loaded configuration from {file_path}")
+            if hasattr(config_file, 'name'):
+                filename = config_file.name
+            else:
+                filename = config_file
+            
+            if filename.endswith('.yml') or filename.endswith('.yaml'):
+                with open(filename, 'r') as file:
+                    config = yaml.safe_load(file)
+            elif filename.endswith('.json'):
+                with open(filename, 'r') as file:
+                    config = json.load(file)
+            else:
+                return self.create_default_config()
+                
+            # Convert strings to lists where needed
+            if config:
+                if 'project' in config and 'tasks' in config['project']:
+                    if isinstance(config['project']['tasks'], str):
+                        config['project']['tasks'] = config['project']['tasks'].split(',')
+                
+            return config if config else self.create_default_config()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load configuration:\n{e}")
-            
+            QMessageBox.critical(self, "Error", f"Error loading config: {e}")
+            return self.create_default_config()
+    
     def save_config(self):
-        """Save configuration"""
-        if self.config_file:
-            self.save_config_to_file(self.config_file)
-        else:
-            self.save_config_as()
+        """Save current configuration"""
+        if not self.config_file:
+            self.save_as_config()
+            return
             
-    def save_config_as(self):
-        """Save configuration as new file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Configuration",
-            "",
-            "YAML Files (*.yml);;JSON Files (*.json);;All Files (*)"
-        )
-        
-        if file_path:
-            self.save_config_to_file(file_path)
-            
-    def save_config_to_file(self, file_path):
-        """Save configuration to a specific file"""
         try:
-            with open(file_path, 'w') as f:
-                if file_path.endswith(('.yml', '.yaml')):
-                    yaml.dump(self.config, f, default_flow_style=False, indent=2)
-                else:
-                    json.dump(self.config, f, indent=2)
-                    
-            self.config_file = file_path
-            self.setWindowTitle(f"NatMEG Config Editor - {os.path.basename(file_path)}")
-            self.output_text.append(f"Saved configuration to {file_path}")
+            if self.config_file.endswith('.yml') or self.config_file.endswith('.yaml'):
+                with open(self.config_file, 'w') as file:
+                    yaml.dump(self.config_data, file, default_flow_style=False, sort_keys=False)
+            elif self.config_file.endswith('.json'):
+                with open(self.config_file, 'w') as file:
+                    json.dump(self.config_data, file, indent=4)
+            
+            self.statusBar().showMessage(f"Config saved to: {self.config_file}")
+            self.mark_config_saved()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save configuration:\n{e}")
+            QMessageBox.critical(self, "Error", f"Error saving config: {e}")
+    
+    def save_as_config(self):
+        """Save configuration as new file"""
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Configuration File",
+            default_path,
+            "YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)"
+        )
+        
+        if filename:
+            if not filename.endswith(('.yml', '.yaml', '.json')):
+                filename += '.yml'  # Default to YAML
             
-    def update_widgets_from_config(self):
-        """Update all widgets from the current configuration"""
-        # This would update all widgets based on the loaded config
-        # Implementation depends on the specific widget structure
-        pass
-        
-    def run_pipeline(self):
-        """Run the pipeline"""
-        self.run_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
-        self.output_text.clear()
-        
-        # Create and start worker thread
-        self.worker = WorkerThread(self.config)
-        self.worker.output_signal.connect(self.output_text.append)
-        self.worker.finished_signal.connect(self.on_pipeline_finished)
-        self.worker.error_signal.connect(self.on_pipeline_error)
-        self.worker.start()
-        
-    def stop_pipeline(self):
-        """Stop the pipeline"""
-        if hasattr(self, 'worker') and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait()
-        self.on_pipeline_finished()
-        
-    def on_pipeline_finished(self):
-        """Handle pipeline completion"""
-        self.run_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.output_text.append("Pipeline execution completed.")
-        
-    def on_pipeline_error(self, error_msg):
-        """Handle pipeline errors"""
-        self.run_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        QMessageBox.critical(self, "Pipeline Error", f"An error occurred:\n{error_msg}")
-
-
-def main(config_file=None):
-    """Main function"""
-    app = QApplication(sys.argv)
+            self.config_file = filename
+            self.save_config()
     
-    editor = ConfigEditor(config_file)
-    editor.show()
+    def open_config(self):
+        """Open configuration file"""
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Configuration File",
+            default_path,
+            "Config files (*.yml *.yaml *.json);;YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)"
+        )
+        
+        if filename:
+            try:
+                new_config = self.load_config(filename)
+                if new_config:
+                    self.config_data = new_config
+                    self.config_file = filename
+                    self.statusBar().showMessage(f"Config loaded from: {filename}")
+                    self.update_all_widgets()
+                    self.mark_config_saved()  # Mark as saved since we just loaded it
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Error opening config: {e}")
     
-    sys.exit(app.exec_())
+    def update_all_widgets(self):
+        """Update all widgets with current config values"""
+        # Update all widgets when a new config is loaded
+        for key, widget in self.widgets.items():
+            # Find the value in config
+            value = None
+            for section in ['RUN', 'project', 'opm', 'maxfilter', 'bids']:
+                if section in self.config_data:
+                    if key in self.config_data[section]:
+                        value = self.config_data[section][key]
+                        break
+                    elif section == 'maxfilter':
+                        for subsection in ['standard_settings', 'advanced_settings']:
+                            if key in self.config_data[section][subsection]:
+                                value = self.config_data[section][subsection][key]
+                                break
+            
+            if value is not None:
+                if isinstance(widget, QCheckBox):
+                    widget.setChecked(bool(value))
+                elif isinstance(widget, QComboBox):
+                    widget.setCurrentText(str(value))
+                elif isinstance(widget, QLineEdit):
+                    if isinstance(value, list):
+                        widget.setText(', '.join(str(v) for v in value))
+                    else:
+                        widget.setText(str(value))
+    
+    def execute_pipeline(self):
+        """Execute the pipeline"""
+        self.terminal_output.clear()
+        self.terminal_output.append("Executing pipeline...")
+        
+        # Build command
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
+        
+        if not os.path.exists(pipeline_path):
+            self.terminal_output.append("Error: natmeg_pipeline.py not found!")
+            return
+        
+        cmd = [sys.executable, '-u', pipeline_path, 'run']
+        if self.config_file:
+            cmd += ['--config', self.config_file]
+        
+        # Start process
+        self.terminal_process = QProcess(self)
+        self.terminal_process.readyReadStandardOutput.connect(self.handle_stdout)
+        self.terminal_process.readyReadStandardError.connect(self.handle_stderr)
+        self.terminal_process.finished.connect(self.process_finished)
+        
+        self.terminal_process.start(sys.executable, cmd[1:])
+        
+        if not self.terminal_process.waitForStarted():
+            self.terminal_output.append("Failed to start pipeline process!")
+    
+    def handle_stdout(self):
+        """Handle stdout from subprocess"""
+        data = self.terminal_process.readAllStandardOutput()
+        stdout = bytes(data).decode("utf8")
+        self.terminal_output.append(stdout.strip())
+        self.terminal_output.ensureCursorVisible()
+    
+    def handle_stderr(self):
+        """Handle stderr from subprocess"""
+        data = self.terminal_process.readAllStandardError()
+        stderr = bytes(data).decode("utf8")
+        self.terminal_output.append(f"ERROR: {stderr.strip()}")
+        self.terminal_output.ensureCursorVisible()
+    
+    def process_finished(self):
+        """Handle process completion"""
+        exit_code = self.terminal_process.exitCode()
+        self.terminal_output.append(f"\nProcess finished with exit code: {exit_code}")
 
 
 def args_parser():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='NatMEG Configuration Editor')
-    parser.add_argument('--config', help='Configuration file to load')
+    parser = argparse.ArgumentParser(description='''
+Configuration script for NatMEG pipeline (PyQt version).
+                                     
+This script allows you to create or edit a configuration file for the NatMEG pipeline.
+You can specify paths, settings, and options for various stages of the pipeline including MaxFilter,
+OPM processing, and BIDS conversion. The configuration can be saved in YAML or JSON format.
+You can also provide a path to an existing configuration file to load its settings.
+                                     ''',
+                                     add_help=True)
+    parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main(config_file: str = None):
+    """Main entry point"""
     args = args_parser()
-    main(args.config)
+    config_file = args.config or config_file
+    
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')  # Use Fusion style for better cross-platform appearance
+    
+    # Set application properties
+    app.setApplicationName("NatMEG Config Editor")
+    app.setApplicationVersion("1.0")
+    app.setOrganizationName("NatMEG")
+    
+    window = ConfigMainWindow(config_file=config_file)
+    window.show()
+    
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

@@ -28,62 +28,6 @@ import subprocess
 import argparse
 from datetime import datetime
 
-# PyQt5 file dialog imports
-try:
-    from PyQt5.QtWidgets import QApplication, QFileDialog
-    PYQT5_AVAILABLE = True
-    
-    def askdirectory(**kwargs):
-        """PyQt5 replacement for tkinter.filedialog.askdirectory"""
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-        
-        directory = QFileDialog.getExistingDirectory(
-            None,
-            kwargs.get('title', 'Select Directory'),
-            kwargs.get('initialdir', '')
-        )
-        return directory
-    
-    def askopenfilename(**kwargs):
-        """PyQt5 replacement for tkinter.filedialog.askopenfilename"""
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-        
-        filename, _ = QFileDialog.getOpenFileName(
-            None,
-            kwargs.get('title', 'Open File'),
-            kwargs.get('initialdir', ''),
-            kwargs.get('filetypes', 'All Files (*)')
-        )
-        return filename
-    
-    def asksaveasfile(**kwargs):
-        """PyQt5 replacement for tkinter.filedialog.asksaveasfile"""
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-        
-        filename, _ = QFileDialog.getSaveFileName(
-            None,
-            kwargs.get('title', 'Save File'),
-            kwargs.get('initialdir', ''),
-            kwargs.get('filetypes', 'All Files (*)')
-        )
-        if filename:
-            return open(filename, kwargs.get('mode', 'w'))
-        return None
-
-except ImportError:
-    PYQT5_AVAILABLE = False
-    def askdirectory(**kwargs):
-        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
-    def askopenfilename(**kwargs):
-        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
-    def asksaveasfile(**kwargs):
-        raise RuntimeError("GUI functionality not available: PyQt5 not installed")
 from shutil import copy2
 from copy import deepcopy
 import mne

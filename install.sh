@@ -65,10 +65,10 @@ echo "✅ Found Python: $PYTHON ($($PYTHON --version))"
 # Check for GUI library availability and show appropriate info
 if $PYTHON -c "import tkinter" 2>/dev/null; then
     echo "✅ GUI support: tkinter available"
-elif $PYTHON -c "import PyQt5.QtWidgets" 2>/dev/null; then
-    echo "✅ GUI support: PyQt5 available"
+elif $PYTHON -c "import PyQt6.QtWidgets" 2>/dev/null; then
+    echo "✅ GUI support: PyQt6 available"
 else
-    echo "ℹ️  GUI libraries will be installed via PyQt5 for full functionality"
+    echo "ℹ️  GUI libraries will be installed via PyQt6 for full functionality"
 fi
 
 # Check for uv and mention the benefits
@@ -99,7 +99,7 @@ if [ -d "$TARGET_DIR" ]; then
 fi
 
 # Copy relevant files to local
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt") 
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "run_config_kivy.py" "run_config_pyqt.py" "requirements.txt") 
 SOURCE_DIR=$(pwd)
 
 # Create local bin directory

@@ -27,7 +27,7 @@ click>=8.0.0
 psutil>=5.9.0
 
 # GUI toolkit
-PyQt5>=5.15.0
+PyQt6>=6.4.0
 
 # Optional but recommended
 jupyter>=1.0.0
