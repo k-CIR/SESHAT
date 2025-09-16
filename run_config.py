@@ -22,6 +22,10 @@ class ConfigMainWindow(QMainWindow):
         self.config_file = config_file
         self.config_data = {}
         self.widgets = {}  # Store widget references for data binding
+        self.manual_edits = set()  # Track manually edited path fields
+        self.programmatic_update = False  # Flag to distinguish programmatic vs user edits
+        self._last_project_name = ''  # Track previous project name for smart updates
+        self._last_root_path = ''  # Track previous root path for smart updates
         self.terminal_process = None
         self.config_saved = bool(config_file)  # True if loading existing config, False for new
         self.execute_btn = None  # Will be set in create_run_tab
@@ -29,10 +33,18 @@ class ConfigMainWindow(QMainWindow):
         # Load configuration
         if self.config_file:
             self.config_data = self.load_config(self.config_file)
+            self.detect_manual_edits()  # Detect manual edits in loaded config
         else:
             self.config_data = self.create_default_config()
         
         self.init_ui()
+        
+        # Initialize tracking variables
+        self._last_project_name = self.config_data['Project'].get('Name', '').strip() or '<project>'
+        self._last_root_path = self.config_data['Project'].get('Root', '').strip() or default_path
+        
+        # Initialize paths after UI is created
+        self.update_project_paths()
         
     def init_ui(self):
         """Initialize the user interface"""
@@ -98,24 +110,24 @@ class ConfigMainWindow(QMainWindow):
                 'Run BIDS conversion': True,
                 'Sync to CIR': True
             },
-            'project': {
-                'name': '',
+            'Project': {
+                'Name': '',
                 'CIR-ID': '',
                 'InstitutionName': 'Karolinska Institutet',
                 'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
                 'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
-                'description': 'project for MEG data',
-                'tasks': [''],
-                'sinuhe_raw': '/neuro/data/sinuhe',
-                'kaptah_raw': '/neuro/data/kaptah',
-                'squidMEG': default_path,
-                'opmMEG': default_path,
-                'BIDS': default_path,
-                'Calibration': '/neuro/databases/sss/sss_cal.dat',
-                'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
+                'Description': 'project for MEG data',
+                'Tasks': [''],
+                'Sinuhe raw': '/neuro/data/sinuhe',
+                'Kaptah raw': '/neuro/data/kaptah',
+                'Root': default_path,
+                'Raw': f'{default_path}/<project>/raw',
+                'BIDS': f'{default_path}/<project>/BIDS',
+                'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
+                'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
                 'Logfile': 'pipeline_log.log'
             },
-            'opm': {
+            'OPM': {
                 'polhemus': [''],
                 'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
                 'frequency': 33,
@@ -123,7 +135,7 @@ class ConfigMainWindow(QMainWindow):
                 'overwrite': False,
                 'plot': False,
             },
-            'maxfilter': {
+            'MaxFilter': {
                 'standard_settings': {
                     'trans_conditions': [''],
                     'trans_option': 'continous',
@@ -149,7 +161,7 @@ class ConfigMainWindow(QMainWindow):
                     'debug': False
                 }
             },
-            'bids': {
+            'BIDS': {
                 'Dataset_description': 'dataset_description.json',
                 'Participants': 'participants.tsv',
                 'Participants_mapping_file': 'participant_mapping_example.csv',
@@ -241,9 +253,14 @@ class ConfigMainWindow(QMainWindow):
             widget = QLineEdit(str(value))
             widget.textChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
             
-            # Special handling for project name field to auto-update paths
-            if key == 'name':
-                widget.textChanged.connect(self.update_project_paths)
+            # Special handling for project name and root fields to auto-update paths
+            if key == 'Name':
+                widget.textChanged.connect(lambda text: self.update_project_paths())
+            elif key == 'Root':
+                widget.textChanged.connect(lambda text: self.update_project_paths())
+            # Mark path fields as manually edited when user changes them
+            elif key in ['Raw', 'BIDS', 'Calibration', 'Crosstalk']:
+                widget.textChanged.connect(lambda text, k=key: self.mark_manual_edit(k))
         
         row_layout.addWidget(widget)
         row_layout.addStretch()
@@ -296,18 +313,18 @@ class ConfigMainWindow(QMainWindow):
         project_tabs = QTabWidget()
         
         # Standard settings
-        standard_keys = ['name', 'CIR-ID', 'description', 'tasks', 'sinuhe_raw', 'kaptah_raw']
+        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw']
         standard_help = {
-            'name': 'Name of project directory on local disk',
+            'Name': 'Name of project',
             'CIR-ID': 'CIR ID of the project, used for data management',
-            'description': 'Brief description of the project',
-            'tasks': 'Comma-separated list of experimental tasks',
-            'sinuhe_raw': 'Path to Sinuhe raw data directory',
-            'kaptah_raw': 'Path to Kaptah raw data directory'
+            'Description': 'Brief description of the project',
+            'Tasks': 'Comma-separated list of experimental tasks',
+            'Sinuhe raw': 'Path to Sinuhe raw data directory',
+            'Kaptah raw': 'Path to Kaptah raw data directory'
         }
         
         standard_form = self.create_scrollable_form(
-            self.config_data['project'], 
+            self.config_data['Project'], 
             standard_keys, 
             standard_help
         )
@@ -316,22 +333,22 @@ class ConfigMainWindow(QMainWindow):
         # Advanced settings
         advanced_keys = [
             'InstitutionName', 'InstitutionAddress', 'InstitutionDepartmentName',
-            'squidMEG', 'opmMEG', 'BIDS', 'Calibration', 'Crosstalk', 'Logfile'
+            'Root', 'Raw', 'BIDS', 'Calibration', 'Crosstalk', 'Logfile'
         ]
         advanced_help = {
             'InstitutionName': 'Name of the institution',
             'InstitutionAddress': 'Address of the institution',
             'InstitutionDepartmentName': 'Department name',
-            'squidMEG': 'Path to directory for SquidMEG data',
-            'opmMEG': 'Path to directory for OPM data',
-            'BIDS': 'Path to directory for BIDS data',
-            'Calibration': 'Path to SSS calibration file',
-            'Crosstalk': 'Path to SSS crosstalk file',
+            'Root': 'Root directory for project data',
+            'Raw': 'Raw-path relative to project directory',
+            'BIDS': 'BIDS-path relative to project directory',
+            'Calibration': 'Path to SSS calibration file relative to project directory',
+            'Crosstalk': 'Path to SSS crosstalk file relative to project directory',
             'Logfile': 'Name of the log file'
         }
         
         advanced_form = self.create_scrollable_form(
-            self.config_data['project'], 
+            self.config_data['Project'], 
             advanced_keys, 
             advanced_help
         )
@@ -351,7 +368,7 @@ class ConfigMainWindow(QMainWindow):
             'plot': 'Store a plot of the OPM data after processing'
         }
         
-        opm_form = self.create_scrollable_form(self.config_data['opm'], help_texts=opm_help)
+        opm_form = self.create_scrollable_form(self.config_data['OPM'], help_texts=opm_help)
         self.tab_widget.addTab(opm_form, "OPM")
     
     def create_maxfilter_tab(self):
@@ -379,7 +396,7 @@ class ConfigMainWindow(QMainWindow):
         }
         
         standard_form = self.create_scrollable_form(
-            self.config_data['maxfilter']['standard_settings'],
+            self.config_data['MaxFilter']['standard_settings'],
             help_texts=standard_help
         )
         maxfilter_tabs.addTab(standard_form, "Standard Settings")
@@ -397,7 +414,7 @@ class ConfigMainWindow(QMainWindow):
         }
         
         advanced_form = self.create_scrollable_form(
-            self.config_data['maxfilter']['advanced_settings'],
+            self.config_data['MaxFilter']['advanced_settings'],
             help_texts=advanced_help
         )
         maxfilter_tabs.addTab(advanced_form, "Advanced Settings")
@@ -434,7 +451,7 @@ class ConfigMainWindow(QMainWindow):
         }
         
         standard_form = self.create_scrollable_form(
-            self.config_data['bids'],
+            self.config_data['BIDS'],
             standard_bids_keys,
             standard_bids_help
         )
@@ -460,7 +477,7 @@ class ConfigMainWindow(QMainWindow):
         }
         
         dataset_form = self.create_scrollable_form(
-            self.config_data['bids'],
+            self.config_data['BIDS'],
             dataset_keys,
             dataset_help
         )
@@ -512,12 +529,12 @@ class ConfigMainWindow(QMainWindow):
     def update_config_value(self, key, value):
         """Update configuration value"""
         # Find the correct nested location for the key
-        for section in ['RUN', 'project', 'opm', 'maxfilter', 'bids']:
+        for section in ['RUN', 'Project', 'OPM', 'MaxFilter', 'BIDS']:
             if section in self.config_data:
                 if key in self.config_data[section]:
                     self.config_data[section][key] = value
                     return
-                elif section == 'maxfilter':
+                elif section == 'MaxFilter':
                     for subsection in ['standard_settings', 'advanced_settings']:
                         if key in self.config_data[section][subsection]:
                             self.config_data[section][subsection][key] = value
@@ -528,33 +545,110 @@ class ConfigMainWindow(QMainWindow):
         value = [item.strip() for item in text.split(',') if item.strip()]
         self.update_config_value(key, value)
     
-    def update_project_paths(self, project_name):
-        """Update project-related paths when project name changes"""
-        if not project_name.strip():
-            return
+    def mark_manual_edit(self, key):
+        """Mark a field as manually edited (only if not programmatic update)"""
+        if not self.programmatic_update:
+            self.manual_edits.add(key)
+    
+    def detect_manual_edits(self):
+        """Detect which path fields have been manually edited based on their current values"""
+        project_name = self.config_data['Project'].get('Name', '').strip()
+        root_path = self.config_data['Project'].get('Root', '').strip()
         
-        # Update paths in config
-        base_path = default_path
-        if project_name:
-            # Update squidMEG path
-            new_squid_path = f"{base_path}{project_name}/raw"
-            self.config_data['project']['squidMEG'] = new_squid_path
+        if not root_path:
+            root_path = default_path
+        
+        display_project = project_name if project_name else '<project>'
+        
+        # Check each path field against expected auto-generated pattern
+        expected_paths = {
+            'Raw': f"{root_path}{display_project}/raw",
+            'BIDS': f"{root_path}{display_project}/BIDS", 
+            'Calibration': f"{root_path}{display_project}/databases/sss/sss_cal.dat",
+            'Crosstalk': f"{root_path}{display_project}/databases/ctc/ct_sparse.fif"
+        }
+        
+        for field, expected_path in expected_paths.items():
+            current_path = self.config_data['Project'].get(field, '')
+            # If current path doesn't match expected auto-generated path, mark as manual edit
+            if current_path != expected_path:
+                self.manual_edits.add(field)
+        
+        # Update tracking variables after detection
+        self._last_project_name = display_project
+        self._last_root_path = root_path
+    
+    def update_project_paths(self, changed_value=None):
+        """Update project-related paths when project name or root changes"""
+        # Get current values from config
+        project_name = self.config_data['Project'].get('Name', '').strip()
+        root_path = self.config_data['Project'].get('Root', '').strip()
+        
+        # If no root, use default
+        if not root_path:
+            root_path = default_path
+            self.config_data['Project']['Root'] = root_path
+        
+        display_project = project_name if project_name else '<project>'
+        
+        # Set flag to indicate programmatic updates
+        self.programmatic_update = True
+        
+        try:
+            # Get old values for comparison
+            old_project = getattr(self, '_last_project_name', display_project)
+            old_root = getattr(self, '_last_root_path', root_path)
             
-            # Update opmMEG path  
-            new_opm_path = f"{base_path}{project_name}/raw"
-            self.config_data['project']['opmMEG'] = new_opm_path
+            # For each path field, update consistently
+            path_fields = {
+                'Raw': 'raw',
+                'BIDS': 'BIDS', 
+                'Calibration': 'databases/sss/sss_cal.dat',
+                'Crosstalk': 'databases/ctc/ct_sparse.fif'
+            }
             
-            # Update BIDS path
-            new_bids_path = f"{base_path}{project_name}/BIDS"
-            self.config_data['project']['BIDS'] = new_bids_path
+            for field, default_suffix in path_fields.items():
+                current_path = self.config_data['Project'].get(field, '')
+                
+                if field not in self.manual_edits:
+                    # Auto-generated field: always use standard pattern
+                    new_path = f"{root_path}{display_project}/{default_suffix}"
+                else:
+                    # Manually edited field: update root and project parts
+                    new_path = self.replace_path_components(current_path, old_root, old_project, root_path, display_project)
+                
+                # Update config and widget
+                self.config_data['Project'][field] = new_path
+                if field in self.widgets:
+                    self.widgets[field].setText(new_path)
             
-            # Update the widgets if they exist
-            if 'squidMEG' in self.widgets:
-                self.widgets['squidMEG'].setText(new_squid_path)
-            if 'opmMEG' in self.widgets:
-                self.widgets['opmMEG'].setText(new_opm_path)
-            if 'BIDS' in self.widgets:
-                self.widgets['BIDS'].setText(new_bids_path)
+            # Store current values for next update
+            self._last_project_name = display_project
+            self._last_root_path = root_path
+            
+        finally:
+            # Reset flag
+            self.programmatic_update = False
+    
+    def replace_path_components(self, current_path, old_root, old_project, new_root, new_project):
+        """Replace root and project components in a path"""
+        if not current_path:
+            return current_path
+        
+        updated_path = current_path
+        
+        # Replace root component if it changed and exists in path
+        if old_root != new_root and old_root in updated_path:
+            updated_path = updated_path.replace(old_root, new_root)
+        
+        # Replace project component if it changed and exists in path
+        if old_project != new_project:
+            if old_project in updated_path and old_project != '<project>':
+                updated_path = updated_path.replace(old_project, new_project)
+            elif '<project>' in updated_path:
+                updated_path = updated_path.replace('<project>', new_project)
+        
+        return updated_path
     
     def load_config(self, config_file=None):
         """Load configuration from file"""
@@ -578,9 +672,9 @@ class ConfigMainWindow(QMainWindow):
                 
             # Convert strings to lists where needed
             if config:
-                if 'project' in config and 'tasks' in config['project']:
-                    if isinstance(config['project']['tasks'], str):
-                        config['project']['tasks'] = config['project']['tasks'].split(',')
+                if 'Project' in config and 'Tasks' in config['Project']:
+                    if isinstance(config['Project']['Tasks'], str):
+                        config['Project']['Tasks'] = config['Project']['Tasks'].split(',')
                 
             return config if config else self.create_default_config()
             
@@ -639,6 +733,8 @@ class ConfigMainWindow(QMainWindow):
                 if new_config:
                     self.config_data = new_config
                     self.config_file = filename
+                    self.manual_edits.clear()  # Clear first, then detect manual edits
+                    self.detect_manual_edits()  # Detect which fields were manually edited
                     self.statusBar().showMessage(f"Config loaded from: {filename}")
                     self.update_all_widgets()
                     self.mark_config_saved()  # Mark as saved since we just loaded it
@@ -651,12 +747,12 @@ class ConfigMainWindow(QMainWindow):
         for key, widget in self.widgets.items():
             # Find the value in config
             value = None
-            for section in ['RUN', 'project', 'opm', 'maxfilter', 'bids']:
+            for section in ['RUN', 'Project', 'OPM', 'MaxFilter', 'BIDS']:
                 if section in self.config_data:
                     if key in self.config_data[section]:
                         value = self.config_data[section][key]
                         break
-                    elif section == 'maxfilter':
+                    elif section == 'MaxFilter':
                         for subsection in ['standard_settings', 'advanced_settings']:
                             if key in self.config_data[section][subsection]:
                                 value = self.config_data[section][subsection][key]
@@ -733,6 +829,28 @@ You can also provide a path to an existing configuration file to load its settin
                                      add_help=True)
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     return parser.parse_args()
+
+
+def config_UI(config_file: str = None):
+    """Launch the configuration GUI and return the configuration"""
+    args = args_parser()
+    config_file = args.config or config_file
+    
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')  # Use Fusion style for better cross-platform appearance
+    
+    # Set application properties
+    app.setApplicationName("NatMEG Config Editor")
+    app.setApplicationVersion("1.0")
+    app.setOrganizationName("NatMEG")
+    
+    window = ConfigMainWindow(config_file=config_file)
+    window.show()
+    
+    app.exec()
+    
+    # Return the configuration data after GUI closes
+    return window.config_data
 
 
 def main(config_file: str = None):
