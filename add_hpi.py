@@ -379,15 +379,15 @@ def get_parameters(config:str):
             raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
     
     hpi_config = {
-        'tasks': config['project'].get('tasks', []),
-        'polhemus_file': config['opm'].get('polhemus', ''),
-        'opmMEG': config['project'].get('opmMEG', {}),
-        'hpinames': config['opm'].get('hpi_names', ''),
-        'hpifreq': config['opm'].get('hpi_freq', 33.0),
-        'downsample_freq': config['opm'].get('downsample_to_hz', 1000),
-        'overwrite': config['opm'].get('overwrite', False),
-        'plot': config['opm'].get('plot', False),
-        'logfile': config['project'].get('Logfile', 'adding_hpi.log')
+        'tasks': config.get('Project', {}).get('Tasks', []),
+        'polhemus_file': config.get('OPM', {}).get('polhemus', ''),
+        'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
+        'hpinames': config.get('OPM', {}).get('hpi_names', ''),
+        'hpifreq': config.get('OPM', {}).get('frequency', 33.0),
+        'downsample_freq': config.get('OPM', {}).get('downsample_to_hz', 1000),
+        'overwrite': config.get('OPM', {}).get('overwrite', False),
+        'plot': config.get('OPM', {}).get('plot', False),
+        'logfile': config.get('Project', {}).get('Logfile', '')
     }
     return hpi_config
      
@@ -481,8 +481,13 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         hedscan_files = [f for f in hedscan_files if not os.path.exists(f.replace('raw.fif', proc + '.fif'))]
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
+        # Ensure polhemus_file is a list for compatibility
+        polhemus_patterns = config['polhemus_file']
+        if isinstance(polhemus_patterns, str):
+            polhemus_patterns = [polhemus_patterns]
+        
         polfile_list = [
-            file for pattern in config['polhemus_file'] + [f for f in config['tasks'] if f not in config['polhemus_file']]
+            file for pattern in polhemus_patterns + [f for f in config['tasks'] if f not in polhemus_patterns and file_contains(f, )]
             for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern}*.fif")
         ]
 
@@ -532,11 +537,21 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             raw.resample(new_sfreq)
 
         #assuming file with polhemus locations of fiducials and HPIs
+        dig_found = False
         for polfile in polfile_list:
-            pol_info = mne.io.read_info(polfile)
-            if not pol_info['dig']:
+            print(polfile)
+            try:
+                pol_info = mne.io.read_info(polfile, verbose='error')
+                if not pol_info['dig']:
+                    continue
+                log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+                dig_found = True
+                if dig_found:
+                    break
+            except Exception as e:
+                log("HPI", f"Error reading {polfile}: {e}", 'error', logfile=logfile, logpath=log_path)
+                pol_info = None
                 continue
-            log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
 
         digpts=np.array([],dtype=float)
         lpa=pol_info['dig'][0]['r']
