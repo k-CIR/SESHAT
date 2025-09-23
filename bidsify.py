@@ -43,6 +43,7 @@ from utils import (
     file_contains,
     opm_exceptions_patterns
 )
+
 ###############################################################################
 # Variables
 ###############################################################################
@@ -84,7 +85,7 @@ def create_dataset_description(config: dict):
     if not exists(file_bids):
         make_dataset_description(
             path = config['BIDS'],
-            name = config['name'],
+            name = config['Name'],
             dataset_type = config['dataset_type'],
             data_license = config['data_license'],
             authors = config['authors'],
@@ -190,7 +191,7 @@ def get_parameters(config):
     elif isinstance(config, dict):
         config_dict = deepcopy(config)
     
-    bids_dict = deepcopy(config_dict['project']) | deepcopy(config_dict['bids'])
+    bids_dict = deepcopy(config_dict['Project']) | deepcopy(config_dict['BIDS'])
     return bids_dict
 
 def update_sidecars(config: dict):
@@ -433,37 +434,31 @@ def generate_new_conversion_table(config: dict):
     """
     # TODO: parallelize the conversion
     ts = datetime.now().strftime('%Y%m%d')
-    path_project = config['opmMEG'].replace('raw', '') or config['squidMEG'].replace('raw', '')
-    path_triux = config['squidMEG']
-    path_opm = config['opmMEG']
-    path_BIDS = config['BIDS']
-    participant_mapping = join(path_project,config['Participants_mapping_file'])
-    old_subj_id = config['Original_subjID_name']
-    new_subj_id = config['New_subjID_name']
-    old_session = config['Original_session_name']
-    new_session = config['New_session_name']
-    tasks = config['tasks'] + opm_exceptions_patterns
+    path_project = join(config.get('Root', ''), config.get('Name', ''))
+    path_raw = config.get('Raw', '')
+    path_BIDS = config.get('BIDS', '')
+    participant_mapping = join(path_project, config.get('Participants_mapping_file', ''))
+    old_subj_id = config.get('Original_subjID_name', '')
+    new_subj_id = config.get('New_subjID_name', '')
+    old_session = config.get('Original_session_name', '')
+    new_session = config.get('New_session_name', '')
+    tasks = config.get('Tasks', []) + opm_exceptions_patterns
     
-    processing_modalities = []
-    if path_triux != '' and str(path_triux) != '()':
-        processing_modalities.append('triux')
-    if path_opm != '' and str(path_opm) != '()':
-        processing_modalities.append('hedscan')
+    processing_modalities = ['triux', 'hedscan']
     
     if participant_mapping:
         mapping_found=True
         try:
             pmap = pd.read_csv(participant_mapping, dtype=str)
-        except FileExistsError as e:
+        except Exception as e:
             mapping_found=False
             print('Participant file not found, skipping')
     
-    path = path_triux if 'triux' in processing_modalities else path_opm
-    participants = glob('sub-*', root_dir=path)
+    participants = glob('sub-*', root_dir=path_raw)
 
     def process_file_entry(args):
         participant, date_session, mod, file = args
-        full_file_name = os.path.join(path, participant, date_session, mod, file)
+        full_file_name = os.path.join(path_raw, participant, date_session, mod, file)
         
         info_dict = {}
         if exists(full_file_name):
@@ -484,7 +479,7 @@ def generate_new_conversion_table(config: dict):
             event_file = None
 
         process_file = True
-        subj_out = subject
+        subj_out = subject.zfill(4)
         session_out = date_session
 
         if participant_mapping and mapping_found:
@@ -569,11 +564,11 @@ def generate_new_conversion_table(config: dict):
     # Prepare all jobs
     jobs = []
     for participant in participants:
-        sessions = sorted([session for session in glob('*', root_dir=os.path.join(path, participant)) if os.path.isdir(os.path.join(path, participant, session))])
+        sessions = sorted([session for session in glob('*', root_dir=os.path.join(path_raw, participant)) if os.path.isdir(os.path.join(path_raw, participant, session))])
         for date_session in sessions:
             for mod in processing_modalities:
-                all_files = sorted(glob('*.fif', root_dir=os.path.join(path, participant, date_session, mod)) +
-                                   glob('*.pos', root_dir=os.path.join(path, participant, date_session, mod)))
+                all_files = sorted(glob('*.fif', root_dir=os.path.join(path_raw, participant, date_session, mod)) +
+                                   glob('*.pos', root_dir=os.path.join(path_raw, participant, date_session, mod)))
                 for file in all_files:
                     jobs.append((participant, date_session, mod, file))
 
@@ -753,14 +748,15 @@ def bidsify(config: dict):
     
     # TODO: parallelize the conversion
     ts = datetime.now().strftime('%Y%m%d')
-    local_path = config['squidMEG'] if config['squidMEG'] != '' else config['opmMEG']
-    path_BIDS = config['BIDS']
-    calibration = f"{local_path}/{config['Calibration']}"
-    crosstalk = f"{local_path}/{config['Crosstalk']}"
-    crosstalk = config['Crosstalk']
-    overwrite = config['overwrite']
-    logfile = config['Logfile']
-    logpath = config['BIDS'].replace('raw', 'log')
+    path_project = join(config.get('Root', ''), config.get('Name', ''))
+    local_path = config.get('Raw', '')
+    path_BIDS = config.get('BIDS', '')
+    calibration = config.get('Calibration', '')
+    crosstalk = config.get('Crosstalk', '')
+    overwrite = config.get('overwrite', False)
+    logfile = config.get('Logfile', '')
+    participant_mapping = join(path_project, config.get('Participants_mapping_file', ''))
+    logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
 
     configure_logging(log_dir=logpath, log_file=logfile)
     # overwrite = config['Overwrite']
@@ -768,13 +764,24 @@ def bidsify(config: dict):
     df, conversion_file = load_conversion_table(config)
     #df = update_conversion_table(df, conversion_file)
     df = df.where(pd.notnull(df), None)
-
-    df['participant_to'] = df['participant_to'].str.zfill(3)
+    
+    if participant_mapping:
+        mapping_found=True
+        try:
+            pmap = pd.read_csv(participant_mapping, dtype=str)
+        except Exception as e:
+            mapping_found=False
+            print('Participant file not found, skipping')
+            
+    is_natmeg_id =  all(df['participant_from'].str.replace('sub-', '').astype(int) == df['participant_to'].astype(int))
     
     # Start by creating the BIDS directory structure
     unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
     for _, row in unique_participants_sessions.iterrows():
-        subject_padded = str(row['participant_to']).zfill(3)
+        if is_natmeg_id:
+            subject_padded = str(row['participant_to']).zfill(4)
+        else:
+            subject_padded = str(row['participant_to']).zfill(3)
         session_padded = str(row['session_to']).zfill(2)
         bids_path = BIDSPath(
             subject=subject_padded,
@@ -782,11 +789,14 @@ def bidsify(config: dict):
             datatype=row['datatype'],
             root=path_BIDS
         ).mkdir()
-        if row['datatype'] == 'meg':
-            if not bids_path.meg_calibration_fpath:
-                write_meg_calibration(calibration, bids_path)
-            if not bids_path.meg_crosstalk_fpath:
-                write_meg_crosstalk(crosstalk, bids_path)
+        try:
+            if row['datatype'] == 'meg':
+                if not bids_path.meg_calibration_fpath:
+                    write_meg_calibration(calibration, bids_path)
+                if not bids_path.meg_crosstalk_fpath:
+                    write_meg_crosstalk(crosstalk, bids_path)
+        except Exception as e:
+            log('BIDS', f"Error writing calibration/crosstalk files: {e}", level='error', logfile=logfile, logpath=logpath)
     
     # ignore split files as they are processed automatically
     df = df[df['split'].isna()]

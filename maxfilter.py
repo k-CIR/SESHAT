@@ -93,13 +93,13 @@ def get_parameters(config):
     elif isinstance(config, dict):
         config_dict = deepcopy(config)
     
-    maxfilter_dict = deepcopy(config_dict['maxfilter'])
-    maxfilter_dict['advanced_settings']['cal'] = config_dict['project']['Calibration']
-    maxfilter_dict['advanced_settings']['ctc'] = config_dict['project']['Crosstalk']
-    maxfilter_dict['standard_settings']['project_name'] = config_dict['project']['name']
-    maxfilter_dict['standard_settings']['data_path'] = config_dict['project']['squidMEG']
-    maxfilter_dict['standard_settings']['out_path'] = config_dict['project']['squidMEG']
-    maxfilter_dict['standard_settings']['logfile'] = config_dict['project']['Logfile']
+    maxfilter_dict = deepcopy(config_dict['MaxFilter'])
+    maxfilter_dict['advanced_settings']['cal'] = config_dict['Project']['Calibration']
+    maxfilter_dict['advanced_settings']['ctc'] = config_dict['Project']['Crosstalk']
+    maxfilter_dict['standard_settings']['project_name'] = config_dict['Project']['Name']
+    maxfilter_dict['standard_settings']['data_path'] = config_dict['Project']['Raw']
+    maxfilter_dict['standard_settings']['out_path'] = config_dict['Project']['Raw']
+    maxfilter_dict['standard_settings']['logfile'] = config_dict['Project']['Logfile']
     
     return maxfilter_dict
 

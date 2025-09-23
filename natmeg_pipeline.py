@@ -116,9 +116,9 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
                         
-            logfile = config['project'].get('Logfile', 'pipeline_log.log')
+            logfile = config['Project'].get('Logfile', 'pipeline_log.log')
 
-            project_root = os.path.dirname(config['project'].get('squidMEG', '.')) or os.path.dirname(config['project'].get('opmMEG', '.'))
+            project_root = os.path.join(config['Project'].get('Root', '.'), config.get('Name', ''))
             logpath = os.path.join(project_root, 'log')
             os.makedirs(logpath, exist_ok=True)
             # Initialize centralized logging once for this run
@@ -159,7 +159,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             if config['RUN'].get('Sync to CIR', False):
                 import sync_to_cir
                 # Use BIDS directory as the sync source
-                bids_path = config['project'].get('BIDS', '.')
+                bids_path = config['Project'].get('BIDS', '.')
                 sync_path = os.path.dirname(bids_path) if bids_path else '.'
                 
                 syncer = sync_to_cir.ServerSync()

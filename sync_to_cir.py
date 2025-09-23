@@ -322,7 +322,7 @@ def get_parameters(config: Union[str, Dict]) -> Dict:
     elif isinstance(config, dict):
         config_dict = deepcopy(config)
 
-    sync_dict = deepcopy(config_dict['project'])
+    sync_dict = deepcopy(config_dict['Project'])
     return sync_dict
 
 
