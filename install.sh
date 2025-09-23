@@ -99,7 +99,7 @@ if [ -d "$TARGET_DIR" ]; then
 fi
 
 # Copy relevant files to local
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "run_config_kivy.py" "run_config_pyqt.py" "requirements.txt") 
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt") 
 SOURCE_DIR=$(pwd)
 
 # Create local bin directory

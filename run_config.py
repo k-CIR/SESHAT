@@ -833,8 +833,8 @@ You can also provide a path to an existing configuration file to load its settin
 
 def config_UI(config_file: str = None):
     """Launch the configuration GUI and return the configuration"""
-    args = args_parser()
-    config_file = args.config or config_file
+    # Don't parse command line arguments when called from another script
+    # The config_file parameter should be used directly
     
     app = QApplication(sys.argv)
     app.setStyle('Fusion')  # Use Fusion style for better cross-platform appearance
