@@ -39,7 +39,7 @@ def askdirectory(**kwargs):
     return directory
 
 
-default_output_path = 'neuro/data/local'
+default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
