@@ -407,7 +407,8 @@ def main(config: str=None):
         config = yaml.safe_load(f)
 
     project = config['Project'].get("Name", "")
-    local_root = dirname(config['Project']['squidMEG'] or config['Project'])
+    root = config['Project'].get("Root", "")
+    local_root = join(root, project)
     # Optional remote mirror path (user@host:/abs/path). Adjust if project stored differently remotely.
     remote_root = f'natmeg@compute.kcir.se:/data/vault/natmeg/{project}' if project else None
 
