@@ -4,13 +4,11 @@ import sys
 import os
 import argparse
 import re
-
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QLineEdit, QCheckBox, QComboBox, QPushButton, QLabel, QGroupBox,
-    QTextEdit, QScrollArea, QFileDialog, QMessageBox
-)
-from PyQt6.QtCore import Qt, QProcess
+import subprocess
+import threading
+import queue
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 
 default_path = '/neuro/data/local'
 
@@ -101,12 +99,37 @@ def create_default_config():
     return config
 
 
+def create_config_file(output_file: str = 'default_config.yml'):
+    """Create a default configuration file and save it to disk"""
+    try:
+        # Use the standalone function to avoid GUI dependencies
+        config_data = create_default_config()
+        
+        # Save to file based on extension
+        if output_file.endswith('.json'):
+            with open(output_file, 'w') as f:
+                json.dump(config_data, f, indent=4)
+        else:
+            # Default to YAML format
+            if not output_file.endswith(('.yml', '.yaml')):
+                output_file += '.yml'
+            with open(output_file, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False, indent=2)
+        
+        return True
+    except Exception as e:
+        print(f"Error creating config file: {e}")
+        return False
 
-class ConfigMainWindow(QMainWindow):
-    """PyQt main window for NatMEG configuration editor"""
+
+class ConfigMainWindow:
+    """Tkinter main window for NatMEG configuration editor"""
     
     def __init__(self, config_file=None):
-        super().__init__()
+        self.root = tk.Tk()
+        self.root.title("NatMEG Config Editor")
+        self.root.geometry("900x800")
+        
         self.config_file = config_file
         self.config_data = {}
         self.widgets = {}  # Store widget references for data binding
@@ -136,19 +159,13 @@ class ConfigMainWindow(QMainWindow):
         
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("NatMEG Config Editor")
-        self.setGeometry(100, 100, 900, 800)
+        # Create main frame
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=2, pady=5)
         
-        # Central widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # Main layout
-        main_layout = QVBoxLayout(central_widget)
-        
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        main_layout.addWidget(self.tab_widget)
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill='both', expand=True)
         
         # Create tabs
         self.create_project_tab()
@@ -157,30 +174,19 @@ class ConfigMainWindow(QMainWindow):
         self.create_bids_tab()
         self.create_run_tab()
         
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', padx= (4, 4), pady=(10, 0))
         
-        open_btn = QPushButton("Open")
-        open_btn.clicked.connect(self.open_config)
-        button_layout.addWidget(open_btn)
+        # Buttons (reordered: Open, Save As, Save, Cancel)
+        ttk.Button(button_frame, text="Cancel", command=self.root.quit).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Save", command=self.save_config).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Save As...", command=self.save_as_config).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Open", command=self.open_config).pack(side='right', padx=(5, 0))
         
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self.save_config)
-        button_layout.addWidget(save_btn)
-        
-        save_as_btn = QPushButton("Save As...")
-        save_as_btn.clicked.connect(self.save_as_config)
-        button_layout.addWidget(save_as_btn)
-        
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.close)
-        button_layout.addWidget(cancel_btn)
-        
-        main_layout.addLayout(button_layout)
-        
-        # Status bar
-        self.statusBar().showMessage(f"Config file: {self.config_file if self.config_file else 'None'}")
+        # Status label
+        self.status_label = ttk.Label(main_frame, text=f"Config file: {self.config_file if self.config_file else 'None'}")
+        self.status_label.pack(anchor='w', pady=(5, 0))
         
         # Set initial execute button state
         if self.config_saved:
@@ -188,136 +194,117 @@ class ConfigMainWindow(QMainWindow):
         else:
             self.mark_config_changed()
     
-
+    def create_scrollable_frame(self, parent):
+        """Create a scrollable frame"""
+        canvas = tk.Canvas(parent, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Bind canvas to update scrollable frame width when canvas resizes
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=0, pady=0)
+        scrollbar.pack(side="right", fill="y")
+        
+        return scrollable_frame
     
-    def mark_config_changed(self):
-        """Mark configuration as changed and update UI accordingly"""
-        self.config_saved = False
-        if self.execute_btn:
-            self.execute_btn.setText("Save to Execute")
-            self.execute_btn.setEnabled(False)
-    
-    def mark_config_saved(self):
-        """Mark configuration as saved and update UI accordingly"""
-        self.config_saved = True
-        if self.execute_btn:
-            self.execute_btn.setText("Execute Pipeline")
-            self.execute_btn.setEnabled(True)
-    
-    def create_run_form_widget(self, parent_layout, key, value):
-        """Create a form widget for RUN items"""
-        row_widget = QWidget()
-        row_layout = QHBoxLayout(row_widget)
-        row_layout.setContentsMargins(5, 2, 5, 2)
-        
-        # Checkbox for the RUN item
-        widget = QCheckBox(f"{key}")
-        widget.setChecked(value)
-        widget.stateChanged.connect(lambda state, k=key: [self.update_config_value(k, widget.isChecked()), self.mark_config_changed()])
-        widget.setMinimumWidth(250)
-        row_layout.addWidget(widget)
-        
-        row_layout.addStretch()
-        
-        # Store widget reference
-        self.widgets[key] = widget
-        
-        parent_layout.addWidget(row_widget)
-
-    def create_form_widget(self, parent_layout, key, value, help_text=None):
+    def create_form_widget(self, parent, key, value, help_text=None):
         """Create a form widget based on the value type"""
-        row_widget = QWidget()
-        row_layout = QHBoxLayout(row_widget)
-        row_layout.setContentsMargins(5, 2, 5, 2)
+        frame = ttk.Frame(parent)
+        frame.pack(fill='x', padx=0, pady=1)
         
         # Label
-        label = QLabel(f"{key}:")
-        label.setMinimumWidth(200)
-        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        row_layout.addWidget(label)
+        label = ttk.Label(frame, text=f"{key}:", anchor='e', width=20)
+        label.pack(side='left', padx=(0, 2))
         
         # Widget based on value type
         if isinstance(value, bool):
-            widget = QCheckBox()
-            widget.setChecked(value)
-            widget.stateChanged.connect(lambda state, k=key: [self.update_config_value(k, widget.isChecked()), self.mark_config_changed()])
+            var = tk.BooleanVar(value=value)
+            widget = ttk.Checkbutton(frame, variable=var)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
         elif isinstance(value, list):
-            widget = QLineEdit(', '.join(str(v) for v in value))
-            widget.textChanged.connect(lambda text, k=key: [self.update_config_list(k, text), self.mark_config_changed()])
+            var = tk.StringVar(value=', '.join(str(v) for v in value))
+            widget = ttk.Entry(frame, textvariable=var, width=50)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_list(k, var.get()), self.mark_config_changed()])
         elif key == 'trans_option':
-            widget = QComboBox()
-            widget.addItems(['continous', 'initial'])
-            widget.setCurrentText(str(value))
-            widget.currentTextChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Combobox(frame, textvariable=var, values=['continous', 'initial'], width=47)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
         elif key == 'maxfilter_version':
-            widget = QComboBox()
-            widget.addItems(['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'])
-            widget.setCurrentText(str(value))
-            widget.currentTextChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Combobox(frame, textvariable=var, 
+                               values=['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'], width=47)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
         else:
-            widget = QLineEdit(str(value))
-            widget.textChanged.connect(lambda text, k=key: [self.update_config_value(k, text), self.mark_config_changed()])
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Entry(frame, textvariable=var, width=50)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
             
             # Special handling for project name and root fields to auto-update paths
             if key == 'Name':
-                widget.textChanged.connect(lambda text: self.update_project_paths())
+                var.trace_add('write', lambda *args: self.update_project_paths())
             elif key == 'Root':
-                widget.textChanged.connect(lambda text: self.update_project_paths())
+                var.trace_add('write', lambda *args: self.update_project_paths())
             # Mark path fields as manually edited when user changes them
             elif key in ['Raw', 'BIDS', 'Calibration', 'Crosstalk']:
-                widget.textChanged.connect(lambda text, k=key: self.mark_manual_edit(k))
+                var.trace_add('write', lambda *args, k=key: self.mark_manual_edit(k))
         
-        row_layout.addWidget(widget)
-        row_layout.addStretch()
+        widget.pack(side='right', fill='x', expand=True)
         
         # Store widget reference
         self.widgets[key] = widget
         
-        parent_layout.addWidget(row_widget)
-        
-        # Add help text if provided
+        # Add help text on a new line directly under the entry field if provided
         if help_text:
-            help_label = QLabel(help_text)
-            help_label.setWordWrap(True)
-            help_label.setStyleSheet("color: gray; font-size: 10px; margin-left: 210px;")
-            help_label.setMaximumHeight(40)
-            parent_layout.addWidget(help_label)
+            help_frame = ttk.Frame(parent)
+            help_frame.pack(fill='x', padx=(200, 2), pady=(0, 2))
+            help_label = ttk.Label(help_frame, text=help_text, foreground='gray', font=('TkDefaultFont', 8))
+            help_label.pack(anchor='w')
     
-    def create_scrollable_form(self, config_section, keys=None, help_texts=None):
-        """Create a scrollable form for a configuration section"""
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    def create_run_form_widget(self, parent, key, value):
+        """Create a form widget for RUN items"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='x', padx=0, pady=1)
         
-        form_widget = QWidget()
-        form_layout = QVBoxLayout(form_widget)
-        form_layout.setSpacing(5)
+        var = tk.BooleanVar(value=value)
+        widget = ttk.Checkbutton(frame, text=key, variable=var)
+        widget.var = var
+        var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        widget.pack(anchor='w')
         
-        # Determine which keys to use
-        if keys is None:
-            keys = list(config_section.keys())
-        
-        # Create form fields
-        for key in keys:
-            if key in config_section:
-                value = config_section[key]
-                help_text = help_texts.get(key) if help_texts else None
-                self.create_form_widget(form_layout, key, value, help_text)
-        
-        form_layout.addStretch()
-        scroll_area.setWidget(form_widget)
-        return scroll_area
+        # Store widget reference
+        self.widgets[key] = widget
     
     def create_project_tab(self):
         """Create the Project configuration tab"""
-        project_widget = QWidget()
-        project_layout = QVBoxLayout(project_widget)
+        project_frame = ttk.Frame(self.notebook)
+        self.notebook.add(project_frame, text="Project")
         
-        # Create sub-tabs for project
-        project_tabs = QTabWidget()
+        # Create sub-notebook for project tabs
+        project_notebook = ttk.Notebook(project_frame)
+        project_notebook.pack(fill='both', expand=True, padx=2, pady=2)
         
-        # Standard settings
+        # Standard settings tab
+        standard_frame = ttk.Frame(project_notebook)
+        project_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
+        
         standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw']
         standard_help = {
             'Name': 'Name of project',
@@ -328,14 +315,17 @@ class ConfigMainWindow(QMainWindow):
             'Kaptah raw': 'Path to Kaptah raw data directory'
         }
         
-        standard_form = self.create_scrollable_form(
-            self.config_data['Project'], 
-            standard_keys, 
-            standard_help
-        )
-        project_tabs.addTab(standard_form, "Standard Settings")
+        for key in standard_keys:
+            if key in self.config_data['Project']:
+                value = self.config_data['Project'][key]
+                help_text = standard_help.get(key)
+                self.create_form_widget(standard_scrollable, key, value, help_text)
         
-        # Advanced settings
+        # Advanced settings tab
+        advanced_frame = ttk.Frame(project_notebook)
+        project_notebook.add(advanced_frame, text="Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        
         advanced_keys = [
             'InstitutionName', 'InstitutionAddress', 'InstitutionDepartmentName',
             'Root', 'Raw', 'BIDS', 'Calibration', 'Crosstalk', 'Logfile'
@@ -352,18 +342,18 @@ class ConfigMainWindow(QMainWindow):
             'Logfile': 'Name of the log file'
         }
         
-        advanced_form = self.create_scrollable_form(
-            self.config_data['Project'], 
-            advanced_keys, 
-            advanced_help
-        )
-        project_tabs.addTab(advanced_form, "Advanced Settings")
-        
-        project_layout.addWidget(project_tabs)
-        self.tab_widget.addTab(project_widget, "Project")
+        for key in advanced_keys:
+            if key in self.config_data['Project']:
+                value = self.config_data['Project'][key]
+                help_text = advanced_help.get(key)
+                self.create_form_widget(advanced_scrollable, key, value, help_text)
     
     def create_opm_tab(self):
-        """Create the OPM configuration tab"""
+        """Create the OMP configuration tab"""
+        opm_frame = ttk.Frame(self.notebook)
+        self.notebook.add(opm_frame, text="OPM")
+        opm_scrollable = self.create_scrollable_frame(opm_frame)
+        
         opm_help = {
             'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data',
             'hpi_names': 'Comma-separated list of names of HPI recording',
@@ -373,18 +363,24 @@ class ConfigMainWindow(QMainWindow):
             'plot': 'Store a plot of the OPM data after processing'
         }
         
-        opm_form = self.create_scrollable_form(self.config_data['OPM'], help_texts=opm_help)
-        self.tab_widget.addTab(opm_form, "OPM")
+        for key, value in self.config_data['OPM'].items():
+            help_text = opm_help.get(key)
+            self.create_form_widget(opm_scrollable, key, value, help_text)
     
     def create_maxfilter_tab(self):
         """Create the MaxFilter configuration tab"""
-        maxfilter_widget = QWidget()
-        maxfilter_layout = QVBoxLayout(maxfilter_widget)
+        maxfilter_frame = ttk.Frame(self.notebook)
+        self.notebook.add(maxfilter_frame, text="MaxFilter")
         
-        # Create sub-tabs for maxfilter
-        maxfilter_tabs = QTabWidget()
+        # Create sub-notebook
+        maxfilter_notebook = ttk.Notebook(maxfilter_frame)
+        maxfilter_notebook.pack(fill='both', expand=True, padx=2, pady=2)
         
         # Standard settings
+        standard_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
         standard_help = {
             'trans_conditions': 'Comma-separated list of tasks which should be transformed to average head',
             'trans_option': 'Option for transformation, either "continous" for average or "initial" for initial head position',
@@ -400,13 +396,15 @@ class ConfigMainWindow(QMainWindow):
             'subjects_to_skip': 'Comma-separated list of subject IDs to skip during MaxFilter processing'
         }
         
-        standard_form = self.create_scrollable_form(
-            self.config_data['MaxFilter']['standard_settings'],
-            help_texts=standard_help
-        )
-        maxfilter_tabs.addTab(standard_form, "Standard Settings")
+        for key, value in self.config_data['MaxFilter']['standard_settings'].items():
+            help_text = standard_help.get(key)
+            self.create_form_widget(standard_scrollable, key, value, help_text)
         
         # Advanced settings
+        advanced_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(advanced_frame, text="Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        
         advanced_help = {
             'force': 'Force MaxFilter to run even if bad channels are detected',
             'downsample': 'Downsample data',
@@ -418,24 +416,24 @@ class ConfigMainWindow(QMainWindow):
             'debug': 'Enable debug mode for MaxFilter'
         }
         
-        advanced_form = self.create_scrollable_form(
-            self.config_data['MaxFilter']['advanced_settings'],
-            help_texts=advanced_help
-        )
-        maxfilter_tabs.addTab(advanced_form, "Advanced Settings")
-        
-        maxfilter_layout.addWidget(maxfilter_tabs)
-        self.tab_widget.addTab(maxfilter_widget, "MaxFilter")
+        for key, value in self.config_data['MaxFilter']['advanced_settings'].items():
+            help_text = advanced_help.get(key)
+            self.create_form_widget(advanced_scrollable, key, value, help_text)
     
     def create_bids_tab(self):
         """Create the BIDS configuration tab"""
-        bids_widget = QWidget()
-        bids_layout = QVBoxLayout(bids_widget)
+        bids_frame = ttk.Frame(self.notebook)
+        self.notebook.add(bids_frame, text="BIDS")
         
-        # Create sub-tabs for BIDS
-        bids_tabs = QTabWidget()
+        # Create sub-notebook
+        bids_notebook = ttk.Notebook(bids_frame)
+        bids_notebook.pack(fill='both', expand=True, padx=2, pady=2)
         
         # Standard settings
+        standard_frame = ttk.Frame(bids_notebook)
+        bids_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
         standard_bids_keys = [
             'Dataset_description', 'Participants', 'Participants_mapping_file', 
             'Conversion_file', 'Overwrite_conversion', 'Original_subjID_name',
@@ -455,14 +453,17 @@ class ConfigMainWindow(QMainWindow):
             'overwrite': 'Overwrite existing BIDS files'
         }
         
-        standard_form = self.create_scrollable_form(
-            self.config_data['BIDS'],
-            standard_bids_keys,
-            standard_bids_help
-        )
-        bids_tabs.addTab(standard_form, "Standard Settings")
+        for key in standard_bids_keys:
+            if key in self.config_data['BIDS']:
+                value = self.config_data['BIDS'][key]
+                help_text = standard_bids_help.get(key)
+                self.create_form_widget(standard_scrollable, key, value, help_text)
         
         # Dataset description
+        dataset_frame = ttk.Frame(bids_notebook)
+        bids_notebook.add(dataset_frame, text="Dataset Description")
+        dataset_scrollable = self.create_scrollable_frame(dataset_frame)
+        
         dataset_keys = [
             'dataset_type', 'data_license', 'authors', 'acknowledgements',
             'how_to_acknowledge', 'funding', 'ethics_approvals', 
@@ -481,55 +482,45 @@ class ConfigMainWindow(QMainWindow):
             'doi': 'Digital Object Identifier of the dataset'
         }
         
-        dataset_form = self.create_scrollable_form(
-            self.config_data['BIDS'],
-            dataset_keys,
-            dataset_help
-        )
-        bids_tabs.addTab(dataset_form, "Dataset Description")
-        
-        bids_layout.addWidget(bids_tabs)
-        self.tab_widget.addTab(bids_widget, "BIDS")
+        for key in dataset_keys:
+            if key in self.config_data['BIDS']:
+                value = self.config_data['BIDS'][key]
+                help_text = dataset_help.get(key)
+                self.create_form_widget(dataset_scrollable, key, value, help_text)
     
     def create_run_tab(self):
         """Create the RUN configuration tab"""
-        run_widget = QWidget()
-        run_layout = QVBoxLayout(run_widget)
+        run_frame = ttk.Frame(self.notebook)
+        self.notebook.add(run_frame, text="RUN")
         
-        # RUN settings form
-        form_widget = QWidget()
-        form_layout = QVBoxLayout(form_widget)
+        # RUN settings
+        run_settings_frame = ttk.LabelFrame(run_frame, text="Pipeline Steps")
+        run_settings_frame.pack(fill='x', padx=5, pady=5)
         
         for key, value in self.config_data['RUN'].items():
-            self.create_run_form_widget(form_layout, key, value)
-        
-        form_layout.addStretch()
-        run_layout.addWidget(form_widget)
+            self.create_run_form_widget(run_settings_frame, key, value)
         
         # Execute button
-        self.execute_btn = QPushButton("Save to Execute" if not self.config_saved else "Execute Pipeline")
-        self.execute_btn.setMinimumHeight(40)
-        self.execute_btn.setEnabled(self.config_saved)
-        self.execute_btn.clicked.connect(self.execute_pipeline)
-        run_layout.addWidget(self.execute_btn)
+        execute_frame = ttk.Frame(run_frame)
+        execute_frame.pack(fill='x', padx=5, pady=5)
+        
+        self.execute_btn = ttk.Button(execute_frame, 
+                                     text="Save to Execute" if not self.config_saved else "Execute Pipeline",
+                                     command=self.execute_pipeline)
+        self.execute_btn.pack(anchor='w')
+        self.execute_btn.configure(state='disabled' if not self.config_saved else 'normal')
         
         # Terminal output
-        self.terminal_output = QTextEdit()
-        self.terminal_output.setReadOnly(True)
-        self.terminal_output.setMinimumHeight(300)
-        self.terminal_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                font-family: 'Courier New', monospace, 'SF Mono', 'Monaco', 'Menlo', 'Consolas';
-                font-size: 10pt;
-                border: 1px solid #555555;
-            }
-        """)
-        self.terminal_output.append("Terminal output will appear here...")
-        run_layout.addWidget(self.terminal_output)
+        terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
+        terminal_frame.pack(fill='both', expand=True, padx=5, pady=5)
         
-        self.tab_widget.addTab(run_widget, "RUN")
+        self.terminal_output = scrolledtext.ScrolledText(terminal_frame, height=15, state='disabled')
+        self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Add initial text
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.insert('end', "Terminal output will appear here...\n")
+        self.terminal_output.configure(state='disabled')
     
     def update_config_value(self, key, value):
         """Update configuration value"""
@@ -625,7 +616,7 @@ class ConfigMainWindow(QMainWindow):
                 # Update config and widget
                 self.config_data['Project'][field] = new_path
                 if field in self.widgets:
-                    self.widgets[field].setText(new_path)
+                    self.widgets[field].var.set(new_path)
             
             # Store current values for next update
             self._last_project_name = display_project
@@ -654,6 +645,18 @@ class ConfigMainWindow(QMainWindow):
                 updated_path = updated_path.replace('<project>', new_project)
         
         return updated_path
+    
+    def mark_config_changed(self):
+        """Mark configuration as changed and update UI accordingly"""
+        self.config_saved = False
+        if self.execute_btn:
+            self.execute_btn.configure(text="Save to Execute", state='disabled')
+    
+    def mark_config_saved(self):
+        """Mark configuration as saved and update UI accordingly"""
+        self.config_saved = True
+        if self.execute_btn:
+            self.execute_btn.configure(text="Execute Pipeline", state='normal')
     
     def load_config(self, config_file=None):
         """Load configuration from file"""
@@ -684,7 +687,7 @@ class ConfigMainWindow(QMainWindow):
             return config if config else create_default_config()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error loading config: {e}")
+            messagebox.showerror("Error", f"Error loading config: {e}")
             return create_default_config()
     
     def save_config(self):
@@ -701,19 +704,18 @@ class ConfigMainWindow(QMainWindow):
                 with open(self.config_file, 'w') as file:
                     json.dump(self.config_data, file, indent=4)
             
-            self.statusBar().showMessage(f"Config saved to: {self.config_file}")
+            self.status_label.configure(text=f"Config saved to: {self.config_file}")
             self.mark_config_saved()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error saving config: {e}")
+            messagebox.showerror("Error", f"Error saving config: {e}")
     
     def save_as_config(self):
         """Save configuration as new file"""
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Configuration File",
-            default_path,
-            "YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)"
+        filename = filedialog.asksaveasfilename(
+            initialdir=default_path,
+            title="Save Configuration File",
+            filetypes=[("YAML files", "*.yml *.yaml"), ("JSON files", "*.json"), ("All files", "*.*")]
         )
         
         if filename:
@@ -725,11 +727,13 @@ class ConfigMainWindow(QMainWindow):
     
     def open_config(self):
         """Open configuration file"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Configuration File",
-            default_path,
-            "Config files (*.yml *.yaml *.json);;YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)"
+        filename = filedialog.askopenfilename(
+            initialdir=default_path,
+            title="Open Configuration File",
+            filetypes=[("Config files", "*.yml *.yaml *.json"), 
+                      ("YAML files", "*.yml *.yaml"), 
+                      ("JSON files", "*.json"), 
+                      ("All files", "*.*")]
         )
         
         if filename:
@@ -740,11 +744,11 @@ class ConfigMainWindow(QMainWindow):
                     self.config_file = filename
                     self.manual_edits.clear()  # Clear first, then detect manual edits
                     self.detect_manual_edits()  # Detect which fields were manually edited
-                    self.statusBar().showMessage(f"Config loaded from: {filename}")
+                    self.status_label.configure(text=f"Config loaded from: {filename}")
                     self.update_all_widgets()
                     self.mark_config_saved()  # Mark as saved since we just loaded it
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Error opening config: {e}")
+                messagebox.showerror("Error", f"Error opening config: {e}")
     
     def update_all_widgets(self):
         """Update all widgets with current config values"""
@@ -764,67 +768,70 @@ class ConfigMainWindow(QMainWindow):
                                 break
             
             if value is not None:
-                if isinstance(widget, QCheckBox):
-                    widget.setChecked(bool(value))
-                elif isinstance(widget, QComboBox):
-                    widget.setCurrentText(str(value))
-                elif isinstance(widget, QLineEdit):
+                if hasattr(widget, 'var'):
                     if isinstance(value, list):
-                        widget.setText(', '.join(str(v) for v in value))
+                        widget.var.set(', '.join(str(v) for v in value))
                     else:
-                        widget.setText(str(value))
+                        widget.var.set(str(value) if not isinstance(value, bool) else value)
     
     def execute_pipeline(self):
         """Execute the pipeline"""
-        self.terminal_output.clear()
-        self.terminal_output.append("Executing pipeline...")
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.delete(1.0, 'end')
+        self.terminal_output.insert('end', "Executing pipeline...\n")
+        self.terminal_output.configure(state='disabled')
         
         # Build command
         base_dir = os.path.dirname(os.path.abspath(__file__))
         pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
         
         if not os.path.exists(pipeline_path):
-            self.terminal_output.append("Error: natmeg_pipeline.py not found!")
+            self.terminal_output.configure(state='normal')
+            self.terminal_output.insert('end', "Error: natmeg_pipeline.py not found!\n")
+            self.terminal_output.configure(state='disabled')
             return
         
         cmd = [sys.executable, '-u', pipeline_path, 'run']
         if self.config_file:
             cmd += ['--config', self.config_file]
         
-        # Start process
-        self.terminal_process = QProcess(self)
-        self.terminal_process.readyReadStandardOutput.connect(self.handle_stdout)
-        self.terminal_process.readyReadStandardError.connect(self.handle_stderr)
-        self.terminal_process.finished.connect(self.process_finished)
+        # Start process in a separate thread
+        def run_pipeline():
+            try:
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                         universal_newlines=True, bufsize=1)
+                
+                for line in iter(process.stdout.readline, ''):
+                    if line:
+                        self.root.after(0, self.append_output, line)
+                
+                process.wait()
+                self.root.after(0, self.append_output, f"\nProcess finished with exit code: {process.returncode}\n")
+            except Exception as e:
+                self.root.after(0, self.append_output, f"Error running pipeline: {e}\n")
         
-        self.terminal_process.start(sys.executable, cmd[1:])
-        
-        if not self.terminal_process.waitForStarted():
-            self.terminal_output.append("Failed to start pipeline process!")
+        threading.Thread(target=run_pipeline, daemon=True).start()
     
-    def handle_stdout(self):
-        """Handle stdout from subprocess"""
-        data = self.terminal_process.readAllStandardOutput()
-        stdout = bytes(data).decode("utf8")
-        self.terminal_output.append(stdout.strip())
-        self.terminal_output.ensureCursorVisible()
+    def append_output(self, text):
+        """Append text to terminal output (thread-safe)"""
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.insert('end', text)
+        self.terminal_output.see('end')
+        self.terminal_output.configure(state='disabled')
+        self.root.update_idletasks()
     
-    def handle_stderr(self):
-        """Handle stderr from subprocess"""
-        data = self.terminal_process.readAllStandardError()
-        stderr = bytes(data).decode("utf8")
-        self.terminal_output.append(f"ERROR: {stderr.strip()}")
-        self.terminal_output.ensureCursorVisible()
+    def show(self):
+        """Show the window"""
+        self.root.mainloop()
     
-    def process_finished(self):
-        """Handle process completion"""
-        exit_code = self.terminal_process.exitCode()
-        self.terminal_output.append(f"\nProcess finished with exit code: {exit_code}")
+    def quit(self):
+        """Quit the application"""
+        self.root.quit()
 
 
 def args_parser():
     parser = argparse.ArgumentParser(description='''
-Configuration script for NatMEG pipeline (PyQt version).
+Configuration script for NatMEG pipeline (Tkinter version).
                                      
 This script allows you to create or edit a configuration file for the NatMEG pipeline.
 You can specify paths, settings, and options for various stages of the pipeline including MaxFilter,
@@ -835,46 +842,11 @@ You can also provide a path to an existing configuration file to load its settin
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     return parser.parse_args()
 
-def create_config_file(output_file: str = 'default_config.yml'):
-    """Create a default configuration file and save it to disk"""
-    try:
-        # Use the standalone function to avoid GUI dependencies
-        config_data = create_default_config()
-        
-        # Save to file based on extension
-        if output_file.endswith('.json'):
-            with open(output_file, 'w') as f:
-                json.dump(config_data, f, indent=4)
-        else:
-            # Default to YAML format
-            if not output_file.endswith(('.yml', '.yaml')):
-                output_file += '.yml'
-            with open(output_file, 'w') as f:
-                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False, indent=2)
-        
-        return True
-    except Exception as e:
-        print(f"Error creating config file: {e}")
-        return False
-
 
 def config_UI(config_file: str = None):
     """Launch the configuration GUI and return the configuration"""
-    # Don't parse command line arguments when called from another script
-    # The config_file parameter should be used directly
-    
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion')  # Use Fusion style for better cross-platform appearance
-    
-    # Set application properties
-    app.setApplicationName("NatMEG Config Editor")
-    app.setApplicationVersion("1.0")
-    app.setOrganizationName("NatMEG")
-    
     window = ConfigMainWindow(config_file=config_file)
     window.show()
-    
-    app.exec()
     
     # Return the configuration data after GUI closes
     return window.config_data
@@ -885,18 +857,8 @@ def main(config_file: str = None):
     args = args_parser()
     config_file = args.config or config_file
     
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion')  # Use Fusion style for better cross-platform appearance
-    
-    # Set application properties
-    app.setApplicationName("NatMEG Config Editor")
-    app.setApplicationVersion("1.0")
-    app.setOrganizationName("NatMEG")
-    
     window = ConfigMainWindow(config_file=config_file)
     window.show()
-    
-    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

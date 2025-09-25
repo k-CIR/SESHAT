@@ -20,27 +20,26 @@ import logging
 from logging import handlers
 from typing import Optional, Dict, Tuple
 
-# PyQt6 file dialog imports
+# tkinter file dialog imports
 
-from PyQt6.QtWidgets import QApplication, QFileDialog
+import tkinter as tk
+from tkinter import filedialog
 import sys
 
 
 def askdirectory(**kwargs):
-    """PyQt6 replacement for tkinter.filedialog.askdirectory"""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
+    """tkinter filedialog.askdirectory wrapper"""
+    # Create hidden root window
     
-    directory = QFileDialog.getExistingDirectory(
-        None,
-        kwargs.get('title', 'Select Directory'),
-        kwargs.get('initialdir', '')
+    directory = filedialog.askdirectory(
+        title=kwargs.get('title', 'Select Directory'),
+        initialdir=kwargs.get('initialdir', '')
     )
+
     return directory
 
 
-default_output_path = 'neuro/data/local'
+default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
@@ -353,7 +352,7 @@ def askForConfig():
         str: Full path to selected configuration file
         
     Side Effects:
-        - Opens PyQt6 file dialog window
+        - Opens tkinter file dialog window
         - Prints selected file path to console
         - Exits program with code 1 if no file selected
         
@@ -361,17 +360,21 @@ def askForConfig():
         SystemExit: If user cancels dialog without selecting file
         
     Initial Directory:
-        Defaults to 'neuro/data/local' for convenient navigation
+        Defaults to '/neuro/data/local' for convenient navigation
     """
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
+    # Create hidden root window
+    if not exists(default_output_path):
+        default_output_path = '.'
     
-    config_file, _ = QFileDialog.getOpenFileName(
-        None,
-        "Select Configuration File",
-        default_output_path,
-        "YAML files (*.yml *.yaml);;JSON files (*.json)")
+    config_file = filedialog.askopenfilename(
+        title="Select Configuration File",
+        initialdir=outpath,
+        filetypes=[
+            ("YAML files", "*.yml *.yaml"),
+            ("JSON files", "*.json"),
+            ("All files", "*.*")
+        ]
+    )
 
     if not config_file:
         print('No configuration file selected. Exiting opening dialog')
