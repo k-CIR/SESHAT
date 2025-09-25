@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QProcess
 
-default_path = '/neuro/data/local/'
+default_path = '/neuro/data/local'
 
 class ConfigMainWindow(QMainWindow):
     """PyQt main window for NatMEG configuration editor"""
@@ -35,7 +35,7 @@ class ConfigMainWindow(QMainWindow):
             self.config_data = self.load_config(self.config_file)
             self.detect_manual_edits()  # Detect manual edits in loaded config
         else:
-            self.config_data = self.create_default_config()
+            self.config_data = create_default_config()
         
         self.init_ui()
         
@@ -100,90 +100,7 @@ class ConfigMainWindow(QMainWindow):
         else:
             self.mark_config_changed()
     
-    def create_default_config(self):
-        """Create default configuration dictionary"""
-        config = {
-            'RUN': {
-                'Copy to Cerberos': True,
-                'Add HPI coregistration': True,
-                'Run Maxfilter': True,
-                'Run BIDS conversion': True,
-                'Sync to CIR': True
-            },
-            'Project': {
-                'Name': '',
-                'CIR-ID': '',
-                'InstitutionName': 'Karolinska Institutet',
-                'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
-                'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
-                'Description': 'project for MEG data',
-                'Tasks': [''],
-                'Sinuhe raw': '/neuro/data/sinuhe',
-                'Kaptah raw': '/neuro/data/kaptah',
-                'Root': default_path,
-                'Raw': f'{default_path}/<project>/raw',
-                'BIDS': f'{default_path}/<project>/BIDS',
-                'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
-                'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
-                'Logfile': 'pipeline_log.log'
-            },
-            'OPM': {
-                'polhemus': [''],
-                'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
-                'frequency': 33,
-                'downsample_to_hz': 1000,
-                'overwrite': False,
-                'plot': False,
-            },
-            'MaxFilter': {
-                'standard_settings': {
-                    'trans_conditions': [''],
-                    'trans_option': 'continous',
-                    'merge_runs': True,
-                    'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
-                    'sss_files': [''],
-                    'autobad': True,
-                    'badlimit': '7',
-                    'bad_channels': [''],
-                    'tsss_default': True,
-                    'correlation': '0.98',
-                    'movecomp_default': True,
-                    'subjects_to_skip': ['']
-                },
-                'advanced_settings': {
-                    'force': False,
-                    'downsample': False,
-                    'downsample_factor': '4',
-                    'apply_linefreq': False,
-                    'linefreq_Hz': '50',
-                    'maxfilter_version': '/neuro/bin/util/maxfilter',
-                    'MaxFilter_commands': '',
-                    'debug': False
-                }
-            },
-            'BIDS': {
-                'Dataset_description': 'dataset_description.json',
-                'Participants': 'participants.tsv',
-                'Participants_mapping_file': 'participant_mapping_example.csv',
-                'Conversion_file': 'bids_conversion.tsv',
-                'Overwrite_conversion': False,
-                'Original_subjID_name': 'old_subject_id',
-                'New_subjID_name': 'new_subject_id',
-                'Original_session_name': 'old_session_id',
-                'New_session_name': 'new_session_id',
-                'overwrite': False,
-                'dataset_type': 'raw',
-                'data_license': '',
-                'authors': '',
-                'acknowledgements': '',
-                'how_to_acknowledge': '',
-                'funding': '',
-                'ethics_approvals': '',
-                'references_and_links': '',
-                'doi': 'doi:<insert_doi>'
-            }
-        }
-        return config
+
     
     def mark_config_changed(self):
         """Mark configuration as changed and update UI accordingly"""
@@ -653,7 +570,7 @@ class ConfigMainWindow(QMainWindow):
     def load_config(self, config_file=None):
         """Load configuration from file"""
         if not config_file:
-            return self.create_default_config()
+            return create_default_config()
             
         try:
             if hasattr(config_file, 'name'):
@@ -676,11 +593,11 @@ class ConfigMainWindow(QMainWindow):
                     if isinstance(config['Project']['Tasks'], str):
                         config['Project']['Tasks'] = config['Project']['Tasks'].split(',')
                 
-            return config if config else self.create_default_config()
+            return config if config else create_default_config()
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading config: {e}")
-            return self.create_default_config()
+            return create_default_config()
     
     def save_config(self):
         """Save current configuration"""
@@ -829,6 +746,115 @@ You can also provide a path to an existing configuration file to load its settin
                                      add_help=True)
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     return parser.parse_args()
+
+
+def create_default_config():
+    """Create default configuration dictionary without GUI dependencies"""
+    config = {
+        'RUN': {
+            'Copy to Cerberos': True,
+            'Add HPI coregistration': True,
+            'Run Maxfilter': True,
+            'Run BIDS conversion': True,
+            'Sync to CIR': True
+        },
+        'Project': {
+            'Name': '',
+            'CIR-ID': '',
+            'InstitutionName': 'Karolinska Institutet',
+            'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
+            'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
+            'Description': 'project for MEG data',
+            'Tasks': [''],
+            'Sinuhe raw': '/neuro/data/sinuhe',
+            'Kaptah raw': '/neuro/data/kaptah',
+            'Root': default_path,
+            'Raw': f'{default_path}/<project>/raw',
+            'BIDS': f'{default_path}/<project>/BIDS',
+            'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
+            'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
+            'Logfile': 'pipeline_log.log'
+        },
+        'OPM': {
+            'polhemus': [''],
+            'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
+            'frequency': 33,
+            'downsample_to_hz': 1000,
+            'overwrite': False,
+            'plot': False,
+        },
+        'MaxFilter': {
+            'standard_settings': {
+                'trans_conditions': [''],
+                'trans_option': 'continous',
+                'merge_runs': True,
+                'empty_room_files': ['empty_room_before.fif', 'empty_room_after.fif'],
+                'sss_files': [''],
+                'autobad': True,
+                'badlimit': '7',
+                'bad_channels': [''],
+                'tsss_default': True,
+                'correlation': '0.98',
+                'movecomp_default': True,
+                'subjects_to_skip': ['']
+            },
+            'advanced_settings': {
+                'force': False,
+                'downsample': False,
+                'downsample_factor': '4',
+                'apply_linefreq': False,
+                'linefreq_Hz': '50',
+                'maxfilter_version': '/neuro/bin/util/maxfilter',
+                'MaxFilter_commands': '',
+                'debug': False
+            }
+        },
+        'BIDS': {
+            'Dataset_description': 'dataset_description.json',
+            'Participants': 'participants.tsv',
+            'Participants_mapping_file': 'participant_mapping_example.csv',
+            'Conversion_file': 'bids_conversion.tsv',
+            'Overwrite_conversion': False,
+            'Original_subjID_name': 'old_subject_id',
+            'New_subjID_name': 'new_subject_id',
+            'Original_session_name': 'old_session_id',
+            'New_session_name': 'new_session_id',
+            'overwrite': False,
+            'dataset_type': 'raw',
+            'data_license': '',
+            'authors': '',
+            'acknowledgements': '',
+            'how_to_acknowledge': '',
+            'funding': '',
+            'ethics_approvals': '',
+            'references_and_links': '',
+            'doi': 'doi:<insert_doi>'
+        }
+    }
+    return config
+
+
+def create_config_file(output_file: str = 'default_config.yml'):
+    """Create a default configuration file and save it to disk"""
+    try:
+        # Use the standalone function to avoid GUI dependencies
+        config_data = create_default_config()
+        
+        # Save to file based on extension
+        if output_file.endswith('.json'):
+            with open(output_file, 'w') as f:
+                json.dump(config_data, f, indent=4)
+        else:
+            # Default to YAML format
+            if not output_file.endswith(('.yml', '.yaml')):
+                output_file += '.yml'
+            with open(output_file, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False, indent=2)
+        
+        return True
+    except Exception as e:
+        print(f"Error creating config file: {e}")
+        return False
 
 
 def config_UI(config_file: str = None):

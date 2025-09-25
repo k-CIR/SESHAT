@@ -4,9 +4,13 @@
 set -e
 
 # Parse command line arguments
-USE_CONDA=false
+USE_CONDA=true  # Default to conda installation
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --venv)
+            USE_CONDA=false
+            shift
+            ;;
         --conda)
             USE_CONDA=true
             shift
@@ -16,11 +20,12 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --conda     Use conda environment instead of Python venv (recommended for Linux Rocky)"
+            echo "  --venv      Use Python virtual environment instead of conda"
+            echo "  --conda     Use conda environment (default)"
             echo "  --help, -h  Show this help message"
             echo ""
-            echo "Default installation uses Python virtual environment (.venv)"
-            echo "Conda installation may resolve PyQt issues on some Linux distributions"
+            echo "Default installation uses conda environment for better PyQt compatibility"
+            echo "Virtual environment installation available with --venv flag"
             exit 0
             ;;
         *)
@@ -32,7 +37,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$USE_CONDA" = true ]; then
-    echo "Installing NatMEG Pipeline with Conda environment..."
+    echo "Installing NatMEG Pipeline with Conda environment (default)..."
 else
     echo "Installing NatMEG Pipeline with Python virtual environment..."
 fi
@@ -43,41 +48,73 @@ ARCH=$(uname -m)
 
 echo "Detected platform: $OS ($ARCH)"
 
+# Function to find conda Python version
+find_conda_python_version() {
+    if command -v conda &> /dev/null; then
+        # Check available Python versions in conda
+        local available_versions=$(conda search python 2>/dev/null | grep "^python " | awk '{print $2}' | grep -E "^3\.(1[2-9]|[2-9][0-9])" | sort -V | tail -1)
+        if [ -n "$available_versions" ]; then
+            echo "$available_versions"
+            return 0
+        fi
+    fi
+    echo "3.12"  # Default fallback
+    return 0
+}
+
 # Function to find Python installation
 find_python() {
-    # Check for Python 3.8+ (required for modern packages)
+    # Check for Python 3.12+ (required for modern packages)
     local python_with_tkinter=""
     local python_without_tkinter=""
     
-    # Prioritize system Python which usually has tkinter, then check other versions
-    for python_cmd in /usr/bin/python3 python3.12 python3.11 python3.10 python3.9 python3.8 python3 python; do
-        if command -v "$python_cmd" &> /dev/null; then
-            local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
-            local major=$(echo "$version" | cut -d'.' -f1)
-            local minor=$(echo "$version" | cut -d'.' -f2)
-            
-            if [ "$major" -eq 3 ] && [ "$minor" -ge 8 ]; then
-                # Test if tkinter is available (preferred for GUI)
-                if $python_cmd -c "import tkinter" 2>/dev/null; then
-                    if [ -z "$python_with_tkinter" ]; then
-                        python_with_tkinter="$python_cmd"
-                    fi
-                else
-                    if [ -z "$python_without_tkinter" ]; then
-                        python_without_tkinter="$python_cmd"
+    # For conda installation, prioritize conda-available Python versions
+    if [ "$USE_CONDA" = true ]; then
+        # When using conda, we'll create the environment with the best conda Python version
+        # Just check if any Python 3.12+ is available for validation
+        for python_cmd in python3 python; do
+            if command -v "$python_cmd" &> /dev/null; then
+                local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
+                local major=$(echo "$version" | cut -d'.' -f1)
+                local minor=$(echo "$version" | cut -d'.' -f2)
+                
+                if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
+                    echo "$python_cmd"
+                    return 0
+                fi
+            fi
+        done
+    else
+        # For venv installation, prioritize system Python with tkinter
+        for python_cmd in /usr/bin/python3 python3.13 python3.12 python3 python; do
+            if command -v "$python_cmd" &> /dev/null; then
+                local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
+                local major=$(echo "$version" | cut -d'.' -f1)
+                local minor=$(echo "$version" | cut -d'.' -f2)
+                
+                if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
+                    # Test if tkinter is available (preferred for GUI)
+                    if $python_cmd -c "import tkinter" 2>/dev/null; then
+                        if [ -z "$python_with_tkinter" ]; then
+                            python_with_tkinter="$python_cmd"
+                        fi
+                    else
+                        if [ -z "$python_without_tkinter" ]; then
+                            python_without_tkinter="$python_cmd"
+                        fi
                     fi
                 fi
             fi
+        done
+        
+        # Return best available Python for venv
+        if [ -n "$python_with_tkinter" ]; then
+            echo "$python_with_tkinter"
+            return 0
+        elif [ -n "$python_without_tkinter" ]; then
+            echo "$python_without_tkinter"
+            return 0
         fi
-    done
-    
-    # Prefer Python with tkinter, but accept one without if that's all we have
-    if [ -n "$python_with_tkinter" ]; then
-        echo "$python_with_tkinter"
-        return 0
-    elif [ -n "$python_without_tkinter" ]; then
-        echo "$python_without_tkinter"
-        return 0
     fi
     
     return 1
@@ -87,8 +124,8 @@ find_python() {
 # Find Python interpreter
 echo "🔍 Finding Python interpreter..."
 if ! PYTHON=$(find_python); then
-    echo "❌ Error: Python 3.8+ is required but not found" >&2
-    echo "   Please install Python 3.8 or higher" >&2
+    echo "❌ Error: Python 3.12+ is required but not found" >&2
+    echo "   Please install Python 3.12 or higher" >&2
     exit 1
 fi
 
@@ -170,15 +207,16 @@ if [ "$USE_CONDA" = true ]; then
     CONDA_ENV_NAME="natmeg_utils"
     
     # Remove existing conda environment if it exists
-    if conda env list | grep -q -E "($CONDA_ENV_NAME|natmeg_utils)"; then
+    if conda env list | grep -q -E "(natmeg-utils|natmeg_utils)"; then
         echo "Removing existing conda environment..."
         # Try both possible names
-        conda env remove -n "$CONDA_ENV_NAME" -y 2>/dev/null || true
+        conda env remove -n "natmeg-utils" -y 2>/dev/null || true
+        conda env remove -n "natmeg_utils" -y 2>/dev/null || true
     fi
     
     # Create basic conda environment with Python and pip
     echo "Creating conda environment with Python and pip..."
-    conda create -n "$CONDA_ENV_NAME" python=>3.12 pip uv -y
+    conda create -n "$CONDA_ENV_NAME" "python>=3.12" pip uv -y
     
     # Initialize conda for the current shell session
     source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -343,14 +381,15 @@ if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
     echo ""
     echo "GUI failed to start. This may be due to PyQt issues."
     if [ "\$ENV_TYPE" = "venv" ]; then
-        echo "Try installing with conda (better PyQt support on some systems):"
-        echo "  bash install.sh --conda"
+        echo "Try installing with conda (default, better PyQt support):"
+        echo "  bash install.sh"
     else
         echo "Try these solutions:"
-        echo "  1. Reinstall with: bash install.sh --conda"
+        echo "  1. Reinstall with: bash install.sh"
         echo "  2. Check PyQt installation: conda list pyqt"
+        echo "  3. Try venv installation: bash install.sh --venv"
     fi
-    echo "  3. Use command-line interface instead: natmeg run --config config.yml"
+    echo "  4. Use command-line interface instead: natmeg run --config config.yml"
 fi
 EOF
 
@@ -469,7 +508,7 @@ if [ "$ENV_EXISTS" = false ]; then
     if [ "$USE_CONDA" = true ]; then
         echo "NEXT STEPS - Fix conda environment:"
         echo "  1. source $SHELL_CONFIG"
-        echo "  2. conda env remove -n natmeg-utils"
+        echo "  2. conda env remove -n natmeg_utils"
         echo "  3. cd $TARGET_DIR"
         echo "  4. bash install.sh --conda  # Recreate conda environment"
         echo "  5. Test with: natmeg --help"
@@ -483,8 +522,8 @@ if [ "$ENV_EXISTS" = false ]; then
         echo "  6. pip install -r requirements.txt"
         echo "  7. Test with: natmeg --help"
         echo ""
-        echo "  Alternative (recommended for Linux Rocky):"
-        echo "  bash install.sh --conda  # Use conda instead of venv"
+        echo "  Alternative (if default conda fails):"
+        echo "  bash install.sh --venv  # Use venv instead of conda"
     fi
 elif [ "$INSTALL_SUCCESS" = true ]; then
     echo "✅ Installation complete and ready to use!"
@@ -499,8 +538,8 @@ else
         echo "  - Check environment: conda env list"
         echo "  - Recreate environment: bash install.sh --conda"
     else
-        echo "  - Ensure Python 3.8+ is working: $PYTHON --version"
-        echo "  - Try conda installation: bash install.sh --conda"
+        echo "  - Ensure Python 3.12+ is working: $PYTHON --version"
+        echo "  - Try venv installation: bash install.sh --venv"
     fi
     echo "  - Check PATH: echo \$PATH"
     echo "  - View executable: cat ~/.local/bin/NatMEG-utils/natmeg"

@@ -23,34 +23,32 @@ This pipeline provides end-to-end processing for:
 
 The NatMEG pipeline includes an automated installation script that sets up everything you need:
 
-#### Standard Installation (Python Virtual Environment)
+#### Default Installation (Conda Environment)
 ```bash
 # Clone the repository
 git clone https://github.com/NatMEG/NatMEG-utils.git
 cd NatMEG-utils
 
-# Run the installer
+# Run the installer (uses conda by default)
 bash install.sh
-```
-
-#### Conda Installation (Recommended for Linux Rocky/Enterprise Linux)
-```bash
-# Clone the repository
-git clone https://github.com/NatMEG/NatMEG-utils.git
-cd NatMEG-utils
-
-# Run the installer with conda flag  
-bash install.sh --conda
 
 # View all installer options
 bash install.sh --help
 ```
 
-**When to use conda installation:**
-- **Linux Rocky/RHEL/CentOS**: Conda often provides better PyQt6 packages for enterprise Linux distributions
-- **PyQt Issues**: If you experience GUI problems with the standard installation
-- **System Dependencies**: When system PyQt packages conflict with pip-installed versions
-- **Isolated Environment**: For better package management and dependency isolation
+#### Alternative Installation (Python Virtual Environment)
+```bash
+# Clone the repository
+git clone https://github.com/NatMEG/NatMEG-utils.git
+cd NatMEG-utils
+
+# Run the installer with venv flag
+bash install.sh --venv
+```**Benefits of conda installation (now default):**
+- **Better PyQt Compatibility**: Provides isolated Python environment that avoids system conflicts
+- **Linux Compatibility**: Works well on enterprise Linux distributions (Rocky/RHEL/CentOS)
+- **Dependency Isolation**: Prevents conflicts with system-installed Python packages
+- **Reliability**: More consistent installation experience across different systems
 
 The installer will:
 - Detect your operating system (macOS/Linux) and conda installation  
@@ -73,7 +71,7 @@ If you prefer manual setup:
 #### Option 1: Conda Environment (Recommended for Linux Rocky)
 ```bash
 # Create basic conda environment
-conda create -n natmeg-utils python=3.9 pip -y
+conda create -n natmeg-utils python=3.12 pip -y
 conda activate natmeg-utils
 
 # Install dependencies via pip (same as venv approach)
@@ -99,7 +97,7 @@ source ~/.zshrc
 
 ### Prerequisites
 
-- **Python 3.9+**: Required for all pipeline components
+- **Python 3.12+**: Required for all pipeline components
 - **Conda/Miniconda**: Recommended for environment management
 - **Git**: For cloning the repository
 - **Operating System**: macOS or Linux (Windows support coming soon)
@@ -161,11 +159,11 @@ Converts NatMEG data to BIDS format and organizes it into a BIDS-compliant folde
 
 **PyQt Issues on Linux Rocky/RHEL:**
 ```bash
-# Use conda installation (creates isolated Python environment)
-bash install.sh --conda
+# Default conda installation should work out of the box
+bash install.sh
 
-# This creates a conda environment with isolated Python and pip-installs
-# the same requirements.txt, avoiding system Python conflicts
+# If you previously used venv and had issues, conda is now default
+# Creates isolated Python environment avoiding system conflicts
 ```
 
 **Conda not found:**
@@ -192,14 +190,14 @@ source ~/.zshrc
 
 **Environment activation fails:**
 ```bash
-# For conda environments
+# For conda environments (default)
 conda env list
-conda env remove -n natmeg-utils -y  # Remove corrupted environment
-bash install.sh --conda  # Recreate with conda
+conda env remove -n natmeg_utils -y  # Remove corrupted environment
+bash install.sh  # Recreate with conda (default)
 
 # For virtual environments  
 rm -rf .venv  # Remove corrupted environment
-bash install.sh  # Recreate with venv
+bash install.sh --venv  # Recreate with venv
 ```
 
 ### Platform-Specific Issues
@@ -217,11 +215,12 @@ cd ~/Sites/NatMEG-utils
 bash install.sh --conda  # This will replace the existing installation
 ```
 
-**Why conda works better on Linux Rocky:**
+**Why conda is now the default:**
 - Provides isolated Python environment separate from system Python
 - No conflicts with system-installed Python packages
-- Better compatibility with enterprise Linux distributions  
+- Better compatibility across different operating systems and distributions
 - Same requirements.txt installation but in isolated conda environment
+- Resolves PyQt issues commonly seen with system Python installations
 
 ### Runtime Issues
 
