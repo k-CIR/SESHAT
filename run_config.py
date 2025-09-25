@@ -221,11 +221,11 @@ class ConfigMainWindow:
     def create_form_widget(self, parent, key, value, help_text=None):
         """Create a form widget based on the value type"""
         frame = ttk.Frame(parent)
-        frame.pack(fill='x', padx=0, pady=1)
+        frame.pack(fill='x', padx=2, pady=1)
         
         # Label
-        label = ttk.Label(frame, text=f"{key}:", anchor='e', width=20)
-        label.pack(side='left', padx=(0, 2))
+        label = ttk.Label(frame, text=f"{key}:", anchor='e', width=25)
+        label.pack(side='left', padx=(2, 2))
         
         # Widget based on value type
         if isinstance(value, bool):
@@ -253,16 +253,28 @@ class ConfigMainWindow:
             var = tk.StringVar(value=str(value))
             widget = ttk.Entry(frame, textvariable=var, width=50)
             widget.var = var
-            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
-            
             # Special handling for project name and root fields to auto-update paths
             if key == 'Name':
-                var.trace_add('write', lambda *args: self.update_project_paths())
+                def update_name_and_paths(*args):
+                    self.update_config_value(key, var.get())
+                    self.mark_config_changed()
+                    self.update_project_paths()
+                var.trace_add('write', update_name_and_paths)
             elif key == 'Root':
-                var.trace_add('write', lambda *args: self.update_project_paths())
+                def update_root_and_paths(*args):
+                    self.update_config_value(key, var.get())
+                    self.mark_config_changed()
+                    self.update_project_paths()
+                var.trace_add('write', update_root_and_paths)
             # Mark path fields as manually edited when user changes them
             elif key in ['Raw', 'BIDS', 'Calibration', 'Crosstalk']:
-                var.trace_add('write', lambda *args, k=key: self.mark_manual_edit(k))
+                var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+                # Store the key in the lambda to avoid closure issues
+                def make_manual_edit_callback(field_key):
+                    return lambda *args: self.mark_manual_edit(field_key)
+                var.trace_add('write', make_manual_edit_callback(key))
+            else:
+                var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
         
         widget.pack(side='right', fill='x', expand=True)
         
@@ -272,7 +284,7 @@ class ConfigMainWindow:
         # Add help text on a new line directly under the entry field if provided
         if help_text:
             help_frame = ttk.Frame(parent)
-            help_frame.pack(fill='x', padx=(200, 2), pady=(0, 2))
+            help_frame.pack(fill='x', padx=(170, 2), pady=(0, 2))
             help_label = ttk.Label(help_frame, text=help_text, foreground='gray', font=('TkDefaultFont', 8))
             help_label.pack(anchor='w')
     
@@ -558,10 +570,10 @@ class ConfigMainWindow:
         
         # Check each path field against expected auto-generated pattern
         expected_paths = {
-            'Raw': f"{root_path}{display_project}/raw",
-            'BIDS': f"{root_path}{display_project}/BIDS", 
-            'Calibration': f"{root_path}{display_project}/databases/sss/sss_cal.dat",
-            'Crosstalk': f"{root_path}{display_project}/databases/ctc/ct_sparse.fif"
+            'Raw': os.path.join(root_path, display_project, "raw"),
+            'BIDS': os.path.join(root_path, display_project, "BIDS"),
+            'Calibration': os.path.join(root_path, display_project, "databases", "sss", "sss_cal.dat"),
+            'Crosstalk': os.path.join(root_path, display_project, "databases", "ctc", "ct_sparse.fif")
         }
         
         for field, expected_path in expected_paths.items():
@@ -576,75 +588,117 @@ class ConfigMainWindow:
     
     def update_project_paths(self, changed_value=None):
         """Update project-related paths when project name or root changes"""
-        # Get current values from config
+        # Prevent recursion
+        if self.programmatic_update:
+            return
+            
+        # Get current values from config data (should be updated before this call)
         project_name = self.config_data['Project'].get('Name', '').strip()
         root_path = self.config_data['Project'].get('Root', '').strip()
         
         # If no root, use default
         if not root_path:
             root_path = default_path
-            self.config_data['Project']['Root'] = root_path
         
+        # Use project name or placeholder
         display_project = project_name if project_name else '<project>'
         
-        # Set flag to indicate programmatic updates
+        # Set flag to prevent recursion
         self.programmatic_update = True
         
         try:
-            # Get old values for comparison
-            old_project = getattr(self, '_last_project_name', display_project)
+            # Get previous values for comparison
+            old_project = getattr(self, '_last_project_name', '<project>')
             old_root = getattr(self, '_last_root_path', root_path)
             
-            # For each path field, update consistently
-            path_fields = {
+            # Only update if something actually changed
+            if old_project == display_project and old_root == root_path:
+                return
+            
+            # Special case: if project name is being filled in (from empty/placeholder to actual name)
+            # we should update all paths that contain <project> regardless of manual_edits status
+            project_being_filled = (old_project == '<project>' and display_project != '<project>')
+            
+            # Define path patterns
+            path_patterns = {
                 'Raw': 'raw',
                 'BIDS': 'BIDS', 
-                'Calibration': 'databases/sss/sss_cal.dat',
-                'Crosstalk': 'databases/ctc/ct_sparse.fif'
+                'Calibration': os.path.join('databases', 'sss', 'sss_cal.dat'),
+                'Crosstalk': os.path.join('databases', 'ctc', 'ct_sparse.fif')
             }
             
-            for field, default_suffix in path_fields.items():
+            # Update each path field
+            for field, suffix in path_patterns.items():
                 current_path = self.config_data['Project'].get(field, '')
                 
-                if field not in self.manual_edits:
-                    # Auto-generated field: always use standard pattern
-                    new_path = f"{root_path}{display_project}/{default_suffix}"
+                if field not in self.manual_edits or project_being_filled:
+                    # Auto-generated path OR project name being filled in: create standard path
+                    new_path = os.path.join(root_path, display_project, suffix)
+                    
+                    # If project is being filled in, remove from manual edits so it stays auto-updated
+                    if project_being_filled and field in self.manual_edits:
+                        self.manual_edits.discard(field)
                 else:
-                    # Manually edited field: update root and project parts
-                    new_path = self.replace_path_components(current_path, old_root, old_project, root_path, display_project)
+                    # Manually edited path: intelligently update components
+                    new_path = self.smart_path_update(current_path, old_root, old_project, root_path, display_project)
                 
-                # Update config and widget
+                # Update config data
                 self.config_data['Project'][field] = new_path
+                
+                # Update widget if it exists
                 if field in self.widgets:
                     self.widgets[field].var.set(new_path)
             
-            # Store current values for next update
+            # Update root in config if it was defaulted
+            if self.config_data['Project'].get('Root', '') != root_path:
+                self.config_data['Project']['Root'] = root_path
+                if 'Root' in self.widgets:
+                    self.widgets['Root'].var.set(root_path)
+            
+            # Store current values for next comparison
             self._last_project_name = display_project
             self._last_root_path = root_path
             
         finally:
-            # Reset flag
+            # Always reset the flag
             self.programmatic_update = False
     
-    def replace_path_components(self, current_path, old_root, old_project, new_root, new_project):
-        """Replace root and project components in a path"""
+    def smart_path_update(self, current_path, old_root, old_project, new_root, new_project):
+        """Intelligently update path components while preserving manual customizations"""
         if not current_path:
-            return current_path
+            return os.path.join(new_root, new_project)
         
+        # Start with the current path
         updated_path = current_path
         
-        # Replace root component if it changed and exists in path
-        if old_root != new_root and old_root in updated_path:
-            updated_path = updated_path.replace(old_root, new_root)
+        # FIRST: Always replace <project> placeholder with actual project name
+        if '<project>' in updated_path and new_project != '<project>':
+            updated_path = updated_path.replace('<project>', new_project)
         
-        # Replace project component if it changed and exists in path
-        if old_project != new_project:
-            if old_project in updated_path and old_project != '<project>':
-                updated_path = updated_path.replace(old_project, new_project)
-            elif '<project>' in updated_path:
-                updated_path = updated_path.replace('<project>', new_project)
+        # SECOND: Handle root directory changes
+        if old_root and old_root != new_root and old_root in updated_path:
+            old_root_norm = os.path.normpath(old_root)
+            new_root_norm = os.path.normpath(new_root)
+            
+            # Replace root directory if it appears at the start of the path
+            if updated_path.startswith(old_root_norm):
+                updated_path = updated_path.replace(old_root_norm, new_root_norm, 1)
         
-        return updated_path
+        # THIRD: Handle project name changes (but not from/to <project>)
+        if (old_project != new_project and 
+            old_project != '<project>' and new_project != '<project>' and
+            old_project in updated_path):
+            
+            # Split path and replace project component
+            path_parts = updated_path.split(os.sep)
+            for i, part in enumerate(path_parts):
+                if part == old_project:
+                    path_parts[i] = new_project
+                    break
+            updated_path = os.sep.join(path_parts)
+        
+        # Normalize the final path
+        return os.path.normpath(updated_path)
     
     def mark_config_changed(self):
         """Mark configuration as changed and update UI accordingly"""
