@@ -64,80 +64,86 @@ find_conda_python_version() {
 
 # Function to find Python installation
 find_python() {
-    # Check for Python 3.12+ (required for modern packages)
+    # For conda installation, we don't need to search for system Python
+    # conda will provide Python in the environment
+    if [ "$USE_CONDA" = true ]; then
+        # Just return a placeholder since conda will handle Python installation
+        echo "conda-python"
+        return 0
+    fi
+    
+    # For venv installation, search for system Python 3.12+
     local python_with_tkinter=""
     local python_without_tkinter=""
     
-    # For conda installation, prioritize conda-available Python versions
-    if [ "$USE_CONDA" = true ]; then
-        # When using conda, we'll create the environment with the best conda Python version
-        # Just check if any Python 3.12+ is available for validation
-        for python_cmd in python3 python; do
-            if command -v "$python_cmd" &> /dev/null; then
-                local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
-                local major=$(echo "$version" | cut -d'.' -f1)
-                local minor=$(echo "$version" | cut -d'.' -f2)
-                
-                if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
-                    echo "$python_cmd"
-                    return 0
-                fi
-            fi
-        done
-    else
-        # For venv installation, prioritize system Python with tkinter
-        for python_cmd in /usr/bin/python3 python3.13 python3.12 python3 python; do
-            if command -v "$python_cmd" &> /dev/null; then
-                local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
-                local major=$(echo "$version" | cut -d'.' -f1)
-                local minor=$(echo "$version" | cut -d'.' -f2)
-                
-                if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
-                    # Test if tkinter is available (preferred for GUI)
-                    if $python_cmd -c "import tkinter" 2>/dev/null; then
-                        if [ -z "$python_with_tkinter" ]; then
-                            python_with_tkinter="$python_cmd"
-                        fi
-                    else
-                        if [ -z "$python_without_tkinter" ]; then
-                            python_without_tkinter="$python_cmd"
-                        fi
+    # For venv installation, prioritize system Python with tkinter
+    for python_cmd in /usr/bin/python3 python3.13 python3.12 python3 python; do
+        if command -v "$python_cmd" &> /dev/null; then
+            local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
+            local major=$(echo "$version" | cut -d'.' -f1)
+            local minor=$(echo "$version" | cut -d'.' -f2)
+            
+            if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
+                # Test if tkinter is available (preferred for GUI)
+                if $python_cmd -c "import tkinter" 2>/dev/null; then
+                    if [ -z "$python_with_tkinter" ]; then
+                        python_with_tkinter="$python_cmd"
+                    fi
+                else
+                    if [ -z "$python_without_tkinter" ]; then
+                        python_without_tkinter="$python_cmd"
                     fi
                 fi
             fi
-        done
-        
-        # Return best available Python for venv
-        if [ -n "$python_with_tkinter" ]; then
-            echo "$python_with_tkinter"
-            return 0
-        elif [ -n "$python_without_tkinter" ]; then
-            echo "$python_without_tkinter"
-            return 0
         fi
+    done
+    
+    # Return best available Python for venv
+    if [ -n "$python_with_tkinter" ]; then
+        echo "$python_with_tkinter"
+        return 0
+    elif [ -n "$python_without_tkinter" ]; then
+        echo "$python_without_tkinter"
+        return 0
     fi
     
     return 1
 }
 
 # Find suitable Python installation
-# Find Python interpreter
-echo "🔍 Finding Python interpreter..."
-if ! PYTHON=$(find_python); then
-    echo "❌ Error: Python 3.12+ is required but not found" >&2
-    echo "   Please install Python 3.12 or higher" >&2
-    exit 1
+if [ "$USE_CONDA" = true ]; then
+    # For conda, just verify conda is available - it will provide Python
+    echo "🔍 Checking conda availability..."
+    if ! command -v conda &> /dev/null; then
+        echo "❌ Error: conda is not installed or not in PATH" >&2
+        echo "   Please install Miniconda or Anaconda first:" >&2
+        echo "   https://docs.conda.io/en/latest/miniconda.html" >&2
+        exit 1
+    fi
+    echo "✅ Found conda: $(conda --version)"
+    PYTHON="conda-python"  # Placeholder - conda will provide Python
+else
+    # For venv, find system Python interpreter
+    echo "🔍 Finding Python interpreter..."
+    if ! PYTHON=$(find_python); then
+        echo "❌ Error: Python 3.12+ is required but not found" >&2
+        echo "   Please install Python 3.12 or higher" >&2
+        exit 1
+    fi
+    echo "✅ Found Python: $PYTHON ($($PYTHON --version))"
 fi
 
-echo "✅ Found Python: $PYTHON ($($PYTHON --version))"
-
 # Check for GUI library availability and show appropriate info
-if $PYTHON -c "import tkinter" 2>/dev/null; then
-    echo "✅ GUI support: tkinter available"
-elif $PYTHON -c "import PyQt6.QtWidgets" 2>/dev/null; then
-    echo "✅ GUI support: PyQt6 available"
+if [ "$USE_CONDA" = true ]; then
+    echo "ℹ️  GUI libraries will be installed via conda (PyQt6) for full functionality"
 else
-    echo "ℹ️  GUI libraries will be installed via PyQt6 for full functionality"
+    if $PYTHON -c "import tkinter" 2>/dev/null; then
+        echo "✅ GUI support: tkinter available"
+    elif $PYTHON -c "import PyQt6.QtWidgets" 2>/dev/null; then
+        echo "✅ GUI support: PyQt6 available"
+    else
+        echo "ℹ️  GUI libraries will be installed via PyQt6 for full functionality"
+    fi
 fi
 
 # Check for uv and mention the benefits
