@@ -526,7 +526,17 @@ class ConfigMainWindow:
         terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
         terminal_frame.pack(fill='both', expand=True, padx=5, pady=5)
         
-        self.terminal_output = scrolledtext.ScrolledText(terminal_frame, height=15, state='disabled')
+        self.terminal_output = scrolledtext.ScrolledText(
+            terminal_frame, 
+            height=15, 
+            state='disabled',
+            bg='black',
+            fg='white',
+            insertbackground='green',
+            selectbackground='gray30',
+            selectforeground='white',
+            font=('Courier', 10)
+        )
         self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
         
         # Add initial text
