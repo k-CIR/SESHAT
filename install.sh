@@ -1,9 +1,41 @@
 #!/bin/bash
-# Cross-platform NatMEG Pipeline installer using Python virtual environment
+# Cross-platform NatMEG Pipeline installer using Python virtual environment or Conda
 
 set -e
 
-echo "Installing NatMEG Pipeline with Python virtual environment..."
+# Parse command line arguments
+USE_CONDA=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --conda)
+            USE_CONDA=true
+            shift
+            ;;
+        --help|-h)
+            echo "NatMEG Pipeline Installer"
+            echo "Usage: $0 [options]"
+            echo ""
+            echo "Options:"
+            echo "  --conda     Use conda environment instead of Python venv (recommended for Linux Rocky)"
+            echo "  --help, -h  Show this help message"
+            echo ""
+            echo "Default installation uses Python virtual environment (.venv)"
+            echo "Conda installation may resolve PyQt issues on some Linux distributions"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$USE_CONDA" = true ]; then
+    echo "Installing NatMEG Pipeline with Conda environment..."
+else
+    echo "Installing NatMEG Pipeline with Python virtual environment..."
+fi
 
 # Detect operating system
 OS=$(uname -s)
@@ -123,29 +155,66 @@ for file in "${RELEVANT_FILES[@]}"; do
     fi
 done
 
-# Create virtual environment
-echo "Creating Python virtual environment..."
-VENV_PATH="$TARGET_DIR/.venv"
-
-if [ -d "$VENV_PATH" ]; then
-    echo "Removing existing virtual environment..."
-    rm -rf "$VENV_PATH"
+# Create environment (conda or venv)
+if [ "$USE_CONDA" = true ]; then
+    echo "Setting up Conda environment..."
+    
+    # Check if conda is available
+    if ! command -v conda &> /dev/null; then
+        echo "❌ Error: conda is not installed or not in PATH" >&2
+        echo "   Please install Miniconda or Anaconda first:" >&2
+        echo "   https://docs.conda.io/en/latest/miniconda.html" >&2
+        exit 1
+    fi
+    
+    CONDA_ENV_NAME="natmeg_utils"
+    
+    # Remove existing conda environment if it exists
+    if conda env list | grep -q -E "($CONDA_ENV_NAME|natmeg_utils)"; then
+        echo "Removing existing conda environment..."
+        # Try both possible names
+        conda env remove -n "$CONDA_ENV_NAME" -y 2>/dev/null || true
+    fi
+    
+    # Create basic conda environment with Python and pip
+    echo "Creating conda environment with Python and pip..."
+    conda create -n "$CONDA_ENV_NAME" python=>3.12 pip uv -y
+    
+    # Initialize conda for the current shell session
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    
+    # Activate the environment
+    conda activate "$CONDA_ENV_NAME"
+    
+    ENV_TYPE="conda"
+    ENV_PATH="$CONDA_ENV_NAME"
+    
+else
+    echo "Creating Python virtual environment..."
+    VENV_PATH="$TARGET_DIR/.venv"
+    
+    if [ -d "$VENV_PATH" ]; then
+        echo "Removing existing virtual environment..."
+        rm -rf "$VENV_PATH"
+    fi
+    
+    # Always create venv with standard Python first
+    $PYTHON -m venv "$VENV_PATH"
+    source "$VENV_PATH/bin/activate"
+    ENV_TYPE="venv"
+    ENV_PATH="$VENV_PATH"
 fi
 
-# Always create venv with standard Python first
-$PYTHON -m venv "$VENV_PATH"
-source "$VENV_PATH/bin/activate"
-
-# Check if uv is available globally, if not install it in the venv
+# Check if uv is available globally, if not install it in the environment
 if command -v uv &> /dev/null; then
     echo "✓ Using system uv for package installation"
     USE_UV=true
 else
-    echo "Installing uv in virtual environment for faster package installation..."
+    echo "Installing uv in $ENV_TYPE environment for faster package installation..."
     pip install --upgrade pip
     pip install uv
     if command -v uv &> /dev/null; then
-        echo "✓ uv installed successfully in virtual environment"
+        echo "✓ uv installed successfully in $ENV_TYPE environment"
         USE_UV=true
     else
         echo "⚠ uv installation failed, falling back to pip"
@@ -153,21 +222,21 @@ else
     fi
 fi
 
-# Install requirements with uv or pip
+# Install requirements with uv or pip (same approach for both conda and venv)
 echo "Installing Python dependencies..."
 if [ "$USE_UV" = true ]; then
     if [ -f "$TARGET_DIR/requirements.txt" ]; then
         uv pip install -r "$TARGET_DIR/requirements.txt"
     else
         echo "Warning: requirements.txt not found, installing basic dependencies..."
-        uv pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil
+        uv pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil PyQt6
     fi
 else
     if [ -f "$TARGET_DIR/requirements.txt" ]; then
         pip install -r "$TARGET_DIR/requirements.txt"
     else
         echo "Warning: requirements.txt not found, installing basic dependencies..."
-        pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil
+        pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil PyQt6
     fi
 fi
 
@@ -190,7 +259,7 @@ echo "Creating natmeg executable..."
 
 cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << EOF
 #!/bin/bash
-# NatMEG Pipeline Executable - Auto-generated with Python venv
+# NatMEG Pipeline Executable - Auto-generated with $ENV_TYPE environment
 
 # SAFETY CHECKS - Prevent terminal crashes at all costs
 set +e  # Don't exit on errors
@@ -202,23 +271,54 @@ trap 'echo "Warning: Error in natmeg script, but terminal will remain open." >&2
 trap 'echo "Warning: Script interrupted, but terminal will remain open." >&2; exit 130' INT
 trap 'echo "Warning: Script terminated, but terminal will remain open." >&2; exit 143' TERM
 
-# Path to the virtual environment
-VENV_PATH="\$HOME/.local/bin/NatMEG-utils/.venv"
 SCRIPT_PATH="\$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py"
-PYTHON_VENV="\$VENV_PATH/bin/python"
 
-# Check if virtual environment exists
-if [ ! -d "\$VENV_PATH" ]; then
-    echo "Error: Virtual environment not found at \$VENV_PATH"
-    echo "Please re-run the installation script."
-    exit 1
-fi
+# Environment-specific setup
+ENV_TYPE="$ENV_TYPE"
 
-# Check if Python executable exists in venv
-if [ ! -f "\$PYTHON_VENV" ]; then
-    echo "Error: Python executable not found in virtual environment"
-    echo "Virtual environment may be corrupted. Please re-run the installation script."
-    exit 1
+if [ "\$ENV_TYPE" = "conda" ]; then
+    # Conda environment setup
+    CONDA_ENV_NAME="$CONDA_ENV_NAME"
+    
+    # Check if conda is available
+    if ! command -v conda &> /dev/null; then
+        echo "Error: conda command not found"
+        echo "Please ensure conda is installed and in your PATH"
+        exit 1
+    fi
+    
+    # Check if conda environment exists
+    if ! conda env list | grep -q "\$CONDA_ENV_NAME"; then
+        echo "Error: Conda environment '\$CONDA_ENV_NAME' not found"
+        echo "Please re-run the installation script with --conda flag"
+        exit 1
+    fi
+    
+    # Activate conda environment and run script
+    source "\$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "\$CONDA_ENV_NAME"
+    PYTHON_CMD="python"
+    
+else
+    # Virtual environment setup
+    VENV_PATH="\$HOME/.local/bin/NatMEG-utils/.venv"
+    PYTHON_VENV="\$VENV_PATH/bin/python"
+    
+    # Check if virtual environment exists
+    if [ ! -d "\$VENV_PATH" ]; then
+        echo "Error: Virtual environment not found at \$VENV_PATH"
+        echo "Please re-run the installation script."
+        exit 1
+    fi
+    
+    # Check if Python executable exists in venv
+    if [ ! -f "\$PYTHON_VENV" ]; then
+        echo "Error: Python executable not found in virtual environment"
+        echo "Virtual environment may be corrupted. Please re-run the installation script."
+        exit 1
+    fi
+    
+    PYTHON_CMD="\$PYTHON_VENV"
 fi
 
 # Check if main script exists
@@ -235,19 +335,22 @@ if [ ! -r "\$SCRIPT_PATH" ]; then
     exit 1
 fi
 
-# Use the virtual environment's Python directly
-# This ensures we use the exact Python from the venv with all its packages
-"\$PYTHON_VENV" "\$SCRIPT_PATH" "\$@"
+# Run the script with the appropriate Python
+"\$PYTHON_CMD" "\$SCRIPT_PATH" "\$@"
 
 # If the above fails and it's a GUI command, provide helpful error message
 if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
     echo ""
-    echo "GUI failed to start. This is likely due to tkinter not being available."
-    echo "Try these solutions:"
-    echo "  1. Install tkinter: brew install python-tk"
-    echo "  2. Use system Python: /usr/bin/python3 (if available)"
-    echo "  3. Install Python from python.org (includes tkinter)"
-    echo "  4. Use command-line interface instead: natmeg run --config config.yml"
+    echo "GUI failed to start. This may be due to PyQt issues."
+    if [ "\$ENV_TYPE" = "venv" ]; then
+        echo "Try installing with conda (better PyQt support on some systems):"
+        echo "  bash install.sh --conda"
+    else
+        echo "Try these solutions:"
+        echo "  1. Reinstall with: bash install.sh --conda"
+        echo "  2. Check PyQt installation: conda list pyqt"
+    fi
+    echo "  3. Use command-line interface instead: natmeg run --config config.yml"
 fi
 EOF
 
@@ -263,35 +366,73 @@ else
     echo "$HOME/.local/bin/NatMEG-utils is already in PATH"
 fi
 
-# Check virtual environment
-echo "Checking virtual environment..."
-VENV_PATH="$TARGET_DIR/.venv"
+# Check environment
+echo "Checking $ENV_TYPE environment..."
 
-if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
-    echo "✓ Virtual environment found at $VENV_PATH"
-    
-    # Test if we can import key packages
-    source "$VENV_PATH/bin/activate"
-    if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
-        echo "✓ Core packages (mne, pandas, numpy) successfully installed"
+if [ "$ENV_TYPE" = "conda" ]; then
+    # Check conda environment
+    if conda env list | grep -q "$CONDA_ENV_NAME"; then
+        echo "✓ Conda environment '$CONDA_ENV_NAME' found"
         
-        # Test tkinter for GUI functionality
-        if python -c "import tkinter" 2>/dev/null; then
-            echo "✓ tkinter available - GUI will work"
-            ENV_EXISTS=true
+        # Initialize conda for the current shell session and activate
+        source "$(conda info --base)/etc/profile.d/conda.sh"
+        conda activate "$CONDA_ENV_NAME"
+        if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
+            echo "✓ Core packages (mne, pandas, numpy) successfully installed"
+            
+            # Test PyQt for GUI functionality
+            if python -c "import PyQt6.QtWidgets" 2>/dev/null || python -c "import PyQt5.QtWidgets" 2>/dev/null; then
+                echo "✓ PyQt available - GUI will work"
+                ENV_EXISTS=true
+            elif python -c "import tkinter" 2>/dev/null; then
+                echo "✓ tkinter available - GUI will work (fallback)"
+                ENV_EXISTS=true
+            else
+                echo "⚠ Warning: No GUI toolkit available - GUI features disabled"
+                echo "  Command-line interface will still work"
+                ENV_EXISTS=true
+            fi
         else
-            echo "⚠ Warning: tkinter not available - GUI features disabled"
-            echo "  Command-line interface will still work"
-            ENV_EXISTS=true
+            echo "⚠ Warning: Some required packages may be missing"
+            ENV_EXISTS=false
         fi
     else
-        echo "⚠ Warning: Some required packages may be missing"
+        echo "⚠ Warning: Conda environment not found"
         ENV_EXISTS=false
     fi
-    deactivate
 else
-    echo "⚠ Warning: Virtual environment not found or corrupted"
-    ENV_EXISTS=false
+    # Check virtual environment
+    VENV_PATH="$TARGET_DIR/.venv"
+    
+    if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
+        echo "✓ Virtual environment found at $VENV_PATH"
+        
+        # Test if we can import key packages
+        source "$VENV_PATH/bin/activate"
+        if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
+            echo "✓ Core packages (mne, pandas, numpy) successfully installed"
+            
+            # Test GUI toolkits
+            if python -c "import PyQt6.QtWidgets" 2>/dev/null; then
+                echo "✓ PyQt6 available - GUI will work"
+                ENV_EXISTS=true
+            elif python -c "import tkinter" 2>/dev/null; then
+                echo "✓ tkinter available - GUI will work (fallback)"
+                ENV_EXISTS=true
+            else
+                echo "⚠ Warning: No GUI toolkit available - GUI features disabled"
+                echo "  Command-line interface will still work"
+                ENV_EXISTS=true
+            fi
+        else
+            echo "⚠ Warning: Some required packages may be missing"
+            ENV_EXISTS=false
+        fi
+        deactivate
+    else
+        echo "⚠ Warning: Virtual environment not found or corrupted"
+        ENV_EXISTS=false
+    fi
 fi
 
 echo ""
@@ -325,20 +466,42 @@ echo ""
 
 # Conditional instructions based on installation status
 if [ "$ENV_EXISTS" = false ]; then
-    echo "NEXT STEPS - Fix virtual environment:"
-    echo "  1. source $SHELL_CONFIG"
-    echo "  2. cd $TARGET_DIR"
-    echo "  3. rm -rf .venv  # Remove corrupted environment"
-    echo "  4. $PYTHON_CMD -m venv .venv  # Recreate environment"
-    echo "  5. source .venv/bin/activate"
-    echo "  6. pip install -r requirements.txt"
-    echo "  7. Test with: natmeg --help"
+    if [ "$USE_CONDA" = true ]; then
+        echo "NEXT STEPS - Fix conda environment:"
+        echo "  1. source $SHELL_CONFIG"
+        echo "  2. conda env remove -n natmeg-utils"
+        echo "  3. cd $TARGET_DIR"
+        echo "  4. bash install.sh --conda  # Recreate conda environment"
+        echo "  5. Test with: natmeg --help"
+    else
+        echo "NEXT STEPS - Fix virtual environment:"
+        echo "  1. source $SHELL_CONFIG"
+        echo "  2. cd $TARGET_DIR"
+        echo "  3. rm -rf .venv  # Remove corrupted environment"
+        echo "  4. $PYTHON -m venv .venv  # Recreate environment"
+        echo "  5. source .venv/bin/activate"
+        echo "  6. pip install -r requirements.txt"
+        echo "  7. Test with: natmeg --help"
+        echo ""
+        echo "  Alternative (recommended for Linux Rocky):"
+        echo "  bash install.sh --conda  # Use conda instead of venv"
+    fi
 elif [ "$INSTALL_SUCCESS" = true ]; then
     echo "✅ Installation complete and ready to use!"
+    if [ "$USE_CONDA" = true ]; then
+        echo "Using conda environment: $CONDA_ENV_NAME"
+    fi
     echo "Test with: natmeg --help"
 else
     echo "TROUBLESHOOTING:"
-    echo "  - Ensure Python 3.8+ is working: $PYTHON_CMD --version"
+    if [ "$USE_CONDA" = true ]; then
+        echo "  - Check conda installation: conda --version"
+        echo "  - Check environment: conda env list"
+        echo "  - Recreate environment: bash install.sh --conda"
+    else
+        echo "  - Ensure Python 3.8+ is working: $PYTHON --version"
+        echo "  - Try conda installation: bash install.sh --conda"
+    fi
     echo "  - Check PATH: echo \$PATH"
     echo "  - View executable: cat ~/.local/bin/NatMEG-utils/natmeg"
     echo "  - Re-run installer if needed"

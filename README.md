@@ -23,6 +23,7 @@ This pipeline provides end-to-end processing for:
 
 The NatMEG pipeline includes an automated installation script that sets up everything you need:
 
+#### Standard Installation (Python Virtual Environment)
 ```bash
 # Clone the repository
 git clone https://github.com/NatMEG/NatMEG-utils.git
@@ -32,11 +33,30 @@ cd NatMEG-utils
 bash install.sh
 ```
 
+#### Conda Installation (Recommended for Linux Rocky/Enterprise Linux)
+```bash
+# Clone the repository
+git clone https://github.com/NatMEG/NatMEG-utils.git
+cd NatMEG-utils
+
+# Run the installer with conda flag  
+bash install.sh --conda
+
+# View all installer options
+bash install.sh --help
+```
+
+**When to use conda installation:**
+- **Linux Rocky/RHEL/CentOS**: Conda often provides better PyQt6 packages for enterprise Linux distributions
+- **PyQt Issues**: If you experience GUI problems with the standard installation
+- **System Dependencies**: When system PyQt packages conflict with pip-installed versions
+- **Isolated Environment**: For better package management and dependency isolation
+
 The installer will:
-- Detect your operating system (macOS/Linux) and conda installation
+- Detect your operating system (macOS/Linux) and conda installation  
 - Create a `natmeg` executable in `~/.local/bin/`
 - Add `~/.local/bin` to your PATH if needed
-- Guide you through conda environment setup
+- Set up either Python venv or conda environment based on your choice
 - Provide clear troubleshooting instructions
 
 After installation, you can use the pipeline from anywhere:
@@ -50,22 +70,24 @@ natmeg --help                  # Show all options
 
 If you prefer manual setup:
 
-#### 1. Create Conda Environment
+#### Option 1: Conda Environment (Recommended for Linux Rocky)
 ```bash
-conda create -n natmeg_utils python=3.9 -y
-conda activate natmeg_utils
+# Create basic conda environment
+conda create -n natmeg-utils python=3.9 pip -y
+conda activate natmeg-utils
+
+# Install dependencies via pip (same as venv approach)
+pip install -r requirements.txt
 ```
 
-#### 2. Install Dependencies
+#### Option 2: Python Virtual Environment
 ```bash
-# Core dependencies
-conda install mne mne-bids numpy pandas matplotlib pyyaml
+# Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
-# Optional dependencies for advanced features
-pip install json5  # For JSON files with comments
-
-# Install pipeline in development mode
-pip install -e .
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 #### 3. Add to PATH (Optional)
@@ -137,6 +159,15 @@ Converts NatMEG data to BIDS format and organizes it into a BIDS-compliant folde
 
 ### Installation Issues
 
+**PyQt Issues on Linux Rocky/RHEL:**
+```bash
+# Use conda installation (creates isolated Python environment)
+bash install.sh --conda
+
+# This creates a conda environment with isolated Python and pip-installs
+# the same requirements.txt, avoiding system Python conflicts
+```
+
 **Conda not found:**
 ```bash
 # Install conda first
@@ -161,23 +192,48 @@ source ~/.zshrc
 
 **Environment activation fails:**
 ```bash
-# Check conda environments
+# For conda environments
 conda env list
+conda env remove -n natmeg-utils -y  # Remove corrupted environment
+bash install.sh --conda  # Recreate with conda
 
-# Recreate environment if needed
-conda remove -n natmeg_utils --all -y
-conda create -n natmeg_utils python=3.9 -y
-conda activate natmeg_utils
-cd ~/Sites/NatMEG-utils
-pip install -e .
+# For virtual environments  
+rm -rf .venv  # Remove corrupted environment
+bash install.sh  # Recreate with venv
 ```
+
+### Platform-Specific Issues
+
+**Linux Rocky/RHEL/CentOS - PyQt GUI Issues:**
+
+The GUI may fail to start on enterprise Linux distributions due to PyQt compatibility issues with system libraries. **Solution: Use conda installation**
+
+```bash
+# Recommended approach
+bash install.sh --conda
+
+# If already installed with pip/venv, switch to conda:
+cd ~/Sites/NatMEG-utils
+bash install.sh --conda  # This will replace the existing installation
+```
+
+**Why conda works better on Linux Rocky:**
+- Provides isolated Python environment separate from system Python
+- No conflicts with system-installed Python packages
+- Better compatibility with enterprise Linux distributions  
+- Same requirements.txt installation but in isolated conda environment
 
 ### Runtime Issues
 
 **Module import errors:**
 ```bash
-# Ensure you're in the correct environment
-conda activate natmeg_utils
+# For conda environments
+conda activate natmeg-utils
+conda list  # Check installed packages
+
+# For virtual environments
+source .venv/bin/activate
+pip list  # Check installed packages
 
 # Install missing dependencies
 pip install mne mne-bids pyyaml
