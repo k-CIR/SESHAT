@@ -7,7 +7,7 @@ depricated
 
 # Ignore test files
 *test*
-
+*tmp*
 .venv
 venv
 # Ignore node_modules directory
