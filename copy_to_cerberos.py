@@ -138,14 +138,14 @@ def check_match(source, destination):
     match = False
     if not exists(destination):
         match = False
-    
-    if isdir(source):
-        match = filecmp.dircmp(source, destination).funny_files == []
-    # Check if fif file and size > 2GB, then expecting split and use check_fif
-    if all([file_contains(basename(source), [r'\.fif$', r'\.fif']), check_size_fif(source)]):
-        match, source, destination = check_fif(source, destination)
     else:
-        match = filecmp.cmp(source, destination, shallow=False)
+        if isdir(source):
+            match = filecmp.dircmp(source, destination).funny_files == []
+        # Check if fif file and size > 2GB, then expecting split and use check_fif
+        if all([file_contains(basename(source), [r'\.fif$', r'\.fif']), check_size_fif(source)]):
+            match, source, destination = check_fif(source, destination)
+        else:
+            match = filecmp.cmp(source, destination, shallow=False)
 
     return match, source, destination
     
@@ -181,18 +181,32 @@ def copy_data(source, destination, logfile=None, log_path=None):
                 if logfile and log_path:
                     log('Copy', f'Copied (split if > 2GB) {source} --> {destination}', 
                         logfile=logfile, logpath=log_path)
+                return True, source, destination
             except Exception as e:
-                copy_if_newer_or_larger(source, destination)
-                if logfile and log_path:
-                    log('Copy', f'{source} --> {destination} {e}', 'warning',
-                        logfile=logfile, logpath=log_path)
+                try:
+                    copy_if_newer_or_larger(source, destination)
+                    if logfile and log_path:
+                        log('Copy', f'Fallback copy: {source} --> {destination} (MNE failed: {e})', 'warning',
+                            logfile=logfile, logpath=log_path)
+                    return True, source, destination
+                except Exception as e2:
+                    if logfile and log_path:
+                        log('Copy', f'Copy failed: {source} --> {destination} ({e2})', 'error',
+                            logfile=logfile, logpath=log_path)
+                    return False, source, destination
         else:
             # For non-fif files, use standard copy logic
-            copy_if_newer_or_larger(source, destination)
-            log('Copy', f'{source} --> {destination} {e}', 'warning',
+            try:
+                copy_if_newer_or_larger(source, destination)
+                if logfile and log_path:
+                    log('Copy', f'{source} --> {destination}', 'info',
+                            logfile=logfile, logpath=log_path)
+                return True, source, destination
+            except Exception as e:
+                if logfile and log_path:
+                    log('Copy', f'Copy failed: {source} --> {destination} ({e})', 'error',
                         logfile=logfile, logpath=log_path)
-
-    return True, source, destination
+                return False, source, destination
 
 def make_process_list(config, check_existing=False):
     local_dir = config['Raw']
@@ -348,16 +362,20 @@ def process_file_worker(file_info, logfile, log_path):
         match_exists, source, destination = check_match(source, destination)
         if not match_exists:
             success, src, dst = copy_data(source, destination, logfile=logfile, log_path=log_path)
-            msg = "Copy completed successfully"
-            match = True
+            if success:
+                msg = "Copy completed successfully"
+                operation_success = True
+            else:
+                msg = "Copy failed"
+                operation_success = False
         else:
             msg = "File already up to date"
-            match = True
+            operation_success = True  # File is already correct, consider this success
     except Exception as e:
         msg = f"Error processing file: {str(e)}"
-        match = False
+        operation_success = False
 
-    return match, source, destination, msg
+    return operation_success, source, destination, msg
 
 def parallel_copy_files(config, max_workers=4):
     """
@@ -443,7 +461,8 @@ def parallel_copy_files(config, max_workers=4):
 
 def update_copy_report(results, config):
     """
-    Update the copy results report with new entries, avoiding duplicates.
+    Update the copy results report with new entries, consolidating by original file.
+    Each original file appears once with multiple destinations as lists when applicable.
     
     Args:
         results: List of tuples (success, source, destination, message) from file operations
@@ -466,63 +485,101 @@ def update_copy_report(results, config):
         except (json.JSONDecodeError, FileNotFoundError):
             existing_report = []
     
-    # Create a set of existing entries for duplicate detection
-    # Use (source, destination) as unique identifier
-    existing_entries = set()
+    # Convert existing report to consolidated format (group by original file)
+    consolidated_report = {}
     for entry in existing_report:
-        if isinstance(entry.get('New file(s)'), list):
-            # Handle multiple destination files (split files)
-            for dest in entry['New file(s)']:
-                existing_entries.add((entry['Original File'], dest))
-        else:
-            # Handle single destination file
-            existing_entries.add((entry['Original File'], entry.get('New file(s)', '')))
+        original_file = entry['Original File']
+        new_files = entry.get('New file(s)', '')
+        
+        if original_file not in consolidated_report:
+            # Create new consolidated entry
+            consolidated_report[original_file] = {
+                'Original File': original_file,
+                'Copy Date': entry.get('Copy Date', ''),
+                'Copy Time': entry.get('Copy Time', ''),
+                'New file(s)': [],
+                'Transfer status': entry.get('Transfer status', 'Unknown'),
+                'message': entry.get('message', ''),
+                'timestamp': entry.get('timestamp', '')
+            }
+        
+        # Add destination files to the list
+        if isinstance(new_files, list):
+            consolidated_report[original_file]['New file(s)'].extend(new_files)
+        elif new_files:  # Single file, not empty
+            consolidated_report[original_file]['New file(s)'].append(new_files)
     
-    # Process new results and add only non-duplicates
-    new_entries = []
+    # Process new results and consolidate by original file
+    new_consolidated = {}
     for res in results:
         source_file = res[1]
         dest_files = res[2]
+        success = res[0]
+        message = res[3]
         
-        # Handle both single files and lists of files (for split .fif files)
+        if source_file not in new_consolidated:
+            # Create new consolidated entry for this source file
+            new_consolidated[source_file] = {
+                'Original File': source_file,
+                'Copy Date': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%y%m%d'),
+                'Copy Time': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%H%M%S'),
+                'New file(s)': [],
+                'Transfer status': 'Success' if success else 'Failed',
+                'message': message,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Add destination files to the consolidated entry
         if isinstance(dest_files, list):
-            # For split files, check each destination file
-            for dest_file in dest_files:
-                if (source_file, dest_file) not in existing_entries:
-                    new_entries.append({
-                        'Original File': source_file,
-                        'Copy Date': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%y%m%d'),
-                        'Copy Time': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%H%M%S'),
-                        'New file(s)': dest_file,
-                        'Transfer status': 'Success' if res[0] else 'Failed',
-                        'message': res[3],
-                        'timestamp': datetime.now().isoformat()
-                    })
+            new_consolidated[source_file]['New file(s)'].extend(dest_files)
         else:
-            # For single files
-            if (source_file, dest_files) not in existing_entries:
-                new_entries.append({
-                    'Original File': source_file,
-                    'Copy Date': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%y%m%d'),
-                    'Copy Time': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%H%M%S'),
-                    'New file(s)': dest_files,
-                    'Transfer status': 'Success' if res[0] else 'Failed',
-                    'message': res[3],
-                    'timestamp': datetime.now().isoformat()
-                })
+            new_consolidated[source_file]['New file(s)'].append(dest_files)
+        
+        # Update status - if any operation failed, mark as failed
+        if not success:
+            new_consolidated[source_file]['Transfer status'] = 'Failed'
     
-    # Combine existing and new entries
-    updated_report = existing_report + new_entries
+    # Merge new consolidated entries with existing ones
+    for source_file, new_entry in new_consolidated.items():
+        if source_file in consolidated_report:
+            # Merge with existing entry - add new destinations
+            existing_entry = consolidated_report[source_file]
+            existing_dests = set(existing_entry['New file(s)'])
+            new_dests = set(new_entry['New file(s)'])
+            
+            # Only add truly new destinations
+            unique_new_dests = new_dests - existing_dests
+            if unique_new_dests:
+                existing_entry['New file(s)'].extend(list(unique_new_dests))
+                existing_entry['timestamp'] = new_entry['timestamp']
+                # Update status if this operation failed
+                if new_entry['Transfer status'] == 'Failed':
+                    existing_entry['Transfer status'] = 'Failed'
+        else:
+            # Add completely new entry
+            consolidated_report[source_file] = new_entry
     
-    # Write updated report back to file
+    # Convert consolidated format back to list, ensuring 'New file(s)' is properly formatted
+    final_report = []
+    for entry in consolidated_report.values():
+        # If only one destination file, keep as string for consistency
+        if len(entry['New file(s)']) == 1:
+            entry['New file(s)'] = entry['New file(s)'][0]
+        # If multiple files, keep as list
+        final_report.append(entry)
+    
+    # Write consolidated report back to file
     with open(report_file, 'w') as f:
-        json.dump(updated_report, f, indent=4)
+        json.dump(final_report, f, indent=4)
+    
+    # Count new entries added
+    new_entries_count = len(new_consolidated)
     
     # Log summary of this session
-    log('Copy', f'Report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
+    log('Copy', f'Report updated: {new_entries_count} new consolidated entries, total {len(final_report)} entries',
         logfile=config.get('Logfile', 'pipeline_log.log'), logpath=log_path)
     
-    return len(new_entries)
+    return new_entries_count
     
 
 def args_parser():

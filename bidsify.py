@@ -583,7 +583,7 @@ def generate_new_conversion_table(config: dict):
     df = pd.DataFrame(results)
 
     if not df.empty:
-        df.insert(2, 'task_flag', df.apply(
+        df.insert(2, 'status', df.apply(
             lambda x: 'check' if x['task'] not in tasks + ['Noise'] else 'ok', axis=1))
             # Added Noise to accepted task patterns
     else:
@@ -591,14 +591,12 @@ def generate_new_conversion_table(config: dict):
             'time_stamp', 'run_conversion', 'participant_from', 'participant_to',
             'session_from', 'session_to', 'task', 'split', 'run', 'datatype',
             'acquisition', 'processing', 'description', 'raw_path', 'raw_name',
-            'bids_path', 'bids_name', 'event_id', 'task_flag'
+            'bids_path', 'bids_name', 'event_id', 'status'
         ])
 
     os.makedirs(f'{path_BIDS}/conversion_logs', exist_ok=True)
     df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
     return df
-
-# TODO: continue check here
 
 
 def load_conversion_table(config: dict):
@@ -695,7 +693,7 @@ def update_conversion_table(conversion_table: pd.DataFrame,
             glob(row['bids_name'].rsplit('_', 1)[0] + '_split*' + row['bids_name'].rsplit('_', 1)[1] + '*', 
                  root_dir=row['bids_path'])) 
     
-        if not files:
+        if not files and row['status'] != 'skip' or row['status'] != 'processed':
             conversion_table.at[i, 'run_conversion'] = 'yes'
             conversion_table.at[i, 'time_stamp'] = ts
         
@@ -802,16 +800,27 @@ def bidsify(config: dict):
     df = df[df['split'].isna()]
 
     # Flag deviants and exist if found
-    deviants = df[df['task_flag'] == 'check']
+    deviants = df[df['status'] == 'check']
     if len(deviants) > 0:
         log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
         return
 
     for i, d in df.iterrows():
         
-        # Ignore files that are already converted
+        # Skip files
+        if d['status'] == 'skip':
+           d['run_conversion'] = 'no' 
+
         if d['run_conversion'] == 'no' and not overwrite:
             #print(f"{d['bids_name']} already converted")
+            continue
+        
+        # Force conversion
+        if d['run_conversion'] == 'yes' and d['status'] == 'processed':
+            d['status'] = 'ok'
+        
+        # Ignore files that are already converted
+        if d['status'] == 'skip' or d['status'] == 'processed':
             continue
         
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
@@ -939,7 +948,7 @@ def bidsify(config: dict):
         
         # Update the conversion table
         df.at[i, 'time_stamp'] = ts
-        df.at[i, 'run_conversion'] = 'no'
+        df.at[i, 'status'] = 'processed'
         df.at[i, 'run_conversion'] = 'no'
         df.at[i, 'bids_path'] = dirname(bids_path)
         df.at[i, 'bids_name'] = basename(bids_path)
