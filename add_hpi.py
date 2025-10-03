@@ -607,7 +607,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             x = raw_selection[1]
             y = raw_selection[0].T
             b = y.ravel()
-            dist=round(raw.info['sfreq']/hpifreq)-2
+            dist=round(raw.info['sfreq']/int(hpifreq))-2
             peaks, _ = find_peaks(b, distance=dist,height=0.0001)
             if peaks.size == 0:
                 log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
@@ -833,9 +833,11 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
-    proc = 'proc-hpi+'
-    if new_sfreq:
-        proc += f'ds'
+    sfreq = mne.io.read_info(datfile).get('sfreq', None)
+
+    proc = 'proc-hpi'
+    if new_sfreq and not (int(new_sfreq) == int(sfreq)):
+        proc += f'+ds'
     proc += f'_meg'
         
     savename = f'{savename}_{proc}.fif'
