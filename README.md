@@ -4,9 +4,7 @@ title: NatMEG Processing Pipeline Utility Scripts
 
 # NatMEG Processing Pipeline
 
-Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including BIDS conversion, MaxFilter processing, HPI coregistration, and data synchronization utilities.
-
-Note: The last step, to push project to the CIR-server, is not yet included. Also everything is in devlopment mode so feedback and improvements are welcome.
+Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including copying of data, MaxFilter processing, HPI coregistration, BIDS conversion, and data synchronization utilities.
 
 Read full documentation on how to use the pipeline [here](https://k-cir.github.io/cir-wiki/natmeg/preprocessing)
 
@@ -16,6 +14,129 @@ This pipeline provides end-to-end processing for:
 - **TRIUX/SQUID MEG** data from Elekta systems
 - **OPM MEG** data from Kaptah/OPM systems  
 - **EEG** data collected through TRIUX
+
+## Key Features
+
+- **Interactive HTML Dashboard**: Generate comprehensive project reports with hierarchical file trees, local/remote comparison, and interactive filtering
+- **Server Synchronization**: Automated sync to CIR server with rsync, supporting include/exclude patterns and dry-run mode
+- **Enhanced CLI Interface**: Modular subcommands for individual pipeline steps (run, copy, hpi, maxfilter, bidsify, sync, report)
+- **Flexible Installation**: Improved install.sh script with conda/venv options and cross-platform support
+- **Automated Configuration**: Generate default config files with `natmeg create-config`
+
+
+## The config file by section
+
+### RUN
+The steps to include in `natmeg run --config <config_file.yml>`, toggle between true/false to include/exclude steps.
+```yml
+RUN:
+  Copy to Cerberos: true
+  Add HPI coregistration: true
+  Run Maxfilter: true
+  Run BIDS conversion: true
+  Sync to CIR: true
+```
+### Project
+General project paths and information. Make sure to set the correct paths for your data storage locations. 
+- If using GUI project Name and Root will update Raw and BIDS paths if not manually set.
+- Calibration and Crosstalk paths refer to in Project copies of these files, original locations are set in `copy_to_cerberos.py` script.
+- Since project names can differ between Sinuhe/Kaptah and local storage, set the correct paths for your project on both systems by replacing the place holders.
+```yml
+Project:
+  Name: ''
+  CIR-ID: ''
+  InstitutionName: Karolinska Institutet
+  InstitutionAddress: Nobels vag 9, 171 77, Stockholm, Sweden
+  InstitutionDepartmentName: Department of Clinical Neuroscience (CNS)
+  Description: project for MEG data
+  Tasks:
+  - ''
+  Sinuhe raw: /neuro/data/sinuhe/<project_path_on_sinuhe> 
+  Kaptah raw: /neuro/data/kaptah/<project_path_on_kaptah>
+  Root: /neuro/data/local/
+  Raw: /neuro/data/local/<project>/raw
+  BIDS: /neuro/data/local/<project>/BIDS
+  Calibration: /neuro/data/local/<project>/databases/sss/sss_cal.dat
+  Crosstalk: /neuro/data/local/<project>/databases/ctc/ct_sparse.fif
+  Logfile: pipeline_log.log
+```
+### OPM
+```yml
+OPM:
+  polhemus:
+  - ''
+  hpi_names:
+  - HPIpre
+  - HPIpost
+  - HPIbefore
+  - HPIafter
+  frequency: 33
+  downsample_to_hz: 1000
+  overwrite: false
+  plot: false
+```
+### MaxFilter
+Default settings. 
+- Add all files for which you want continous head positioning estimation in `trans_conditions`
+- If you do not have empty room files, leave the list empty `- ''`
+- Add project bad channels in `bad_channels` list, one per line, or leave empty `- ''`
+```yml
+MaxFilter:
+  standard_settings:
+    trans_conditions:
+    - ''
+    trans_option: continous
+    merge_runs: true
+    empty_room_files:
+    - empty_room_before.fif
+    - empty_room_after.fif
+    sss_files:
+    - ''
+    autobad: true
+    badlimit: '7'
+    bad_channels:
+    - ''
+    tsss_default: true
+    correlation: '0.98'
+    movecomp_default: true
+    subjects_to_skip:
+    - ''
+  advanced_settings:
+    force: false
+    downsample: false
+    downsample_factor: '4'
+    apply_linefreq: false
+    linefreq_Hz: '50'
+    maxfilter_version: /neuro/bin/util/maxfilter
+    MaxFilter_commands: ''
+    debug: false
+````
+### BIDS
+BIDS conversion settings. Make sure to set the correct paths for your files and project information. Example `participant_mapping_example.csv`.
+- The `bids_conversion.tsv` is generated if not already existing and controls the conversion. Edit task names and runs, and set status to `ok`. BIDS conversion will not be done if there are any file has status `check`.
+
+```yml
+BIDS:
+  Dataset_description: dataset_description.json
+  Participants: participants.tsv
+  Participants_mapping_file: participant_mapping_example.csv
+  Conversion_file: bids_conversion.tsv
+  Overwrite_conversion: false
+  Original_subjID_name: old_subject_id
+  New_subjID_name: new_subject_id
+  Original_session_name: old_session_id
+  New_session_name: new_session_id
+  overwrite: false
+  dataset_type: raw
+  data_license: ''
+  authors: ''
+  acknowledgements: ''
+  how_to_acknowledge: ''
+  funding: ''
+  ethics_approvals: ''
+  references_and_links: ''
+  doi: doi:<insert_doi>
+```
 
 ## Installation
 
@@ -37,6 +158,9 @@ bash install.sh --help
 ```
 
 #### Alternative Installation (Python Virtual Environment)
+
+Note: Does not work on all Linux distributions (e.g. Rocky/RHEL/CentOS) due to PyQt compatibility issues. Use default conda installation instead.
+
 ```bash
 # Clone the repository
 git clone https://github.com/NatMEG/NatMEG-utils.git
@@ -71,8 +195,8 @@ If you prefer manual setup:
 #### Option 1: Conda Environment (Recommended for Linux Rocky)
 ```bash
 # Create basic conda environment
-conda create -n natmeg-utils python=3.12 pip -y
-conda activate natmeg-utils
+conda create -n natmeg_utils python>=3.12 pip uv -y
+conda activate natmeg_utils
 
 # Install dependencies via pip (same as venv approach)
 pip install -r requirements.txt
@@ -111,26 +235,40 @@ source ~/.zshrc
 After installation, you can use the `natmeg` command from anywhere:
 
 ```bash
+
 # Launch GUI configuration interface
-natmeg gui
+natmeg gui # Loads a default configuration file if none specified
 
-# Run complete pipeline
-natmeg run --config config.yml
+# Create configuration file
+natmeg create-config --output my_config.yml  # Generate default config
 
-# Run specific components
-natmeg copy --config config.yml      # Data synchronization only
-natmeg hpi --config config.yml       # HPI coregistration only  
-natmeg maxfilter --config config.yml # MaxFilter processing only
-natmeg bidsify --config config.yml   # BIDS conversion only
+# Run complete pipeline with options
+natmeg run --config config.yml               # Complete pipeline
+natmeg run --config config.yml --dry-run     # Preview without execution
+natmeg run --config config.yml --no-report   # Skip final HTML report
+natmeg run --config config.yml --delete      # Delete remote files not in source
 
-# Sync data to remote server (new interface)
-natmeg sync --create-config                         # Generate example server config
-natmeg sync --server-config servers.yml --test      # Test default server connection
-natmeg sync --directory /data/project               # Sync directory (default server 'cir')
-natmeg sync --config project_config.yml --dry-run   # Derive dir from project config
+# Run individual components
+natmeg copy --config config.yml              # Data synchronization only
+natmeg hpi --config config.yml               # HPI coregistration only  
+natmeg maxfilter --config config.yml         # MaxFilter processing only
+natmeg maxfilter --config config.yml --dry-run  # Show commands without execution
+natmeg bidsify --config config.yml           # BIDS conversion only
 
-# Show help
+# Server synchronization with advanced options
+natmeg sync --create-config                  # Generate example server config
+natmeg sync --server-config servers.yml --test      # Test server connection
+natmeg sync --directory /data/project        # Sync directory (default 'cir' server)  
+natmeg sync --config project_config.yml --dry-run   # Preview sync from project config
+natmeg sync --directory /data/project --delete      # Delete remote files not in source
+natmeg sync --directory /data/project --exclude "*.tmp" --include "*.fif"  # Pattern filtering
+
+# Generate project reports
+natmeg report --config config.yml            # Generate HTML dashboard
+
+# Show help for all commands
 natmeg --help
+natmeg run --help      # Detailed help for specific subcommand
 ```
 
 ## Pipeline Components
@@ -227,7 +365,7 @@ bash install.sh --conda  # This will replace the existing installation
 **Module import errors:**
 ```bash
 # For conda environments
-conda activate natmeg-utils
+conda activate natmeg_utils
 conda list  # Check installed packages
 
 # For virtual environments

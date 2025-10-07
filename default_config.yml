@@ -13,8 +13,8 @@ Project:
   Description: project for MEG data
   Tasks:
   - ''
-  Sinuhe raw: /neuro/data/sinuhe
-  Kaptah raw: /neuro/data/kaptah
+  Sinuhe raw: /neuro/data/sinuhe/<project_path_on_sinuhe> 
+  Kaptah raw: /neuro/data/kaptah/<project_path_on_kaptah>
   Root: /neuro/data/local/
   Raw: /neuro/data/local/<project>/raw
   BIDS: /neuro/data/local/<project>/BIDS
