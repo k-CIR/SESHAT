@@ -674,7 +674,6 @@ class MaxFilter:
             clean_path = f"{subj_out}/{clean}"
             log_file = f'{subj_out}/log/{os.path.basename(clean).replace(".fif",".log")}'
             
-            print(f'Running MaxFilter on {subject} | {session} | {task} | {file}')
             print(f'Input file: {file_path}')
             print(f'Expected output: {clean_path}')
 
@@ -702,6 +701,16 @@ class MaxFilter:
             command_mxf = re.sub(r'\\s+', ' ', command_mxf).strip()
 
             if not exists(clean_path):
+
+                #TODO: add check for bads and exclude?
+                # raw = mne.io.read_raw_fif(file_path, allow_maxshield=True, verbose='error')
+                # bads = mne.preprocessing.find_bad_channels_maxwell(
+                #     raw=raw,
+                #     calibration=self._cal.mxf.replace('-cal ', ''),
+                #     cross_talk=self._ctc.mxf.replace('-ctc ', ''),
+                #     verbose='error'
+                # )
+
                 print(f'Running MaxFilter on {subject} | {session} | {task} | {file}')
                 if not debug:
                     try:
