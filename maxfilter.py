@@ -748,7 +748,7 @@ class MaxFilter:
                 # Use absolute path
                 file = f"{subj_in}/{file}"
                 clean = f"{subj_out}/{clean}"
-                log = f'{subj_out}/{basename(clean).replace(".fif",".log")}'
+                log = f'{subj_out}/log/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
@@ -780,7 +780,7 @@ class MaxFilter:
                             subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
                             log('MaxFilter', f'{file} -> {clean}', 'info', logfile=self.logfile, log_path=self.logpath)
                         except Exception as e:
-                            print(f'Error occurred while running MaxFilter: {e}')
+                            print(f'Error occurred while running MaxFilter. See {self.logfile} for details.')
                     else:
                         print(self.command_mxf)
 
