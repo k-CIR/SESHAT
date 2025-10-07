@@ -16,10 +16,8 @@ from os.path import dirname, abspath, exists, isdir
 from datetime import datetime
 from typing import Dict, List, Optional, Union
 from copy import deepcopy
-from tkinter.filedialog import askdirectory
 from mne_bids import print_dir_tree
-
-from utils import log
+from utils import log, askdirectory
 
 sync_config = '/home/natmeg/.config/sync_config.yml'
 
@@ -324,7 +322,7 @@ def get_parameters(config: Union[str, Dict]) -> Dict:
     elif isinstance(config, dict):
         config_dict = deepcopy(config)
 
-    sync_dict = deepcopy(config_dict['project'])
+    sync_dict = deepcopy(config_dict['Project'])
     return sync_dict
 
 

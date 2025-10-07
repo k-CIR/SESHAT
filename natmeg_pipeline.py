@@ -20,6 +20,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Create default configuration file
+  natmeg create-config                    # Creates default_config.yml
+  natmeg create-config -o my_config.yml   # Creates my_config.yml
+  
   # Launch GUI for interactive configuration
   natmeg gui
   natmeg gui --config existing_config.yml
@@ -56,6 +60,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     # GUI command
     gui_parser = subparsers.add_parser('gui', help='Launch configuration GUI')
     gui_parser.add_argument('--config', help='Configuration file to load')
+    gui_parser.add_argument('--create-config', help='Create default configuration file and exit')
     
     # Run complete pipeline
     run_parser = subparsers.add_parser('run', help='Run complete pipeline')
@@ -84,6 +89,10 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     report_parser = subparsers.add_parser('report', help='Generate project HTML report only')
     report_parser.add_argument('--config', required=True, help='Project configuration file used to locate data roots')
     report_parser.add_argument('--no-report', action='store_true', help='(Ignored for compatibility)')
+    
+    # Create configuration file command
+    create_config_parser = subparsers.add_parser('create-config', help='Create default configuration file')
+    create_config_parser.add_argument('--output', '-o', default='default_config.yml', help='Output filename (default: default_config.yml)')
     
     # Server sync command (updated to reflect new sync_to_cir interface)
     sync_parser = subparsers.add_parser('sync', help='Sync data to remote server')
@@ -116,9 +125,9 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
                         
-            logfile = config['project'].get('Logfile', 'pipeline_log.log')
+            logfile = config['Project'].get('Logfile', 'pipeline_log.log')
 
-            project_root = os.path.dirname(config['project'].get('squidMEG', '.')) or os.path.dirname(config['project'].get('opmMEG', '.'))
+            project_root = os.path.join(config['Project'].get('Root', '.'), config.get('Name', ''))
             logpath = os.path.join(project_root, 'log')
             os.makedirs(logpath, exist_ok=True)
             # Initialize centralized logging once for this run
@@ -159,7 +168,7 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
             if config['RUN'].get('Sync to CIR', False):
                 import sync_to_cir
                 # Use BIDS directory as the sync source
-                bids_path = config['project'].get('BIDS', '.')
+                bids_path = config['Project'].get('BIDS', '.')
                 sync_path = os.path.dirname(bids_path) if bids_path else '.'
                 
                 syncer = sync_to_cir.ServerSync()
@@ -211,6 +220,17 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 log("Report", "Report generated (report.html)", 'info')
             except Exception as e:
                 log("Report", f"Report generation failed: {e}", 'error')
+                sys.exit(1)
+        
+        elif args.command == 'create-config':
+            # Create default configuration file
+            from run_config import create_config_file
+            success = create_config_file(args.output)
+            if success:
+                print(f"✅ Created default configuration file: {args.output}")
+                print("Edit this file to customize your pipeline settings.")
+            else:
+                print(f"❌ Failed to create configuration file: {args.output}")
                 sys.exit(1)
         
         elif args.command == 'sync':

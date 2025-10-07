@@ -9,7 +9,6 @@ Author: Andreas Gerhardsson
 
 from datetime import datetime
 import sys
-from tkinter.filedialog import askopenfilename, asksaveasfile
 import re
 from os.path import basename, join, isdir, exists
 import os
@@ -21,7 +20,26 @@ import logging
 from logging import handlers
 from typing import Optional, Dict, Tuple
 
-default_output_path = 'neuro/data/local'
+# tkinter file dialog imports
+
+import tkinter as tk
+from tkinter import filedialog
+import sys
+
+
+def askdirectory(**kwargs):
+    """tkinter filedialog.askdirectory wrapper"""
+    # Create hidden root window
+    
+    directory = filedialog.askdirectory(
+        title=kwargs.get('title', 'Select Directory'),
+        initialdir=kwargs.get('initialdir', '')
+    )
+
+    return directory
+
+
+default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
 headpos_patterns = ['trans', 'headpos']
@@ -342,12 +360,21 @@ def askForConfig():
         SystemExit: If user cancels dialog without selecting file
         
     Initial Directory:
-        Defaults to 'neuro/data/local' for convenient navigation
+        Defaults to '/neuro/data/local' for convenient navigation
     """
-    config_file = askopenfilename(
-        title='Select config file',
-        filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-        initialdir=default_output_path)
+    # Create hidden root window
+    # if not exists(default_output_path):
+    #     default_output_path = '.'
+    
+    config_file = filedialog.askopenfilename(
+        title="Select Configuration File",
+        initialdir=default_output_path,
+        filetypes=[
+            ("YAML files", "*.yml *.yaml"),
+            ("JSON files", "*.json"),
+            ("All files", "*.*")
+        ]
+    )
 
     if not config_file:
         print('No configuration file selected. Exiting opening dialog')

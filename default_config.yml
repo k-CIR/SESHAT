@@ -1,0 +1,84 @@
+RUN:
+  Copy to Cerberos: true
+  Add HPI coregistration: true
+  Run Maxfilter: true
+  Run BIDS conversion: true
+  Sync to CIR: true
+Project:
+  Name: ''
+  CIR-ID: ''
+  InstitutionName: Karolinska Institutet
+  InstitutionAddress: Nobels vag 9, 171 77, Stockholm, Sweden
+  InstitutionDepartmentName: Department of Clinical Neuroscience (CNS)
+  Description: project for MEG data
+  Tasks:
+  - ''
+  Sinuhe raw: /neuro/data/sinuhe
+  Kaptah raw: /neuro/data/kaptah
+  Root: /neuro/data/local/
+  Raw: /neuro/data/local/<project>/raw
+  BIDS: /neuro/data/local/<project>/BIDS
+  Calibration: /neuro/data/local/<project>/databases/sss/sss_cal.dat
+  Crosstalk: /neuro/data/local/<project>/databases/ctc/ct_sparse.fif
+  Logfile: pipeline_log.log
+OPM:
+  polhemus:
+  - ''
+  hpi_names:
+  - HPIpre
+  - HPIpost
+  - HPIbefore
+  - HPIafter
+  frequency: 33
+  downsample_to_hz: 1000
+  overwrite: false
+  plot: false
+MaxFilter:
+  standard_settings:
+    trans_conditions:
+    - ''
+    trans_option: continous
+    merge_runs: true
+    empty_room_files:
+    - empty_room_before.fif
+    - empty_room_after.fif
+    sss_files:
+    - ''
+    autobad: true
+    badlimit: '7'
+    bad_channels:
+    - ''
+    tsss_default: true
+    correlation: '0.98'
+    movecomp_default: true
+    subjects_to_skip:
+    - ''
+  advanced_settings:
+    force: false
+    downsample: false
+    downsample_factor: '4'
+    apply_linefreq: false
+    linefreq_Hz: '50'
+    maxfilter_version: /neuro/bin/util/maxfilter
+    MaxFilter_commands: ''
+    debug: false
+BIDS:
+  Dataset_description: dataset_description.json
+  Participants: participants.tsv
+  Participants_mapping_file: participant_mapping_example.csv
+  Conversion_file: bids_conversion.tsv
+  Overwrite_conversion: false
+  Original_subjID_name: old_subject_id
+  New_subjID_name: new_subject_id
+  Original_session_name: old_session_id
+  New_session_name: new_session_id
+  overwrite: false
+  dataset_type: raw
+  data_license: ''
+  authors: ''
+  acknowledgements: ''
+  how_to_acknowledge: ''
+  funding: ''
+  ethics_approvals: ''
+  references_and_links: ''
+  doi: doi:<insert_doi>

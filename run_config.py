@@ -2,25 +2,19 @@ import yaml
 import json
 import sys
 import os
-from os.path import exists
 import argparse
-import tkinter as tk
-from tkinter import ttk
-from tkinter.filedialog import asksaveasfile, askopenfile
-import threading
-import subprocess
-from tkinter.scrolledtext import ScrolledText
-import queue
 import re
+import subprocess
+import threading
+import queue
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 
-default_path = '/neuro/data/local/'
+default_path = '/neuro/data/local'
 
-global config
-
-# TODO: fix save and save as buttons
 
 def create_default_config():
-    
+    """Create default configuration dictionary without GUI dependencies"""
     config = {
         'RUN': {
             'Copy to Cerberos': True,
@@ -29,24 +23,24 @@ def create_default_config():
             'Run BIDS conversion': True,
             'Sync to CIR': True
         },
-        'project': {
-            'name': '',
+        'Project': {
+            'Name': '',
             'CIR-ID': '',
             'InstitutionName': 'Karolinska Institutet',
             'InstitutionAddress': 'Nobels vag 9, 171 77, Stockholm, Sweden',
             'InstitutionDepartmentName': 'Department of Clinical Neuroscience (CNS)',
-            'description': 'project for MEG data',
-            'tasks': [''],
-            'sinuhe_raw': '/neuro/data/sinuhe',
-            'kaptah_raw': '/neuro/data/kaptah',
-            'squidMEG': default_path,
-            'opmMEG': default_path,
-            'BIDS': default_path,
-            'Calibration': '/neuro/databases/sss/sss_cal.dat',
-            'Crosstalk': '/neuro/databases/ctc/ct_sparse.fif',
+            'Description': 'project for MEG data',
+            'Tasks': [''],
+            'Sinuhe raw': '/neuro/data/sinuhe',
+            'Kaptah raw': '/neuro/data/kaptah',
+            'Root': default_path,
+            'Raw': f'{default_path}/<project>/raw',
+            'BIDS': f'{default_path}/<project>/BIDS',
+            'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
+            'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
             'Logfile': 'pipeline_log.log'
         },
-        'opm': {
+        'OPM': {
             'polhemus': [''],
             'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
             'frequency': 33,
@@ -54,7 +48,7 @@ def create_default_config():
             'overwrite': False,
             'plot': False,
         },
-        'maxfilter': {
+        'MaxFilter': {
             'standard_settings': {
                 'trans_conditions': [''],
                 'trans_option': 'continous',
@@ -80,7 +74,7 @@ def create_default_config():
                 'debug': False
             }
         },
-        'bids': {
+        'BIDS': {
             'Dataset_description': 'dataset_description.json',
             'Participants': 'participants.tsv',
             'Participants_mapping_file': 'participant_mapping_example.csv',
@@ -100,892 +94,836 @@ def create_default_config():
             'ethics_approvals': '',
             'references_and_links': '',
             'doi': 'doi:<insert_doi>'
-                }
+        }
     }
     return config
 
-def save_config(config, filename=None):
-    if filename:
-        save_path = filename
-    elif filename is None:
-        save_path = asksaveasfile(defaultextension=".yml", filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
-        save_path = save_path.name if save_path else None
 
-    if save_path:
-        if save_path.endswith('.yml') or save_path.endswith('.yaml'):
-            with open(save_path, 'w') as file:
-                yaml.dump(config, file, default_flow_style=False, sort_keys=False)
-        elif save_path.endswith('.json'):
-            with open(save_path, 'w') as file:
-                json.dump(config, file, indent=4)
-
-def load_config(config_file=None):
-    if not config_file:
-        config_file = askopenfile(filetypes=[("YAML files", ["*.yml", "*.yaml"]), ("JSON files", '*.json')], initialdir=default_path)
-    if config_file:
-        if hasattr(config_file, 'name'):
-            filename = config_file.name
-        else:
-            filename = config_file
-        
-        if filename.endswith('.yml') or filename.endswith('.yaml'):
-            with open(filename, 'r') as file:
-                config = yaml.safe_load(file)
-        elif filename.endswith('.json'):
-            with open(filename, 'r') as file:
-                config = json.load(file)
-    # Strings to lists
-    if config:
-        config['project']['tasks'] = config['project']['tasks'].split(',') if isinstance(config['project']['tasks'], str) else config['project']['tasks']
-        config['opm']['hpi_names'] = config['opm']['hpi_names'].split(',') if isinstance(config['opm']['hpi_names'], str) else config['opm']['hpi_names']
-        config['opm']['polhemus'] = config['opm']['polhemus'].split(',') if isinstance(config['opm']['polhemus'], str) else config['opm']['polhemus']
-        config['maxfilter']['standard_settings']['trans_conditions'] = config['maxfilter']['standard_settings']['trans_conditions'].split(',') if isinstance(config['maxfilter']['standard_settings']['trans_conditions'], str) else config['maxfilter']['standard_settings']['trans_conditions']
-        config['maxfilter']['standard_settings']['sss_files'] = config['maxfilter']['standard_settings']['sss_files'].split(',') if isinstance(config['maxfilter']['standard_settings']['sss_files'], str) else config['maxfilter']['standard_settings']['sss_files']
-        config['maxfilter']['standard_settings']['empty_room_files'] = config['maxfilter']['standard_settings']['empty_room_files'].split(',') if isinstance(config['maxfilter']['standard_settings']['empty_room_files'], str) else config['maxfilter']['standard_settings']['empty_room_files']
-        config['maxfilter']['standard_settings']['subjects_to_skip'] = config['maxfilter']['standard_settings']['subjects_to_skip'].split(',') if isinstance(config['maxfilter']['standard_settings']['subjects_to_skip'], str) else config['maxfilter']['standard_settings']['subjects_to_skip']
-        config['maxfilter']['standard_settings']['bad_channels'] = config['maxfilter']['standard_settings']['bad_channels'].split(',') if isinstance(config['maxfilter']['standard_settings']['bad_channels'], str) else config['maxfilter']['standard_settings']['bad_channels']
-
-    return config
-    
-
-def askForConfig():
-    """_summary_
-
-    Args:
-        file_config (str, optional): _description_. Defaults
-            to None.
-
-    Returns:
-        dict: dictionary with the configuration parameters
-    """
-    option = input("Do you want to open an existing config file or create a new? ([open]/new/cancel): ").lower().strip()
-
-
-    # Check if the file is defined or ask for it
-    if option not in ['o', 'open']:
-        if option in ['n', 'new']:
-            return 'new'
-        elif option in ['c', 'cancel']:
-            print('User cancelled')
-            sys.exit(1)
-
-    else:
-        config_file = askopenfile(
-            title='Select config file',
-            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-            initialdir=default_path)
-
-        if not config_file:
-            print('No configuration file selected. Exiting opening dialog')
-            sys.exit(1)
-        
-        print(f'{config_file.name} selected')
-        return config_file
-
-def config_UI(config_file=None):
-    
-    if config_file:
-        config = load_config(config_file)
-    
-    else:
-        config = create_default_config()
-    
-    root = tk.Tk()
-    root.title(f"NatMEG Config Editor")
-    
-    root.geometry("700x800")
-    
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    style = ttk.Style()
-    style.map("C.TButton", foreground=[('disabled', 'grey')])
-
-    # Helper to add a fixed-size, scrollable help section labeled simply 'Help'
-    def init_collapsible_help(parent, text, wrap=650, title='Help'):
-        header_lbl = ttk.Label(parent, text='Help', font=('TkDefaultFont', 10, 'bold'))
-        header_lbl.pack(anchor='w', padx=1, pady=1)
-        # Match help box colors to current ttk theme
-        bg = style.lookup('TFrame', 'background') or root.cget('background')
-        fg = style.lookup('TLabel', 'foreground') or '#000000'
-        help_box = ScrolledText(
-            parent,
-            height=5,
-            wrap='word',
-            font=('TkDefaultFont', 10),
-            bg=bg,
-            fg=fg,
-            insertbackground=fg,
-            borderwidth=0,
-            relief='flat',
-            highlightthickness=0
-        )
-        help_box.insert('1.0', text.strip() + '\n')
-        help_box.config(state='disabled')
-        help_box.pack(fill='both', expand=True, padx=1, pady=1)
-        return header_lbl, help_box
-    
-    # Project tab
-    project_frame = ttk.Frame(notebook)
-    notebook.add(project_frame, text="Project")
-    
-    # Create notebook for Project sub-tabs
-    project_notebook = ttk.Notebook(project_frame)
-    project_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    project_standard_frame = ttk.Frame(project_notebook)
-    project_notebook.add(project_standard_frame, text="Standard Settings")
-    
-    # Advanced settings tab
-    project_advanced_frame = ttk.Frame(project_notebook)
-    project_notebook.add(project_advanced_frame, text="Advanced Settings")
-    
-    project_vars = {}
-    
-    # Standard project settings
-    standard_keys = ['name', 'CIR-ID', 'description', 'tasks',
-                     'sinuhe_raw', 'kaptah_raw']
-    row = 0
-    for key in standard_keys:
-        value = config['project'][key]
-        ttk.Label(project_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if key == 'tasks':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(project_standard_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(project_standard_frame, textvariable=var, width=50, justify='left')
-        project_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1)
-        row += 1
-        
-    # Project information frame (in standard tab)
-    project_std_info_frame = ttk.Frame(project_standard_frame)
-    project_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    std_info_text = """
-This tab allows you to set the basic project information and paths for the project.
-
-• name: Name of project directory on local disk
-• CIR-ID: CIR ID of the project, used for data management
-• description: Brief description of the project
-• tasks: Comma-separated list in square brackets of experimental tasks (e.g. rest, oddball, memory)
-• sinuhe_raw: Path to Sinuhe raw data directory
-• kaptah_raw: Path to Kaptah raw data directory
-"""
-
-    init_collapsible_help(project_std_info_frame, std_info_text, wrap=650, title='Project help')
-    
-    # Advanced project settings
-    advanced_keys = ['InstitutionName',
-                     'InstitutionAddress', 'InstitutionDepartmentName', 
-                      'squidMEG', 'opmMEG', 'BIDS', 'Calibration', 'Crosstalk']
-    row = 0
-    for key in advanced_keys:
-        value = config['project'][key]
-        # Update paths with project name
-        if key in ['squidMEG', 'opmMEG', 'BIDS'] and config['project']['name']:
-            project_name = config['project']['name']
-            if project_name not in value:  # Only update if not already updated with project name
-                if key == 'BIDS':
-                    value = f"{value}{project_name}/BIDS"
-                else:
-                    value = f"{value}{project_name}/raw"
-        ttk.Label(project_advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        var = tk.StringVar(value=str(value))
-        widget = ttk.Entry(project_advanced_frame, textvariable=var, width=50, justify='left')
-        project_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1)
-        
-        # Update paths immediately when project name changes
-        if key in ['squidMEG', 'opmMEG', 'BIDS', 'sinuhe_raw', 'kaptah_raw']:
-            def update_path(name_var, path_var, path_type):
-                def callback(*args):
-                    name = name_var.get()
-                    base_path = default_path
-                    if path_type == 'BIDS':
-                        path_var.set(f"{base_path}{name}/BIDS" if name else base_path)
-                    elif path_type in ['squidMEG', 'opmMEG']:
-                        path_var.set(f"{base_path}{name}/raw" if name else base_path)
-                    elif path_type in ['sinuhe_raw', 'kaptah_raw']:
-                        path_var.set(f"{base_path}{name}" if name else base_path)
-                return callback
-            project_vars['name'].trace('w', update_path(project_vars['name'], var, key))
-        
-        row += 1
-    
-    # Project information frame (in advanced tab)
-    project_adv_info_frame = ttk.Frame(project_advanced_frame)
-    project_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    adv_info_text = """
-
-
-• InstitutionName: Name of the institution
-• InstitutionAddress: Address of the institution
-• InstitutionDepartmentName: Department name
-• squidMEG: Path to directory for SquidMEG data
-• opmMEG: Path to directory for OPM data
-• BIDS: Path to directory for BIDS data
-• Calibration: Path to SSS calibration file
-• Crosstalk: Path to SSS crosstalk file
-"""
-
-    init_collapsible_help(project_adv_info_frame, adv_info_text, wrap=650, title='Advanced help')
-    
-    # OPM tab
-    opm_frame = ttk.Frame(notebook)
-    notebook.add(opm_frame, text="OPM")
-    
-    opm_vars = {}
-    row = 0
-    for key, value in config['opm'].items():
-        ttk.Label(opm_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(opm_frame, variable=var, onvalue=True, offvalue=False)
-        elif key == 'hpi_names' or key == 'polhemus':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(opm_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(opm_frame, textvariable=var, width=50)
-        opm_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-        
-    # OPM information frame (in standard tab)
-    opm_info_frame = ttk.Frame(opm_frame)
-    opm_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the OPM tab
-    opm_info_text = """
-Set the parameters for adding HPI coregistration polhemus data from the TRIUX recording, to the OPM data.
-
-• polhemus: name(s) of fif-file(s) with Polhemus coregistration data
-• hpi_names: Comma-separated list in square brackets of names of HPI recording, only one will be used(e.g. [HPIpre, HPIpost, HPIbefore, HPIafter]). 
-• frequency: Frequency of the HPI in Hz
-• downsample_to_hz: Downsample OPM data to this frequency
-• overwrite: Overwrite existing OPM data files
-• plot: Store a plot of the OPM data after processing
-"""
-
-    init_collapsible_help(opm_info_frame, opm_info_text, wrap=650, title='OPM help')
-    
-    # MaxFilter tab
-    maxfilter_frame = ttk.Frame(notebook)
-    notebook.add(maxfilter_frame, text="MaxFilter")
-    
-    maxfilter_vars = {'standard_settings': {}, 'advanced_settings': {}}
-    
-    # Create notebook for MaxFilter sub-tabs
-    maxfilter_notebook = ttk.Notebook(maxfilter_frame)
-    maxfilter_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    standard_frame = ttk.Frame(maxfilter_notebook)
-    maxfilter_notebook.add(standard_frame, text="Standard Settings")
-    
-    row = 0
-    for key, value in config['maxfilter']['standard_settings'].items():
-        ttk.Label(standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(standard_frame, variable=var)
-        elif key == 'trans_conditions' or key == 'empty_room_files' or key == 'subjects_to_skip' or key == 'bad_channels' or key == 'sss_files':
-            var = tk.StringVar(value=', '.join(value) if isinstance(value, list) else str(value))
-            widget = ttk.Entry(standard_frame, textvariable=var, width=50)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(standard_frame, textvariable=var, width=50)
-            if key == 'trans_option':
-                selected_option = tk.StringVar()
-                options = [value] + list(
-                {'continous', 'initial'} - {value})
-                widget = tk.OptionMenu(standard_frame, selected_option, *options)
-                selected_option.set(options[0])
-                var = selected_option
-        maxfilter_vars['standard_settings'][key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    # Maxfilter information frame (in standard tab)
-    mf_std_info_frame = ttk.Frame(standard_frame)
-    mf_std_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    mf_std_info_text = """
-Set the parameters for MaxFilter processing.
-
-• trans_conditions: Comma-separated list in square brackets tasks which should be transformed to average head (e.g. [rest, oddball, memory])
-• trans_option: Option for transformation, either 'continous' for average or 'inital' for initial head position
-• merge_runs: Use multiple runs to calculate average head position, and apply on all runs (files themselves are not merged)
-• empty_room_files: Comma-separated list in square brackets of empty room files to use for MaxFilter processing (e.g. [empty_room_before.fif, empty_room_after.fif])
-• sss_files: tasks which should only be sss filtered (e.g. [rest])
-• autobad: Automatically detect and exclude bad channels
-• badlimit: Bad channel threshold for processing
-• bad_channels: Comma-separated list in square brackets of bad channels to exclude from processing (e.g. [MEG0111, MEG0112])
-• tsss_default: Use default TSSS settings
-• correlation: Correlation threshold for TSSS, e.g. '0.98'
-• movecomp_default: Use default movecomp settings
-• subjects_to_skip: Comma-separated list in square brackets of subject IDs to skip during MaxFilter processing (e.g. [1234, 4321])
-
-
-"""
-    init_collapsible_help(mf_std_info_frame, mf_std_info_text, wrap=550, title='MaxFilter (standard) help')
-    
-    # Advanced settings tab
-    advanced_frame = ttk.Frame(maxfilter_notebook)
-    maxfilter_notebook.add(advanced_frame, text="Advanced Settings")
-    
-    row = 0
-    for key, value in config['maxfilter']['advanced_settings'].items():
-        ttk.Label(advanced_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(advanced_frame, variable=var)
-        else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(advanced_frame, textvariable=var, width=50)
-            if key == 'maxfilter_version':
-                selected_option = tk.StringVar()
-                options = [value] + list(
-                {'/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'} - {value})
-                options = [value] + list(
-                {'/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'} - {value})
-                widget = tk.OptionMenu(advanced_frame, selected_option, *options)
-                selected_option.set(options[0])
-                var = selected_option
-                
-        maxfilter_vars['advanced_settings'][key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    # Maxfilter information frame (in advanced tab)
-    mf_adv_info_frame = ttk.Frame(advanced_frame)
-    mf_adv_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the Project tab
-    mf_adv_info_text = """
-Set the parameters for MaxFilter processing.
-
-• force: Force MaxFilter to run even if badchannels are detected
-• downsample: Downsample data
-• downsample_factor: Factor to downsample data by
-• apply_linefreq: Apply line frequency filtering
-• linefreq_Hz: Line frequency in Hz to apply filtering
-• maxfilter_version: Path to MaxFilter executable
-• MaxFilter_commands: Additional MaxFilter commands to run, e.g. '-v' for verbose output
-• debug: Enable debug mode for MaxFilter (if true will print command instead of running it, headpos will still be applied)
-
-"""
-    init_collapsible_help(mf_adv_info_frame, mf_adv_info_text, wrap=550, title='MaxFilter (advanced) help')
-    
-    # BIDS tab
-    bids_frame = ttk.Frame(notebook, )
-    notebook.add(bids_frame, text="BIDS")
-    
-    # Create notebook for BIDS sub-tabs
-    bids_notebook = ttk.Notebook(bids_frame)
-    bids_notebook.pack(fill='x', expand=False, padx=1, pady=1)
-    
-    # Standard settings tab
-    bids_standard_frame = ttk.Frame(bids_notebook)
-    bids_notebook.add(bids_standard_frame, text="Standard Settings")
-    
-    bids_vars = {}
-    
-    # Standard BIDS settings (matching default config keys)
-    standard_bids_keys = ['Dataset_description', 'Participants',
-                          'Participants_mapping_file', 'Conversion_file','Overwrite_conversion',
-                          'Original_subjID_name', 'New_subjID_name', 'Original_session_name', 
-                          'New_session_name', 'overwrite']
-    
-    row = 0
-    for key in standard_bids_keys:
-        if key in config['bids']:
-            value = config['bids'][key]
-            ttk.Label(bids_standard_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-            if isinstance(value, bool):
-                var = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(bids_standard_frame, variable=var)
-            else:
-                var = tk.StringVar(value=str(value))
-                widget = ttk.Entry(bids_standard_frame, textvariable=var, width=50)
-            bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-            row += 1
-    
-    # BIDS information frame (in standard tab)
-    bids_info_frame = ttk.Frame(bids_standard_frame)
-    bids_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the BIDS standard tab
-    bids_info_text = """
-Set the parameters for Bidsification.
-
-• Dataset_description: Path to dataset_description.json file
-• Participants: Path to participants.tsv file
-• Participants_mapping_file: Path to participant mapping CSV file
-• Conversion_file: Path to conversion file (e.g. bids_conversion.tsv)
-• Overwrite_conversion: Overwrite existing conversion files
-• Original_subjID_name: Name of the original subject ID column in the mapping file
-• New_subjID_name: Name of the new subject ID column in the mapping file
-• Original_session_name: Name of the original session ID column in the mapping file
-• New_session_name: Name of the new session ID column in the mapping file
-• overwrite: Overwrite existing BIDS files
-
-"""
-    
-    init_collapsible_help(bids_info_frame, bids_info_text, wrap=550, title='BIDS help')
-    
-    # Dataset description tab
-    bids_dataset_frame = ttk.Frame(bids_notebook)
-    bids_notebook.add(bids_dataset_frame, text="Dataset Description")
-    
-    # Dataset description settings (matching default config keys)
-    dataset_bids_keys = ['dataset_type', 'data_license', 'authors', 'acknowledgements', 'how_to_acknowledge', 
-                        'funding', 'ethics_approvals', 'references_and_links', 'doi']
-    
-    row = 0
-    for key in dataset_bids_keys:
-        if key in config['bids']:
-            value = config['bids'][key]
-            ttk.Label(bids_dataset_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-            if isinstance(value, bool):
-                var = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(bids_dataset_frame, variable=var)
-            else:
-                var = tk.StringVar(value=str(value))
-                widget = ttk.Entry(bids_dataset_frame, textvariable=var, width=50)
-            bids_vars[key] = var
-            widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-            row += 1
-    
-    # Dataset description information frame
-    dataset_info_frame = ttk.Frame(bids_dataset_frame)
-    dataset_info_frame.grid(row=row, column=0, columnspan=2, padx=1, pady=1, sticky='ew')
-    
-    # Add informational text about the dataset description tab
-    dataset_info_text = """
-Set the dataset description metadata for BIDS.
-
-• dataset_type: Type of dataset (e.g., 'raw', 'derivative')
-• data_license: License under which the data is made available
-• authors: List of individuals who contributed to the creation/curation of the dataset
-• acknowledgements: Text acknowledging contributions
-• how_to_acknowledge: Instructions on how researchers should acknowledge this dataset
-• funding: List of sources of funding
-• ethics_approvals: List of ethics committee approvals
-• references_and_links: List of references, publications, and links
-• doi: Digital Object Identifier of the dataset
-
-"""
-    
-    init_collapsible_help(dataset_info_frame, dataset_info_text, wrap=550, title='Dataset description help')
-    
-    # Run tab
-    run_frame = ttk.Frame(notebook)
-    notebook.add(run_frame, text="RUN")
-    
-    run_vars = {}
-    row = 0
-    for key, value in config['RUN'].items():
-        ttk.Label(run_frame, text=key + ":").grid(row=row, column=0, sticky='w', padx=1, pady=1)
-        var = tk.BooleanVar(value=value)
-        widget = ttk.Checkbutton(run_frame, variable=var)
-        run_vars[key] = var
-        widget.grid(row=row, column=1, padx=1, pady=1, sticky='w')
-        row += 1
-    
-    terminal_frame = ttk.Frame(root)
-    terminal_output = ScrolledText(
-        terminal_frame,
-        height=15,
-        width=90,
-        state='disabled',
-        font=('TkDefaultFont', 10),
-        bg='#000000',
-        fg='#FFFFFF',
-        insertbackground='#FFFFFF'
-    )
-    terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
-    # Configure text tags for formatting/colors
+def create_config_file(output_file: str = 'default_config.yml'):
+    """Create a default configuration file and save it to disk"""
     try:
-        terminal_output.tag_config('bold', font=('TkDefaultFont', 10, 'bold'))
-        terminal_output.tag_config('underline', underline=1)
-        _color_map = {
-            'fg-black': '#000000', 'fg-red': '#ff5555', 'fg-green': '#50fa7b', 'fg-yellow': '#f1fa8c',
-            'fg-blue': '#8be9fd', 'fg-magenta': '#ff79c6', 'fg-cyan': '#8be9fd', 'fg-white': '#ffffff',
-            'fg-bright-black': '#4d4d4d', 'fg-bright-red': '#ff6e6e', 'fg-bright-green': '#69ff94',
-            'fg-bright-yellow': '#ffffa5', 'fg-bright-blue': '#a4ffff', 'fg-bright-magenta': '#ff92df',
-            'fg-bright-cyan': '#a4ffff', 'fg-bright-white': '#ffffff'
-        }
-        for _tag, _color in _color_map.items():
-            terminal_output.tag_config(_tag, foreground=_color)
-    except Exception:
-        pass
-    def show_terminal():
-        terminal_frame.pack(side='top', fill='both', expand=True, padx=10, pady=5)
-    def hide_terminal():
-        terminal_frame.pack_forget()
-    # Show terminal by default
-    show_terminal()
+        # Use the standalone function to avoid GUI dependencies
+        config_data = create_default_config()
+        
+        # Save to file based on extension
+        if output_file.endswith('.json'):
+            with open(output_file, 'w') as f:
+                json.dump(config_data, f, indent=4)
+        else:
+            # Default to YAML format
+            if not output_file.endswith(('.yml', '.yaml')):
+                output_file += '.yml'
+            with open(output_file, 'w') as f:
+                yaml.dump(config_data, f, default_flow_style=False, sort_keys=False, indent=2)
+        
+        return True
+    except Exception as e:
+        print(f"Error creating config file: {e}")
+        return False
 
-    # Execute button
-    def execute():
-        # Update config with current GUI values
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
-        # Always use the latest config_file value
-        config_path = config_file if config_file else None
-        # Build macOS-safe command using the current Python interpreter
+
+class ConfigMainWindow:
+    """Tkinter main window for NatMEG configuration editor"""
+    
+    def __init__(self, config_file=None):
+        self.root = tk.Tk()
+        self.root.title("NatMEG Config Editor")
+        self.root.geometry("900x800")
+        
+        self.config_file = config_file
+        self.config_data = {}
+        self.widgets = {}  # Store widget references for data binding
+        self.manual_edits = set()  # Track manually edited path fields
+        self.programmatic_update = False  # Flag to distinguish programmatic vs user edits
+        self._last_project_name = ''  # Track previous project name for smart updates
+        self._last_root_path = ''  # Track previous root path for smart updates
+        self.terminal_process = None
+        self.config_saved = bool(config_file)  # True if loading existing config, False for new
+        self.execute_btn = None  # Will be set in create_run_tab
+        
+        # Load configuration
+        if self.config_file:
+            self.config_data = self.load_config(self.config_file)
+            self.detect_manual_edits()  # Detect manual edits in loaded config
+        else:
+            self.config_data = create_default_config()
+        
+        self.init_ui()
+        
+        # Initialize tracking variables
+        self._last_project_name = self.config_data['Project'].get('Name', '').strip() or '<project>'
+        self._last_root_path = self.config_data['Project'].get('Root', '').strip() or default_path
+        
+        # Initialize paths after UI is created
+        self.update_project_paths()
+        
+    def init_ui(self):
+        """Initialize the user interface"""
+        # Create main frame
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=2, pady=5)
+        
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill='both', expand=True)
+        
+        # Create tabs
+        self.create_project_tab()
+        self.create_opm_tab()
+        self.create_maxfilter_tab()
+        self.create_bids_tab()
+        self.create_run_tab()
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', padx= (4, 4), pady=(10, 0))
+        
+        # Buttons (reordered: Open, Save As, Save, Cancel)
+        ttk.Button(button_frame, text="Cancel", command=self.root.quit).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Save", command=self.save_config).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Save As...", command=self.save_as_config).pack(side='right', padx=(5, 0))
+        ttk.Button(button_frame, text="Open", command=self.open_config).pack(side='right', padx=(5, 0))
+        
+        # Status label
+        self.status_label = ttk.Label(main_frame, text=f"Config file: {self.config_file if self.config_file else 'None'}")
+        self.status_label.pack(anchor='w', pady=(5, 0))
+        
+        # Set initial execute button state
+        if self.config_saved:
+            self.mark_config_saved()
+        else:
+            self.mark_config_changed()
+    
+    def create_scrollable_frame(self, parent):
+        """Create a scrollable frame"""
+        canvas = tk.Canvas(parent, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Bind canvas to update scrollable frame width when canvas resizes
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=0, pady=0)
+        scrollbar.pack(side="right", fill="y")
+        
+        return scrollable_frame
+    
+    def create_form_widget(self, parent, key, value, help_text=None):
+        """Create a form widget based on the value type"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='x', padx=2, pady=1)
+        
+        # Label
+        label = ttk.Label(frame, text=f"{key}:", anchor='e', width=25)
+        label.pack(side='left', padx=(2, 2))
+        
+        # Widget based on value type
+        if isinstance(value, bool):
+            var = tk.BooleanVar(value=value)
+            widget = ttk.Checkbutton(frame, variable=var)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        elif isinstance(value, list):
+            var = tk.StringVar(value=', '.join(str(v) for v in value))
+            widget = ttk.Entry(frame, textvariable=var, width=50)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_list(k, var.get()), self.mark_config_changed()])
+        elif key == 'trans_option':
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Combobox(frame, textvariable=var, values=['continous', 'initial'], width=47)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        elif key == 'maxfilter_version':
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Combobox(frame, textvariable=var, 
+                               values=['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'], width=47)
+            widget.var = var
+            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        else:
+            var = tk.StringVar(value=str(value))
+            widget = ttk.Entry(frame, textvariable=var, width=50)
+            widget.var = var
+            # Special handling for project name and root fields to auto-update paths
+            if key == 'Name':
+                def update_name_and_paths(*args):
+                    self.update_config_value(key, var.get())
+                    self.mark_config_changed()
+                    self.update_project_paths()
+                var.trace_add('write', update_name_and_paths)
+            elif key == 'Root':
+                def update_root_and_paths(*args):
+                    self.update_config_value(key, var.get())
+                    self.mark_config_changed()
+                    self.update_project_paths()
+                var.trace_add('write', update_root_and_paths)
+            # Mark path fields as manually edited when user changes them
+            elif key in ['Raw', 'BIDS', 'Calibration', 'Crosstalk']:
+                var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+                # Store the key in the lambda to avoid closure issues
+                def make_manual_edit_callback(field_key):
+                    return lambda *args: self.mark_manual_edit(field_key)
+                var.trace_add('write', make_manual_edit_callback(key))
+            else:
+                var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        
+        widget.pack(side='right', fill='x', expand=True)
+        
+        # Store widget reference
+        self.widgets[key] = widget
+        
+        # Add help text on a new line directly under the entry field if provided
+        if help_text:
+            help_frame = ttk.Frame(parent)
+            help_frame.pack(fill='x', padx=(170, 2), pady=(0, 2))
+            help_label = ttk.Label(help_frame, text=help_text, foreground='gray', font=('TkDefaultFont', 8))
+            help_label.pack(anchor='w')
+    
+    def create_run_form_widget(self, parent, key, value):
+        """Create a form widget for RUN items"""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='x', padx=0, pady=1)
+        
+        var = tk.BooleanVar(value=value)
+        widget = ttk.Checkbutton(frame, text=key, variable=var)
+        widget.var = var
+        var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+        widget.pack(anchor='w')
+        
+        # Store widget reference
+        self.widgets[key] = widget
+    
+    def create_project_tab(self):
+        """Create the Project configuration tab"""
+        project_frame = ttk.Frame(self.notebook)
+        self.notebook.add(project_frame, text="Project")
+        
+        # Create sub-notebook for project tabs
+        project_notebook = ttk.Notebook(project_frame)
+        project_notebook.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        # Standard settings tab
+        standard_frame = ttk.Frame(project_notebook)
+        project_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
+        
+        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw']
+        standard_help = {
+            'Name': 'Name of project',
+            'CIR-ID': 'CIR ID of the project, used for data management',
+            'Description': 'Brief description of the project',
+            'Tasks': 'Comma-separated list of experimental tasks',
+            'Sinuhe raw': 'Path to Sinuhe raw data directory',
+            'Kaptah raw': 'Path to Kaptah raw data directory'
+        }
+        
+        for key in standard_keys:
+            if key in self.config_data['Project']:
+                value = self.config_data['Project'][key]
+                help_text = standard_help.get(key)
+                self.create_form_widget(standard_scrollable, key, value, help_text)
+        
+        # Advanced settings tab
+        advanced_frame = ttk.Frame(project_notebook)
+        project_notebook.add(advanced_frame, text="Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        
+        advanced_keys = [
+            'InstitutionName', 'InstitutionAddress', 'InstitutionDepartmentName',
+            'Root', 'Raw', 'BIDS', 'Calibration', 'Crosstalk', 'Logfile'
+        ]
+        advanced_help = {
+            'InstitutionName': 'Name of the institution',
+            'InstitutionAddress': 'Address of the institution',
+            'InstitutionDepartmentName': 'Department name',
+            'Root': 'Root directory for project data',
+            'Raw': 'Raw-path relative to project directory',
+            'BIDS': 'BIDS-path relative to project directory',
+            'Calibration': 'Path to SSS calibration file relative to project directory',
+            'Crosstalk': 'Path to SSS crosstalk file relative to project directory',
+            'Logfile': 'Name of the log file'
+        }
+        
+        for key in advanced_keys:
+            if key in self.config_data['Project']:
+                value = self.config_data['Project'][key]
+                help_text = advanced_help.get(key)
+                self.create_form_widget(advanced_scrollable, key, value, help_text)
+    
+    def create_opm_tab(self):
+        """Create the OMP configuration tab"""
+        opm_frame = ttk.Frame(self.notebook)
+        self.notebook.add(opm_frame, text="OPM")
+        opm_scrollable = self.create_scrollable_frame(opm_frame)
+        
+        opm_help = {
+            'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data',
+            'hpi_names': 'Comma-separated list of names of HPI recording',
+            'frequency': 'Frequency of the HPI in Hz',
+            'downsample_to_hz': 'Downsample OPM data to this frequency',
+            'overwrite': 'Overwrite existing OPM data files',
+            'plot': 'Store a plot of the OPM data after processing'
+        }
+        
+        for key, value in self.config_data['OPM'].items():
+            help_text = opm_help.get(key)
+            self.create_form_widget(opm_scrollable, key, value, help_text)
+    
+    def create_maxfilter_tab(self):
+        """Create the MaxFilter configuration tab"""
+        maxfilter_frame = ttk.Frame(self.notebook)
+        self.notebook.add(maxfilter_frame, text="MaxFilter")
+        
+        # Create sub-notebook
+        maxfilter_notebook = ttk.Notebook(maxfilter_frame)
+        maxfilter_notebook.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        # Standard settings
+        standard_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
+        standard_help = {
+            'trans_conditions': 'Comma-separated list of tasks which should be transformed to average head',
+            'trans_option': 'Option for transformation, either "continous" for average or "initial" for initial head position',
+            'merge_runs': 'Use multiple runs to calculate average head position',
+            'empty_room_files': 'Comma-separated list of empty room files to use for MaxFilter processing',
+            'sss_files': 'Tasks which should only be sss filtered',
+            'autobad': 'Automatically detect and exclude bad channels',
+            'badlimit': 'Bad channel threshold for processing',
+            'bad_channels': 'Comma-separated list of bad channels to exclude from processing',
+            'tsss_default': 'Use default TSSS settings',
+            'correlation': 'Correlation threshold for TSSS',
+            'movecomp_default': 'Use default movecomp settings',
+            'subjects_to_skip': 'Comma-separated list of subject IDs to skip during MaxFilter processing'
+        }
+        
+        for key, value in self.config_data['MaxFilter']['standard_settings'].items():
+            help_text = standard_help.get(key)
+            self.create_form_widget(standard_scrollable, key, value, help_text)
+        
+        # Advanced settings
+        advanced_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(advanced_frame, text="Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        
+        advanced_help = {
+            'force': 'Force MaxFilter to run even if bad channels are detected',
+            'downsample': 'Downsample data',
+            'downsample_factor': 'Factor to downsample data by',
+            'apply_linefreq': 'Apply line frequency filtering',
+            'linefreq_Hz': 'Line frequency in Hz to apply filtering',
+            'maxfilter_version': 'Path to MaxFilter executable',
+            'MaxFilter_commands': 'Additional MaxFilter commands to run',
+            'debug': 'Enable debug mode for MaxFilter'
+        }
+        
+        for key, value in self.config_data['MaxFilter']['advanced_settings'].items():
+            help_text = advanced_help.get(key)
+            self.create_form_widget(advanced_scrollable, key, value, help_text)
+    
+    def create_bids_tab(self):
+        """Create the BIDS configuration tab"""
+        bids_frame = ttk.Frame(self.notebook)
+        self.notebook.add(bids_frame, text="BIDS")
+        
+        # Create sub-notebook
+        bids_notebook = ttk.Notebook(bids_frame)
+        bids_notebook.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        # Standard settings
+        standard_frame = ttk.Frame(bids_notebook)
+        bids_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
+        standard_bids_keys = [
+            'Dataset_description', 'Participants', 'Participants_mapping_file', 
+            'Conversion_file', 'Overwrite_conversion', 'Original_subjID_name',
+            'New_subjID_name', 'Original_session_name', 'New_session_name', 'overwrite'
+        ]
+        
+        standard_bids_help = {
+            'Dataset_description': 'Path to dataset_description.json file',
+            'Participants': 'Path to participants.tsv file',
+            'Participants_mapping_file': 'Path to participant mapping CSV file',
+            'Conversion_file': 'Path to conversion file',
+            'Overwrite_conversion': 'Overwrite existing conversion files',
+            'Original_subjID_name': 'Name of the original subject ID column in the mapping file',
+            'New_subjID_name': 'Name of the new subject ID column in the mapping file',
+            'Original_session_name': 'Name of the original session ID column in the mapping file',
+            'New_session_name': 'Name of the new session ID column in the mapping file',
+            'overwrite': 'Overwrite existing BIDS files'
+        }
+        
+        for key in standard_bids_keys:
+            if key in self.config_data['BIDS']:
+                value = self.config_data['BIDS'][key]
+                help_text = standard_bids_help.get(key)
+                self.create_form_widget(standard_scrollable, key, value, help_text)
+        
+        # Dataset description
+        dataset_frame = ttk.Frame(bids_notebook)
+        bids_notebook.add(dataset_frame, text="Dataset Description")
+        dataset_scrollable = self.create_scrollable_frame(dataset_frame)
+        
+        dataset_keys = [
+            'dataset_type', 'data_license', 'authors', 'acknowledgements',
+            'how_to_acknowledge', 'funding', 'ethics_approvals', 
+            'references_and_links', 'doi'
+        ]
+        
+        dataset_help = {
+            'dataset_type': 'Type of dataset (e.g., "raw", "derivative")',
+            'data_license': 'License under which the data is made available',
+            'authors': 'List of individuals who contributed to the creation/curation of the dataset',
+            'acknowledgements': 'Text acknowledging contributions',
+            'how_to_acknowledge': 'Instructions on how researchers should acknowledge this dataset',
+            'funding': 'List of sources of funding',
+            'ethics_approvals': 'List of ethics committee approvals',
+            'references_and_links': 'List of references, publications, and links',
+            'doi': 'Digital Object Identifier of the dataset'
+        }
+        
+        for key in dataset_keys:
+            if key in self.config_data['BIDS']:
+                value = self.config_data['BIDS'][key]
+                help_text = dataset_help.get(key)
+                self.create_form_widget(dataset_scrollable, key, value, help_text)
+    
+    def create_run_tab(self):
+        """Create the RUN configuration tab"""
+        run_frame = ttk.Frame(self.notebook)
+        self.notebook.add(run_frame, text="RUN")
+        
+        # RUN settings
+        run_settings_frame = ttk.LabelFrame(run_frame, text="Pipeline Steps")
+        run_settings_frame.pack(fill='x', padx=5, pady=5)
+        
+        for key, value in self.config_data['RUN'].items():
+            self.create_run_form_widget(run_settings_frame, key, value)
+        
+        # Execute button
+        execute_frame = ttk.Frame(run_frame)
+        execute_frame.pack(fill='x', padx=5, pady=5)
+        
+        self.execute_btn = ttk.Button(execute_frame, 
+                                     text="Save to Execute" if not self.config_saved else "Execute Pipeline",
+                                     command=self.execute_pipeline)
+        self.execute_btn.pack(anchor='w')
+        self.execute_btn.configure(state='disabled' if not self.config_saved else 'normal')
+        
+        # Terminal output
+        terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
+        terminal_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        self.terminal_output = scrolledtext.ScrolledText(
+            terminal_frame, 
+            height=15, 
+            state='disabled',
+            bg='black',
+            fg='white',
+            insertbackground='green',
+            selectbackground='gray30',
+            selectforeground='white',
+            font=('Courier', 10)
+        )
+        self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
+        
+        # Add initial text
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.insert('end', "Terminal output will appear here...\n")
+        self.terminal_output.configure(state='disabled')
+    
+    def update_config_value(self, key, value):
+        """Update configuration value"""
+        # Find the correct nested location for the key
+        for section in ['RUN', 'Project', 'OPM', 'MaxFilter', 'BIDS']:
+            if section in self.config_data:
+                if key in self.config_data[section]:
+                    self.config_data[section][key] = value
+                    return
+                elif section == 'MaxFilter':
+                    for subsection in ['standard_settings', 'advanced_settings']:
+                        if key in self.config_data[section][subsection]:
+                            self.config_data[section][subsection][key] = value
+                            return
+    
+    def update_config_list(self, key, text):
+        """Update configuration list value from comma-separated text"""
+        value = [item.strip() for item in text.split(',') if item.strip()]
+        self.update_config_value(key, value)
+    
+    def mark_manual_edit(self, key):
+        """Mark a field as manually edited (only if not programmatic update)"""
+        if not self.programmatic_update:
+            self.manual_edits.add(key)
+    
+    def detect_manual_edits(self):
+        """Detect which path fields have been manually edited based on their current values"""
+        project_name = self.config_data['Project'].get('Name', '').strip()
+        root_path = self.config_data['Project'].get('Root', '').strip()
+        
+        if not root_path:
+            root_path = default_path
+        
+        display_project = project_name if project_name else '<project>'
+        
+        # Check each path field against expected auto-generated pattern
+        expected_paths = {
+            'Raw': os.path.join(root_path, display_project, "raw"),
+            'BIDS': os.path.join(root_path, display_project, "BIDS"),
+            'Calibration': os.path.join(root_path, display_project, "databases", "sss", "sss_cal.dat"),
+            'Crosstalk': os.path.join(root_path, display_project, "databases", "ctc", "ct_sparse.fif")
+        }
+        
+        for field, expected_path in expected_paths.items():
+            current_path = self.config_data['Project'].get(field, '')
+            # If current path doesn't match expected auto-generated path, mark as manual edit
+            if current_path != expected_path:
+                self.manual_edits.add(field)
+        
+        # Update tracking variables after detection
+        self._last_project_name = display_project
+        self._last_root_path = root_path
+    
+    def update_project_paths(self, changed_value=None):
+        """Update project-related paths when project name or root changes"""
+        # Prevent recursion
+        if self.programmatic_update:
+            return
+            
+        # Get current values from config data (should be updated before this call)
+        project_name = self.config_data['Project'].get('Name', '').strip()
+        root_path = self.config_data['Project'].get('Root', '').strip()
+        
+        # If no root, use default
+        if not root_path:
+            root_path = default_path
+        
+        # Use project name or placeholder
+        display_project = project_name if project_name else '<project>'
+        
+        # Set flag to prevent recursion
+        self.programmatic_update = True
+        
+        try:
+            # Get previous values for comparison
+            old_project = getattr(self, '_last_project_name', '<project>')
+            old_root = getattr(self, '_last_root_path', root_path)
+            
+            # Only update if something actually changed
+            if old_project == display_project and old_root == root_path:
+                return
+            
+            # Special case: if project name is being filled in (from empty/placeholder to actual name)
+            # we should update all paths that contain <project> regardless of manual_edits status
+            project_being_filled = (old_project == '<project>' and display_project != '<project>')
+            
+            # Define path patterns
+            path_patterns = {
+                'Raw': 'raw',
+                'BIDS': 'BIDS', 
+                'Calibration': os.path.join('databases', 'sss', 'sss_cal.dat'),
+                'Crosstalk': os.path.join('databases', 'ctc', 'ct_sparse.fif')
+            }
+            
+            # Update each path field
+            for field, suffix in path_patterns.items():
+                current_path = self.config_data['Project'].get(field, '')
+                
+                if field not in self.manual_edits or project_being_filled:
+                    # Auto-generated path OR project name being filled in: create standard path
+                    new_path = os.path.join(root_path, display_project, suffix)
+                    
+                    # If project is being filled in, remove from manual edits so it stays auto-updated
+                    if project_being_filled and field in self.manual_edits:
+                        self.manual_edits.discard(field)
+                else:
+                    # Manually edited path: intelligently update components
+                    new_path = self.smart_path_update(current_path, old_root, old_project, root_path, display_project)
+                
+                # Update config data
+                self.config_data['Project'][field] = new_path
+                
+                # Update widget if it exists
+                if field in self.widgets:
+                    self.widgets[field].var.set(new_path)
+            
+            # Update root in config if it was defaulted
+            if self.config_data['Project'].get('Root', '') != root_path:
+                self.config_data['Project']['Root'] = root_path
+                if 'Root' in self.widgets:
+                    self.widgets['Root'].var.set(root_path)
+            
+            # Store current values for next comparison
+            self._last_project_name = display_project
+            self._last_root_path = root_path
+            
+        finally:
+            # Always reset the flag
+            self.programmatic_update = False
+    
+    def smart_path_update(self, current_path, old_root, old_project, new_root, new_project):
+        """Intelligently update path components while preserving manual customizations"""
+        if not current_path:
+            return os.path.join(new_root, new_project)
+        
+        # Start with the current path
+        updated_path = current_path
+        
+        # FIRST: Always replace <project> placeholder with actual project name
+        if '<project>' in updated_path and new_project != '<project>':
+            updated_path = updated_path.replace('<project>', new_project)
+        
+        # SECOND: Handle root directory changes
+        if old_root and old_root != new_root and old_root in updated_path:
+            old_root_norm = os.path.normpath(old_root)
+            new_root_norm = os.path.normpath(new_root)
+            
+            # Replace root directory if it appears at the start of the path
+            if updated_path.startswith(old_root_norm):
+                updated_path = updated_path.replace(old_root_norm, new_root_norm, 1)
+        
+        # THIRD: Handle project name changes (but not from/to <project>)
+        if (old_project != new_project and 
+            old_project != '<project>' and new_project != '<project>' and
+            old_project in updated_path):
+            
+            # Split path and replace project component
+            path_parts = updated_path.split(os.sep)
+            for i, part in enumerate(path_parts):
+                if part == old_project:
+                    path_parts[i] = new_project
+                    break
+            updated_path = os.sep.join(path_parts)
+        
+        # Normalize the final path
+        return os.path.normpath(updated_path)
+    
+    def mark_config_changed(self):
+        """Mark configuration as changed and update UI accordingly"""
+        self.config_saved = False
+        if self.execute_btn:
+            self.execute_btn.configure(text="Save to Execute", state='disabled')
+    
+    def mark_config_saved(self):
+        """Mark configuration as saved and update UI accordingly"""
+        self.config_saved = True
+        if self.execute_btn:
+            self.execute_btn.configure(text="Execute Pipeline", state='normal')
+    
+    def load_config(self, config_file=None):
+        """Load configuration from file"""
+        if not config_file:
+            return create_default_config()
+            
+        try:
+            if hasattr(config_file, 'name'):
+                filename = config_file.name
+            else:
+                filename = config_file
+            
+            if filename.endswith('.yml') or filename.endswith('.yaml'):
+                with open(filename, 'r') as file:
+                    config = yaml.safe_load(file)
+            elif filename.endswith('.json'):
+                with open(filename, 'r') as file:
+                    config = json.load(file)
+            else:
+                return create_default_config()
+                
+            # Convert strings to lists where needed
+            if config:
+                if 'Project' in config and 'Tasks' in config['Project']:
+                    if isinstance(config['Project']['Tasks'], str):
+                        config['Project']['Tasks'] = config['Project']['Tasks'].split(',')
+                
+            return config if config else create_default_config()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error loading config: {e}")
+            return create_default_config()
+    
+    def save_config(self):
+        """Save current configuration"""
+        if not self.config_file:
+            self.save_as_config()
+            return
+            
+        try:
+            if self.config_file.endswith('.yml') or self.config_file.endswith('.yaml'):
+                with open(self.config_file, 'w') as file:
+                    yaml.dump(self.config_data, file, default_flow_style=False, sort_keys=False)
+            elif self.config_file.endswith('.json'):
+                with open(self.config_file, 'w') as file:
+                    json.dump(self.config_data, file, indent=4)
+            
+            self.status_label.configure(text=f"Config saved to: {self.config_file}")
+            self.mark_config_saved()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error saving config: {e}")
+    
+    def save_as_config(self):
+        """Save configuration as new file"""
+        filename = filedialog.asksaveasfilename(
+            initialdir=default_path,
+            title="Save Configuration File",
+            filetypes=[("YAML files", "*.yml *.yaml"), ("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            if not filename.endswith(('.yml', '.yaml', '.json')):
+                filename += '.yml'  # Default to YAML
+            
+            self.config_file = filename
+            self.save_config()
+    
+    def open_config(self):
+        """Open configuration file"""
+        filename = filedialog.askopenfilename(
+            initialdir=default_path,
+            title="Open Configuration File",
+            filetypes=[("Config files", "*.yml *.yaml *.json"), 
+                      ("YAML files", "*.yml *.yaml"), 
+                      ("JSON files", "*.json"), 
+                      ("All files", "*.*")]
+        )
+        
+        if filename:
+            try:
+                new_config = self.load_config(filename)
+                if new_config:
+                    self.config_data = new_config
+                    self.config_file = filename
+                    self.manual_edits.clear()  # Clear first, then detect manual edits
+                    self.detect_manual_edits()  # Detect which fields were manually edited
+                    self.status_label.configure(text=f"Config loaded from: {filename}")
+                    self.update_all_widgets()
+                    self.mark_config_saved()  # Mark as saved since we just loaded it
+            except Exception as e:
+                messagebox.showerror("Error", f"Error opening config: {e}")
+    
+    def update_all_widgets(self):
+        """Update all widgets with current config values"""
+        # Update all widgets when a new config is loaded
+        for key, widget in self.widgets.items():
+            # Find the value in config
+            value = None
+            for section in ['RUN', 'Project', 'OPM', 'MaxFilter', 'BIDS']:
+                if section in self.config_data:
+                    if key in self.config_data[section]:
+                        value = self.config_data[section][key]
+                        break
+                    elif section == 'MaxFilter':
+                        for subsection in ['standard_settings', 'advanced_settings']:
+                            if key in self.config_data[section][subsection]:
+                                value = self.config_data[section][subsection][key]
+                                break
+            
+            if value is not None:
+                if hasattr(widget, 'var'):
+                    if isinstance(value, list):
+                        widget.var.set(', '.join(str(v) for v in value))
+                    else:
+                        widget.var.set(str(value) if not isinstance(value, bool) else value)
+    
+    def execute_pipeline(self):
+        """Execute the pipeline"""
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.delete(1.0, 'end')
+        self.terminal_output.insert('end', "Executing pipeline...\n")
+        self.terminal_output.configure(state='disabled')
+        
+        # Build command
         base_dir = os.path.dirname(os.path.abspath(__file__))
         pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
+        
+        if not os.path.exists(pipeline_path):
+            self.terminal_output.configure(state='normal')
+            self.terminal_output.insert('end', "Error: natmeg_pipeline.py not found!\n")
+            self.terminal_output.configure(state='disabled')
+            return
+        
         cmd = [sys.executable, '-u', pipeline_path, 'run']
-        if config_path:
-            cmd += ['--config', config_path]
-        # Show terminal output window
-        show_terminal()
-        terminal_output.config(state='normal')
-        terminal_output.delete('1.0', 'end')
-        terminal_output.insert('end', f"Running: {' '.join(cmd)}\n\n")
-        terminal_output.config(state='disabled')
-        # Thread-safe streaming using a queue and periodic polling on the main thread
-        q = queue.Queue()
-        ansi_re = re.compile(r"\x1b\[(?P<codes>[0-9;]*)m")
-
-        def parse_ansi_segments(s: str):
-            # Returns list of (segment_text, [tags]) for ANSI SGR codes
-            segments = []
-            idx = 0
-            active_tags = set()
-            for m in ansi_re.finditer(s):
-                if m.start() > idx:
-                    segments.append((s[idx:m.start()], tuple(active_tags)))
-                codes = m.group('codes')
-                if codes == '' or codes == '0':
-                    active_tags.clear()
-                else:
-                    for code in codes.split(';'):
-                        if not code:
-                            continue
-                        try:
-                            n = int(code)
-                        except ValueError:
-                            continue
-                        if n == 0:
-                            active_tags.clear()
-                        elif n == 1:
-                            active_tags.add('bold')
-                        elif n == 4:
-                            active_tags.add('underline')
-                        elif n == 22:
-                            active_tags.discard('bold')
-                        elif n == 24:
-                            active_tags.discard('underline')
-                        elif n == 39:
-                            # default foreground -> remove any fg-* tag
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                        elif 30 <= n <= 37:
-                            # standard fg colors
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
-                            active_tags.add(f'fg-{names[n-30]}')
-                        elif 90 <= n <= 97:
-                            # bright fg colors
-                            for t in list(active_tags):
-                                if t.startswith('fg-'):
-                                    active_tags.discard(t)
-                            names = ['black','red','green','yellow','blue','magenta','cyan','white']
-                            active_tags.add(f'fg-bright-{names[n-90]}')
-                        # Other codes ignored for simplicity
-                idx = m.end()
-            if idx < len(s):
-                segments.append((s[idx:], tuple(active_tags)))
-            return segments
-
-        def insert_formatted(text: str):
-            # Fallback highlight when no ANSI codes present
-            if not ansi_re.search(text):
-                tags = ()
-                up = text.upper()
-                if 'ERROR' in up:
-                    tags = ('fg-red', 'bold')
-                elif 'WARNING' in up:
-                    tags = ('fg-yellow',)
-                terminal_output.insert('end', text, tags)
-                return
-            for seg, tags in parse_ansi_segments(text):
-                terminal_output.insert('end', seg, tags)
-        def poll_queue():
+        if self.config_file:
+            cmd += ['--config', self.config_file]
+        
+        # Start process in a separate thread
+        def run_pipeline():
             try:
-                while True:
-                    line = q.get_nowait()
-                    terminal_output.config(state='normal')
-                    insert_formatted(line)
-                    terminal_output.see('end')
-                    terminal_output.config(state='disabled')
-            except queue.Empty:
-                pass
-            finally:
-                root.after(50, poll_queue)
-
-        def run_subprocess():
-            process = subprocess.Popen(
-                cmd,
-                cwd=base_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=os.environ
-            )
-            for line in process.stdout:
-                q.put(line)
-            process.wait()
-            #q.put(f"\nProcess finished with exit code {process.returncode}\n")
-
-        # Kick off polling and background process
-        root.after(0, poll_queue)
-        threading.Thread(target=run_subprocess, daemon=True).start()
-    
-    # Execute button widget (initially disabled until a save occurs)
-    execute_button = ttk.Button(run_frame, text="Save to execute", command=execute, state='disabled', style='C.TButton')
-    execute_button.grid(row=row, column=0, columnspan=2, pady=20, padx=10, sticky='ew')
-    
-    def save():
-        # Disable save button
-        save_button.config(state='disabled', text='Saved!', 
-                           style='C.TButton')
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                         universal_newlines=True, bufsize=1)
+                
+                for line in iter(process.stdout.readline, ''):
+                    if line:
+                        self.root.after(0, self.append_output, line)
+                
+                process.wait()
+                self.root.after(0, self.append_output, f"\nProcess finished with exit code: {process.returncode}\n")
+            except Exception as e:
+                self.root.after(0, self.append_output, f"Error running pipeline: {e}\n")
         
-        # Enable execute button when config is saved
-        execute_button.config(state='normal', text='Execute')
-        
-        # Update config with GUI values
-        for key, var in project_vars.items():
-            value = var.get()
-            if key == 'tasks':
-                # Convert comma-separated string to list, remove blanks
-                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['project'][key] = value
+        threading.Thread(target=run_pipeline, daemon=True).start()
     
-        for key, var in opm_vars.items():
-            value = var.get()
-            if key in ['hpi_names', 'polhemus']:
-                # Convert comma-separated string to list, remove blanks
-                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['opm'][key] = value
+    def append_output(self, text):
+        """Append text to terminal output (thread-safe)"""
+        self.terminal_output.configure(state='normal')
+        self.terminal_output.insert('end', text)
+        self.terminal_output.see('end')
+        self.terminal_output.configure(state='disabled')
+        self.root.update_idletasks()
     
-        for section in ['standard_settings', 'advanced_settings']:
-            for key, var in maxfilter_vars[section].items():
-                value = var.get()
-                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                    # Convert comma-separated string to list, remove blanks
-                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
-                else:
-                    config['maxfilter'][section][key] = value
+    def show(self):
+        """Show the window"""
+        self.root.mainloop()
     
-        for key, var in bids_vars.items():
-            config['bids'][key] = var.get()
-    
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
+    def quit(self):
+        """Quit the application"""
+        self.root.quit()
 
-        save_config(config, filename=config_file if config_file else None)
-        
-        # Switch to RUN tab
-        notebook.select(run_frame)
-        
-        # Re-enable save button after any variable changes
-        def enable_save_button(*args):
-            save_button.config(state='normal', text='Save')
-            # Disable execute button when changes are made
-            execute_button.config(state='disabled', text='Save to execute', style='C.TButton')
-        
-        # Bind to all variables to detect changes
-        for var in project_vars.values():
-            var.trace('w', enable_save_button)
-        for var in opm_vars.values():
-            var.trace('w', enable_save_button)
-        for section_vars in maxfilter_vars.values():
-            for var in section_vars.values():
-                var.trace('w', enable_save_button)
-        for var in bids_vars.values():
-            var.trace('w', enable_save_button)
-        for var in run_vars.values():
-            var.trace('w', enable_save_button)
-
-    def save_as():
-        # Update config with GUI values (same as save function)
-        for key, var in project_vars.items():
-            value = var.get()
-            if key == 'tasks':
-                config['project'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['project'][key] = value
-    
-        for key, var in opm_vars.items():
-            value = var.get()
-            if key in ['hpi_names', 'polhemus']:
-                config['opm'][key] = [item.strip() for item in value.split(',') if item.strip()]
-            else:
-                config['opm'][key] = value
-    
-        for section in ['standard_settings', 'advanced_settings']:
-            for key, var in maxfilter_vars[section].items():
-                value = var.get()
-                if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                    config['maxfilter'][section][key] = [item.strip() for item in value.split(',') if item.strip()]
-                else:
-                    config['maxfilter'][section][key] = value
-    
-        for key, var in bids_vars.items():
-            config['bids'][key] = var.get()
-    
-        for key, var in run_vars.items():
-            config['RUN'][key] = var.get()
-
-        # Force file dialog for save as (pass None as filename)
-        save_config(config, filename=None)
-    
-    def open_config():
-        new_config_file = askopenfile(
-            title='Select config file',
-            filetypes=[('YAML files', ['*.yml', '*.yaml']), ('JSON files', '*.json')],
-            initialdir=default_path)
-        nonlocal config_file
-        if new_config_file:
-            # Load the new configuration
-            new_config = load_config(new_config_file)
-            if new_config:
-                # Update all GUI variables with new config values
-                for key, var in project_vars.items():
-                    if key in new_config['project']:
-                        if key == 'tasks':
-                            var.set(', '.join(new_config['project'][key]) if isinstance(new_config['project'][key], list) else str(new_config['project'][key]))
-                        else:
-                            var.set(str(new_config['project'][key]))
-                for key, var in opm_vars.items():
-                    if key in new_config['opm']:
-                        if key in ['hpi_names', 'polhemus']:
-                            var.set(', '.join(new_config['opm'][key]) if isinstance(new_config['opm'][key], list) else str(new_config['opm'][key]))
-                        else:
-                            var.set(new_config['opm'][key])
-                for section in ['standard_settings', 'advanced_settings']:
-                    for key, var in maxfilter_vars[section].items():
-                        if key in new_config['maxfilter'][section]:
-                            if key in ['trans_conditions', 'empty_room_files', 'subjects_to_skip', 'bad_channels', 'sss_files']:
-                                var.set(', '.join(new_config['maxfilter'][section][key]) if isinstance(new_config['maxfilter'][section][key], list) else str(new_config['maxfilter'][section][key]))
-                            else:
-                                var.set(new_config['maxfilter'][section][key])
-                for key, var in bids_vars.items():
-                    if key in new_config['bids']:
-                        var.set(new_config['bids'][key])
-                for key, var in run_vars.items():
-                    if key in new_config['RUN']:
-                        var.set(new_config['RUN'][key])
-                # Update the global config variable
-                nonlocal config
-                config = new_config
-                # Update config_file to the newly loaded file
-                if hasattr(new_config_file, 'name'):
-                    config_file = new_config_file.name
-                else:
-                    config_file = new_config_file
-                # Update the loaded file label
-                loaded_file_label.config(text=f"Loaded config file: {config_file}", foreground='black')
-    
-    def cancel():
-        root.destroy()
-        print('User cancelled')
-        sys.exit(0)
-        config = None
-    
-    # Show loaded config file above buttons
-    if config_file:
-        loaded_file_label = ttk.Label(root,
-            text=f"Loaded config file: {config_file}",
-            font=('TkDefaultFont', 10, 'bold'), foreground='black')
-        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
-    else:
-        loaded_file_label = ttk.Label(root,
-            text="No config file loaded (using default)",
-            font=('TkDefaultFont', 10, 'bold'), foreground='black')
-        loaded_file_label.pack(side='bottom', fill='x', padx=10, pady=2)
-
-    # Button frame at bottom
-    button_frame = ttk.Frame(root)
-    button_frame.pack(side='bottom', fill='x', padx=10, pady=5)
-    # Cancel button
-    cancel_button = ttk.Button(button_frame, text="Cancel", command=cancel)
-    cancel_button.pack(side='right', padx=5)
-    
-    # Save as button
-    save_as_button = ttk.Button(button_frame, text="Save as...", command=save_as)
-    save_as_button.pack(side='right', padx=5)
-    
-    # Save button
-    save_button = ttk.Button(button_frame, text="Save", command=save)
-    save_button.pack(side='right', padx=5)
-    
-    # Open button
-    open_button = ttk.Button(button_frame, text="Open", command=open_config)
-    open_button.pack(side='right', padx=5)
-    
-    # Center the window on screen
-    root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
-    x = (root.winfo_screenwidth() // 2) - (width // 2)
-    y = (root.winfo_screenheight() // 2) - (height // 2)
-    root.geometry(f'{width}x{height}+{x}+{y}')
-    
-    # Bring window to front and focus
-    root.lift()
-    root.attributes('-topmost', True)
-    root.after(10, lambda: root.attributes('-topmost', False))
-    root.focus_force()
-    
-    root.mainloop()
-    return config
 
 def args_parser():
-    parser = argparse.ArgumentParser(description=
-                                     '''
-Configuration script for NatMEG pipeline.
+    parser = argparse.ArgumentParser(description='''
+Configuration script for NatMEG pipeline (Tkinter version).
                                      
 This script allows you to create or edit a configuration file for the NatMEG pipeline.
 You can specify paths, settings, and options for various stages of the pipeline including MaxFilter,
 OPM processing, and BIDS conversion. The configuration can be saved in YAML or JSON format.
 You can also provide a path to an existing configuration file to load its settings.
-                                     
                                      ''',
-                                     add_help=True,
-                                     usage='maxfilter [-h] [-c CONFIG]')
+                                     add_help=True)
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
-def main(config_file:str=None):
+
+def config_UI(config_file: str = None):
+    """Launch the configuration GUI and return the configuration"""
+    window = ConfigMainWindow(config_file=config_file)
+    window.show()
+    
+    # Return the configuration data after GUI closes
+    return window.config_data
+
+
+def main(config_file: str = None):
+    """Main entry point"""
     args = args_parser()
+    config_file = args.config or config_file
     
-    config_file = args.config
-    
-    if not config_file or not exists(config_file):
-        config = config_UI()
-    elif config_file:
-        config = config_UI(config_file)
-        return config
+    window = ConfigMainWindow(config_file=config_file)
+    window.show()
+
 
 if __name__ == "__main__":
     main()

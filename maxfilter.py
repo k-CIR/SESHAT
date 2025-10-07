@@ -20,8 +20,6 @@ import os
 from os.path import exists, basename, dirname, isdir
 import sys
 import re
-import tkinter as tk
-from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfile
 import json
 import yaml
 from typing import Union
@@ -29,6 +27,7 @@ import pandas as pd
 import subprocess
 import argparse
 from datetime import datetime
+
 from shutil import copy2
 from copy import deepcopy
 import mne
@@ -94,13 +93,13 @@ def get_parameters(config):
     elif isinstance(config, dict):
         config_dict = deepcopy(config)
     
-    maxfilter_dict = deepcopy(config_dict['maxfilter'])
-    maxfilter_dict['advanced_settings']['cal'] = config_dict['project']['Calibration']
-    maxfilter_dict['advanced_settings']['ctc'] = config_dict['project']['Crosstalk']
-    maxfilter_dict['standard_settings']['project_name'] = config_dict['project']['name']
-    maxfilter_dict['standard_settings']['data_path'] = config_dict['project']['squidMEG']
-    maxfilter_dict['standard_settings']['out_path'] = config_dict['project']['squidMEG']
-    maxfilter_dict['standard_settings']['logfile'] = config_dict['project']['Logfile']
+    maxfilter_dict = deepcopy(config_dict['MaxFilter'])
+    maxfilter_dict['advanced_settings']['cal'] = config_dict['Project']['Calibration']
+    maxfilter_dict['advanced_settings']['ctc'] = config_dict['Project']['Crosstalk']
+    maxfilter_dict['standard_settings']['project_name'] = config_dict['Project']['Name']
+    maxfilter_dict['standard_settings']['data_path'] = config_dict['Project']['Raw']
+    maxfilter_dict['standard_settings']['out_path'] = config_dict['Project']['Raw']
+    maxfilter_dict['standard_settings']['logfile'] = config_dict['Project']['Logfile']
     
     return maxfilter_dict
 
@@ -248,7 +247,7 @@ class MaxFilter:
                             data_path: str,
                             out_path: str,
                             task: str,
-                            files: list | str,
+                            files,  # list or str
                             overwrite=False,
                             **kwargs):
         """
@@ -584,7 +583,8 @@ class MaxFilter:
             if tsss_default:
                 proc.append(_tsss.string)
                 if parameters.get('correlation'):
-                    proc.append(f'corr{round(float(parameters.get('correlation'))*100)}')
+                    corr_value = parameters.get('correlation')
+                    proc.append(f'corr{round(float(corr_value)*100)}')
             else:
                 proc.append('sss')
 
@@ -675,7 +675,7 @@ class MaxFilter:
         subj_out = f'{output_path}/{subject}/{session}/triux'
         
         # Create maxfilter log directory if it doesn't exist
-        os.makedirs(f'{subj_out}/{'log'}', exist_ok=True)
+        os.makedirs(f'{subj_out}/log', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
 
@@ -722,10 +722,11 @@ class MaxFilter:
                 print(f'No files found for task: {task}')
                 continue
             
+            newline = '\n'
             print(f'''
                 Processing task: {task}
                 Using files: 
-                    {'\n'.join(files)}
+                    {newline.join(files)}
                 ''')
 
             # Average head position
@@ -747,7 +748,7 @@ class MaxFilter:
                 # Use absolute path
                 file = f"{subj_in}/{file}"
                 clean = f"{subj_out}/{clean}"
-                log = f'{subj_out}/{basename(clean).replace(".fif",".log")}'
+                log = f'{subj_out}/log/{basename(clean).replace(".fif",".log")}'
 
                 command_list = []
                 command_list.extend([
@@ -779,7 +780,7 @@ class MaxFilter:
                             subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
                             log('MaxFilter', f'{file} -> {clean}', 'info', logfile=self.logfile, log_path=self.logpath)
                         except Exception as e:
-                            print(f'Error occurred while running MaxFilter: {e}')
+                            print(f'Error occurred while running MaxFilter. See {self.logfile} for details.')
                     else:
                         print(self.command_mxf)
 

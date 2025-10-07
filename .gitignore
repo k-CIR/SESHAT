@@ -7,7 +7,7 @@ depricated
 
 # Ignore test files
 *test*
-
+*tmp*
 .venv
 venv
 # Ignore node_modules directory
@@ -22,6 +22,11 @@ node_modules/
 # Ignore build directories
 dist/
 build/
+
+# Ignore virtual environments
+.venv/
+venv/
+env/
 
 # Ignore OS generated files
 .DS_Store
