@@ -38,8 +38,11 @@ from mne.chpi import (compute_chpi_amplitudes, compute_chpi_locs,
                       head_pos_to_trans_rot_t, compute_head_pos,
                       write_head_pos,
                       read_head_pos)
+# Set matplotlib backend to non-GUI to avoid Qt issues
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.patches as mpatches
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 from utils import (
     log, configure_logging,
@@ -350,6 +353,22 @@ class MaxFilter:
             print(f'{basename(trans_file)} already exists. Skipping...')
         
         if not exists(fig_name) or overwrite:
+            # Need to load raw data for plotting if not already loaded
+            if 'raw' not in locals():
+                if isinstance(files, str):
+                    files = [files]
+                raws = [mne.io.read_raw_fif(
+                        f'{data_path}/{file}',
+                        allow_maxshield=True,
+                        verbose='error')
+                            for file in files]
+                
+                if merge_headpos and len(files) > 1:
+                    raws[0].info['dev_head_t'] = raws[1].info['dev_head_t']
+                    raw = mne.concatenate_raws(raws)
+                else:
+                    raw = raws[0]
+            
             plot_movement(raw, headpos_name, trans_file).savefig(fig_name)
 
     def set_params(self, subject, session, task):
@@ -617,7 +636,113 @@ class MaxFilter:
         self._merge_runs = _merge_runs
         self._additional_cmd = _additional_cmd
 
-    def run_command(self, subject, session):
+    def process_task_files(self, subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv):
+        """
+        Process all files for a specific task, potentially in parallel.
+        
+        Args:
+            subject (str): Subject identifier
+            session (str): Session identifier
+            task (str): Task name
+            files (list): List of files to process for this task
+            subj_in (str): Input directory path
+            subj_out (str): Output directory path
+            maxfilter_path (str): Path to MaxFilter executable
+            naming_conv (regex): Naming convention pattern
+        
+        Returns:
+            list: List of processing results
+        """
+        parameters = self.parameters
+        debug = parameters.get('debug', False)
+        
+        # Set parameters for this task
+        self.set_params(subject, session, task)
+        _proc = self._proc
+        
+        results = []
+        
+        for file in files:
+            clean = file.replace('.fif', f'_proc-{_proc}.fif')
+            ncov = naming_conv.search(clean)
+            
+            if not ncov:
+                clean = clean.replace('.fif', '_meg.fif')
+
+            # Use absolute path
+            file_path = f"{subj_in}/{file}"
+            clean_path = f"{subj_out}/{clean}"
+            log_file = f'{subj_out}/log/{os.path.basename(clean).replace(".fif",".log")}'
+            
+            print(f'Running MaxFilter on {subject} | {session} | {task} | {file}')
+            print(f'Input file: {file_path}')
+            print(f'Expected output: {clean_path}')
+
+            command_list = []
+            command_list.extend([
+                maxfilter_path,
+                '-f %s' % file_path,
+                '-o %s' % clean_path,
+                self._cal.mxf,
+                self._ctc.mxf,
+                self._trans.mxf,
+                self._tsss.mxf,
+                self._ds.mxf,
+                self._corr.mxf,
+                self._mc.mxf,
+                self._autobad.mxf,
+                self._bad_channels.mxf,
+                self._linefreq.mxf,
+                self._force,
+                self._additional_cmd,
+                '-v',
+                '| tee -a %s' % log_file
+                ])
+            command_mxf = ' '.join(command_list)
+            command_mxf = re.sub(r'\\s+', ' ', command_mxf).strip()
+
+            if not exists(clean_path):
+                print(f'Running MaxFilter on {subject} | {session} | {task} | {file}')
+                if not debug:
+                    try:
+                        # Use safer subprocess options for threading
+                        result = subprocess.run(
+                            command_mxf, 
+                            shell=True, 
+                            cwd=subj_in,
+                            capture_output=False,  # Don't capture to avoid buffer issues
+                            text=True,
+                            env=os.environ.copy()  # Use copy of environment
+                        )
+                        print(f"MaxFilter exit code: {result.returncode}")
+                        
+                        # Check if the output file was actually created (more reliable than exit code)
+                        if os.path.exists(clean_path):
+                            log('MaxFilter', f'{file_path} -> {clean_path}', 'info', logfile=self.logfile, logpath=self.logpath)
+                            print(f'Successfully processed: {os.path.basename(clean)}')
+                            results.append((True, file, clean))
+                        else:
+                            print(f'MaxFilter failed - output file not created at: {clean_path}')
+                            print(f'Exit code: {result.returncode}')
+                            log('MaxFilter', f'Failed to create {clean_path}. Exit code: {result.returncode}', 'error', logfile=self.logfile, logpath=self.logpath)
+                            results.append((False, file, clean))
+                    except Exception as e:
+                        print(f'Error occurred while running MaxFilter: {e}. See {self.logfile} for details.')
+                        log('MaxFilter', f'Exception during processing: {e}', 'error', logfile=self.logfile, logpath=self.logpath)
+                        results.append((False, file, clean))
+                else:
+                    print(command_mxf)
+                    results.append((True, file, clean))  # Dry run success
+            else:
+                print(f'''
+                    Existing file: {clean_path}
+                    Delete to rerun MaxFilter process
+                    ''')
+                results.append((True, file, clean))  # Already exists
+        
+        return results
+
+    def run_command(self, subject, session, max_workers=1):
         """
         Execute MaxFilter processing for all tasks in a subject/session.
         
@@ -629,7 +754,7 @@ class MaxFilter:
         5. Manages file naming and output organization
         
         Processing Features:
-        - Task-based file organization and processing
+        - Task-based file organization and processing with optional parallelization
         - Automatic head position file generation
         - BIDS-compatible output naming with processing suffixes
         - Comprehensive logging with individual file logs
@@ -639,6 +764,7 @@ class MaxFilter:
         Args:
             subject (str): Subject directory name
             session (str): Session directory name
+            max_workers (int): Number of parallel workers for task processing
         
         Returns:
             None
@@ -709,120 +835,74 @@ class MaxFilter:
         # Remove if empty
         tasks_to_run = [t for t in tasks_to_run if t != '']
 
-        print(f'''
-                Processing subject: {subject}
-                Session: {session}
-                ''')
-
+        # Prepare task processing - create head position files first (sequential)
+        task_data = []
         for task in tasks_to_run:
-
             files = match_task_files(all_fifs, task)
             
             if not files:
                 print(f'No files found for task: {task}')
                 continue
-            
-            newline = '\n'
-            print(f'''
-                Processing task: {task}
-                Using files: 
-                    {newline.join(files)}
-                ''')
 
-            # Average head position
+            # Average head position (must be done sequentially due to file I/O)
             if task in trans_files:
                 self.create_task_headpos(subj_in, subj_out, task, files, overwrite=False)
-
-            self.set_params(subject, session, task)
             
-            _proc = self._proc
-            
-            for file in files:
+            task_data.append((task, files))
 
-                clean = file.replace('.fif', f'_proc-{_proc}.fif')
-                ncov = naming_conv.search(clean)
+        # Process tasks - potentially in parallel
+        if max_workers == 1 or len(task_data) == 1:
+            # Sequential processing
+            for task, files in task_data:
+                self.process_task_files(subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv)
+        else:
+            # Parallel task processing
+            with ThreadPoolExecutor(max_workers=min(max_workers, len(task_data))) as executor:
+                futures = [
+                    executor.submit(self.process_task_files, subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv) 
+                    for task, files in task_data
+                ]
                 
-                if not ncov:
-                    clean = clean.replace('.fif', '_meg.fif')
-
-                # Use absolute path
-                file = f"{subj_in}/{file}"
-                clean = f"{subj_out}/{clean}"
-                log = f'{subj_out}/log/{basename(clean).replace(".fif",".log")}'
-
-                command_list = []
-                command_list.extend([
-                    maxfilter_path,
-                    '-f %s' % file,
-                    '-o %s' % clean,
-                    self._cal.mxf,
-                    self._ctc.mxf,
-                    self._trans.mxf,
-                    self._tsss.mxf,
-                    self._ds.mxf,
-                    self._corr.mxf,
-                    self._mc.mxf,
-                    self._autobad.mxf,
-                    self._bad_channels.mxf,
-                    self._linefreq.mxf,
-                    self._force,
-                    self._additional_cmd,
-                    '-v',
-                    '| tee -a %s' % log
-                    ])
-                self.command_mxf = ' '.join(command_list)
-                self.command_mxf = re.sub(r'\\s+', ' ', self.command_mxf).strip()
-
-                if not exists(clean):
-                    print(f'Running MaxFilter on {subject} | {session} | {task}')
-                    if not debug:
-                        try:
-                            subprocess.run(self.command_mxf, shell=True, cwd=subj_in)
-                            log('MaxFilter', f'{file} -> {clean}', 'info', logfile=self.logfile, log_path=self.logpath)
-                        except Exception as e:
-                            print(f'Error occurred while running MaxFilter. See {self.logfile} for details.')
-                    else:
-                        print(self.command_mxf)
-
-                else:
-                    print('''
-                        Existing file: %s
-                        Delete to rerun MaxFilter process
-                        ''' % clean)
+                for future in as_completed(futures):
+                    try:
+                        results = future.result()
+                        # Process results if needed
+                    except Exception as e:
+                        print(f"Error in task processing: {e}")
 
     def loop_dirs(self, max_workers=4):
         """
-        Process multiple subjects and sessions in parallel.
+        Process multiple subjects and sessions sequentially with task-level parallelization.
         
-        Orchestrates MaxFilter processing across entire dataset using parallel
-        execution for efficiency. Handles subject filtering, session discovery,
-        and error management for large-scale processing.
+        Orchestrates MaxFilter processing across entire dataset with efficient parallel
+        execution at the task level within each subject/session. Handles subject filtering, 
+        session discovery, and error management for large-scale processing.
         
         Processing Workflow:
         1. Scan data directory for subjects (sub-* or NatMEG*)
         2. Filter subjects based on skip list
         3. Discover sessions within each subject directory
-        4. Create (subject, session) task pairs
-        5. Execute processing in parallel using ThreadPoolExecutor
+        4. Process each (subject, session) sequentially
+        5. Within each subject/session, parallelize task processing
         6. Handle exceptions and continue processing on failures
         
         Args:
-            max_workers (int): Maximum number of parallel processes (default: 4)
+            max_workers (int): Maximum number of parallel workers for task processing (default: 4)
         
         Returns:
             None
             
         Side Effects:
-            - Processes entire dataset in parallel
+            - Processes subjects/sessions sequentially but tasks in parallel
             - Creates all output files and logs
             - Prints progress and error messages
             - Continues processing despite individual failures
         
         Performance Notes:
-            - Uses ThreadPoolExecutor for I/O-bound MaxFilter calls
-            - Scales processing to available CPU cores
-            - Memory usage scales with max_workers
-            - Network/disk I/O may be bottleneck for large datasets
+            - Sequential subject/session processing prevents resource conflicts
+            - Parallel task processing within each subject improves efficiency
+            - Safer for subprocess management and file I/O
+            - Reduced memory usage compared to full parallelization
         
         Error Handling:
             - Captures and reports exceptions for individual sessions
@@ -840,24 +920,20 @@ class MaxFilter:
         
         if skip_subjects:
             print(f'Skipping {", ".join(skip_subjects)}')
-        
-        subjects = [s for s in subjects if file_contains(s, skip_subjects)]
 
-        # Collect all (subject, session) pairs
-        subs_and_sess = []
+        subjects = sorted([s for s in subjects if file_contains(s, skip_subjects)])
+
+        # Process each subject/session sequentially
         for subject in subjects:
-            sessions = [s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')]
+            sessions = sorted([s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')])
             for session in sessions:
-                subs_and_sess.append((subject, session))
-        
-        # Run in parallel
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(self.run_command, subject, session) for subject, session in subs_and_sess]
-            for future in as_completed(futures):
+                print(f'Running MaxFilter on {subject} | {session} |')
                 try:
-                    future.result()
+                    # Pass max_workers to enable task-level parallelization
+                    self.run_command(subject, session, max_workers=max_workers)
                 except Exception as e:
-                    print(f"Error in parallel task: {e}")
+                    print(f"Error processing {subject}/{session}: {e}")
+                    # Continue with next subject/session
 
 def args_parser():
     """
