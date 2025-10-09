@@ -217,23 +217,72 @@ def dict_to_table_report(data, title="File Report", output_file="table_report.ht
     local_items = {item.get('path') or item.get('relpath'): item for item in local_hierarchy}
     remote_items = {item.get('path') or item.get('relpath'): item for item in remote_hierarchy}
     
-    # Get all paths in the order they appear in local hierarchy (preserve ordering)
-    all_paths = []
-    path_set = set()
-    
-    # Add all local paths first (maintaining order)
-    for item in local_hierarchy:
-        path = item.get('path') or item.get('relpath')
-        if path not in path_set:
-            all_paths.append(path)
+    # Build a complete hierarchical list that includes remote-only files in proper tree positions
+    def build_complete_hierarchy():
+        """Build a complete hierarchy that properly integrates remote-only files."""
+        # Start with local hierarchy as base
+        complete_paths = []
+        path_set = set()
+        
+        # Add all local paths first (maintaining order)
+        for item in local_hierarchy:
+            path = item.get('path') or item.get('relpath')
+            complete_paths.append(path)
             path_set.add(path)
+        
+        # For remote-only items, insert them in proper hierarchical position
+        remote_only_items = []
+        for item in remote_hierarchy:
+            path = item.get('path') or item.get('relpath')
+            if path not in path_set:
+                remote_only_items.append(item)
+        
+        # Sort remote-only items by their path depth and name to maintain hierarchy
+        remote_only_items.sort(key=lambda x: (x['level'], (x.get('path') or x.get('relpath')).lower()))
+        
+        # Insert remote-only items in correct positions
+        for remote_item in remote_only_items:
+            remote_path = remote_item.get('path') or remote_item.get('relpath')
+            remote_parent = remote_item.get('folder_path', '')
+            remote_level = remote_item['level']
+            
+            # Find the correct insertion point to maintain hierarchical order
+            inserted = False
+            for i, existing_path in enumerate(complete_paths):
+                existing_item = local_items.get(existing_path)
+                if existing_item:
+                    existing_parent = existing_item.get('folder_path', '')
+                    existing_level = existing_item['level']
+                    
+                    # If this remote item should come before the existing item
+                    if (remote_parent == existing_parent and 
+                        remote_level == existing_level and 
+                        remote_item['type'] == 'folder' and existing_item['type'] == 'file'):
+                        # Directories before files at same level
+                        complete_paths.insert(i, remote_path)
+                        inserted = True
+                        break
+                    elif (remote_parent == existing_parent and 
+                          remote_level == existing_level and 
+                          remote_item['type'] == existing_item['type'] and
+                          remote_item['name'].lower() < existing_item['name'].lower()):
+                        # Alphabetical order within same type and level
+                        complete_paths.insert(i, remote_path)
+                        inserted = True
+                        break
+                    elif remote_level < existing_level and existing_path.startswith(remote_parent + os.sep):
+                        # This remote item is a parent directory that should come before its children
+                        complete_paths.insert(i, remote_path)
+                        inserted = True
+                        break
+            
+            # If not inserted yet, append at end
+            if not inserted:
+                complete_paths.append(remote_path)
+        
+        return complete_paths
     
-    # Add any remote-only paths
-    for item in remote_hierarchy:
-        path = item.get('path') or item.get('relpath')
-        if path not in path_set:
-            all_paths.append(path)
-            path_set.add(path)
+    all_paths = build_complete_hierarchy()
     
     # Convert to rows for the template, preserving the hierarchical order
     rows = []
