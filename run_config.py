@@ -323,8 +323,8 @@ class ConfigMainWindow:
             'CIR-ID': 'CIR ID of the project, used for data management',
             'Description': 'Brief description of the project',
             'Tasks': 'Comma-separated list of experimental tasks',
-            'Sinuhe raw': 'Path to Sinuhe raw data directory',
-            'Kaptah raw': 'Path to Kaptah raw data directory'
+            'Sinuhe raw': 'Path to project raw data directory on Sinuhe (squid acquisition)',
+            'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)'
         }
         
         for key in standard_keys:
@@ -367,7 +367,7 @@ class ConfigMainWindow:
         opm_scrollable = self.create_scrollable_frame(opm_frame)
         
         opm_help = {
-            'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data',
+            'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data (will use any task file if empty)',
             'hpi_names': 'Comma-separated list of names of HPI recording',
             'frequency': 'Frequency of the HPI in Hz',
             'downsample_to_hz': 'Downsample OPM data to this frequency',
@@ -424,7 +424,7 @@ class ConfigMainWindow:
             'apply_linefreq': 'Apply line frequency filtering',
             'linefreq_Hz': 'Line frequency in Hz to apply filtering',
             'maxfilter_version': 'Path to MaxFilter executable',
-            'MaxFilter_commands': 'Additional MaxFilter commands to run',
+            'MaxFilter_commands': 'Additional MaxFilter commands to run (see MaxFilter manual)',
             'debug': 'Enable debug mode for MaxFilter'
         }
         
@@ -453,10 +453,10 @@ class ConfigMainWindow:
         ]
         
         standard_bids_help = {
-            'Dataset_description': 'Path to dataset_description.json file',
-            'Participants': 'Path to participants.tsv file',
-            'Participants_mapping_file': 'Path to participant mapping CSV file',
-            'Conversion_file': 'Path to conversion file',
+            'Dataset_description': 'Name of file (default dataset_description.json)',
+            'Participants': 'Name of file (default participants.tsv)',
+            'Participants_mapping_file': 'Name of participant mapping CSV file',
+            'Conversion_file': 'Name of BIDS conversion file',
             'Overwrite_conversion': 'Overwrite existing conversion files',
             'Original_subjID_name': 'Name of the original subject ID column in the mapping file',
             'New_subjID_name': 'Name of the new subject ID column in the mapping file',
