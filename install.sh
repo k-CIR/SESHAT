@@ -222,7 +222,7 @@ if [ "$USE_CONDA" = true ]; then
     
     # Create basic conda environment with Python and pip
     echo "Creating conda environment with Python and pip..."
-    conda create -n "$CONDA_ENV_NAME" "python>=3.12" pip uv -y
+    conda create -n "$CONDA_ENV_NAME" "python=3.12" pip uv -y
     
     # Initialize conda for the current shell session
     source "$(conda info --base)/etc/profile.d/conda.sh"
