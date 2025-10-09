@@ -412,7 +412,7 @@ document.addEventListener('DOMContentLoaded', function(){
 {% for r in rows %}
 <tr class='{{ r.type }}{% if r.status %} status-{{ r.status }}{% endif %}' data-path='{{ r.relpath }}' data-parent='{{ r.parent }}' data-status='{{ r.status }}' data-level='{{ r.level }}' {% if r.type=='dir' %}onclick="toggle('{{ r.relpath }}')"{% endif %}>
     <td><span class='indent' style='width: {{ r.level * 14 }}px'></span>{% if r.local_exists %}{% if r.type=='dir' %}📁 {{ r.name }}{% else %}{{ r.name }}{% endif %}{% else %}<span class='dim'>—</span>{% endif %}</td>
-    <td>{% if r.remote_exists %}{% if r.type=='dir' %}📁 {{ r.name }}{% else %}{{ r.name }}{% endif %}{% else %}<span class='dim'>—</span>{% endif %}</td>
+    <td><span class='indent' style='width: {{ r.level * 14 }}px'></span>{% if r.remote_exists %}{% if r.type=='dir' %}📁 {{ r.name }}{% else %}{{ r.name }}{% endif %}{% else %}<span class='dim'>—</span>{% endif %}</td>
   <td class='size'>{% if r.local_size is not none %}{{ r.local_size|filesize }}{% endif %}</td>
   <td class='size'>{% if r.remote_size is not none %}{{ r.remote_size|filesize }}{% endif %}</td>
   <td class='date'>{% if r.local_mtime is not none %}{{ r.local_mtime|strftime }}{% endif %}</td>
