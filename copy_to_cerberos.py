@@ -301,10 +301,10 @@ def make_process_list(config, check_existing=False):
                 files.append((source, destination))
 
             for session in sessions:
-                
-                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir) 
-                     if any(f.startswith(f'20{session}') for session in sessions)])
-                
+
+                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir)
+                                if f.startswith(f'20{session}')])
+
                 # Create a mapping of original to renamed files to handle files with task name at different times
                 file_mapping = {}
                 name_counts = {}
@@ -312,6 +312,7 @@ def make_process_list(config, check_existing=False):
                 for item in items:
                     if 'file-' in item:
                         prefix, suffix = item.split('file-', 1)
+
                         # Count occurrences of each suffix
                         name_counts[suffix] = name_counts.get(suffix, 0) + 1
                         
