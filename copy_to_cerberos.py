@@ -1,6 +1,7 @@
 from glob import glob
 from mne.io import read_raw, read_info
 from mne._fiff.write import _get_split_size
+from mne.viz.utils import compare_fiff
 import re
 import json
 import argparse
@@ -17,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from pathlib import Path
 from tqdm import tqdm
+import hashlib
 
 calibration = '/neuro/databases/sss/sss_cal.dat'
 crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
@@ -55,27 +57,49 @@ def get_parameters(config: Union[str, dict]) -> dict:
 
 def copy_if_newer_or_larger(source, destination):
     """
-    Copy file from source to destination if source is newer or larger than destination.
+    Copy file from source to destination if source is newer, larger, or different.
+    Uses more sophisticated comparison for better reliability.
     """
     if not exists(destination):
         if isdir(source):
             copytree(source, destination)
         else:
             copy2(source, destination)
-    elif (getmtime(source) > getmtime(destination) or
-    getsize(source) > getsize(destination)):
-        if isdir(source):
-            copytree(source, destination, dirs_exist_ok=True)
-        else:
-            copy2(source, destination)
+    else:
+        should_copy = False
+        
+        # Check if source is newer
+        if getmtime(source) > getmtime(destination):
+            should_copy = True
+        
+        # Check size difference - but be tolerant of small differences
+        src_size = getsize(source)
+        dst_size = getsize(destination)
+        size_diff_percent = abs(src_size - dst_size) / max(src_size, 1) * 100
+        
+        # If size difference is significant (>1%), copy
+        if size_diff_percent > 1:
+            should_copy = True
+        # For small size differences, use checksum to decide
+        elif size_diff_percent > 0:
+            src_checksum = calculate_file_checksum(source)
+            dst_checksum = calculate_file_checksum(destination)
+            if src_checksum and dst_checksum and src_checksum != dst_checksum:
+                should_copy = True
+        
+        if should_copy:
+            if isdir(source):
+                copytree(source, destination, dirs_exist_ok=True)
+            else:
+                copy2(source, destination)
 
 def check_fif(source, destination):
 
-    raw_src = read_raw(source, allow_maxshield=True, verbose='error')
-    raw_dst = read_raw(destination, allow_maxshield=True, verbose='error')
-    
-    info_src = raw_src.info
-    info_dst = raw_dst.info
+    fnames_src = read_raw(source, allow_maxshield=True, verbose='error').filenames
+    info_src = read_info(source, verbose='error')
+    [print(k, v) for k, v in info_src.items()]
+    fnames_dst = read_raw(destination, allow_maxshield=True, verbose='error').filenames
+    info_dst = read_info(destination, verbose='error')
 
     checks = {
         # 'times': (raw_src.times == raw_dst.times).all(),
@@ -89,11 +113,11 @@ def check_fif(source, destination):
     not_compare = [c for c in checks if not checks[c]]
 
     if all(checks.values()) and not not_compare:
-        return True, [str(f) for f in raw_src.filenames][0], [str(f) for f in raw_dst.filenames]
+        return True, [str(f) for f in fnames_src][0], [str(f) for f in fnames_dst]
 
     else:
         print(f'The following checks failed: {not_compare}')
-        return False, [str(f) for f in raw_src.filenames][0], [str(f) for f in raw_dst.filenames]
+        return False, [str(f) for f in fnames_src][0], [str(f) for f in fnames_dst]
 
 def check_size_fif(source, split_size='2GB'):
     raw_size = getsize(source)
@@ -109,6 +133,18 @@ def is_binary(file_path):
     with open(file_path, 'rb') as f:
         chunk = f.read(1024)  # Read first 1KB
         return b'\0' in chunk  # Binary files typically contain null bytes
+
+def calculate_file_checksum(file_path, algorithm='sha256', chunk_size=8192):
+    """Calculate checksum for a file to verify integrity."""
+    hash_algo = hashlib.new(algorithm)
+    try:
+        with open(file_path, 'rb') as f:
+            while chunk := f.read(chunk_size):
+                hash_algo.update(chunk)
+        return hash_algo.hexdigest()
+    except Exception as e:
+        print(f"Error calculating checksum for {file_path}: {e}")
+        return None
 
 def copy_squid_databases(config: dict):
     
@@ -133,7 +169,7 @@ def check_match(source, destination):
     """
     Check if the file has been transferred correctly by comparing source and destination.
     For .fif files, use MNE to read and compare metadata.
-    For other files, use filecmp.
+    For other files, use checksums for reliable comparison.
     """
     match = False
     if not exists(destination):
@@ -142,10 +178,27 @@ def check_match(source, destination):
         if isdir(source):
             match = filecmp.dircmp(source, destination).funny_files == []
         # Check if fif file and size > 2GB, then expecting split and use check_fif
-        if all([file_contains(basename(source), [r'\.fif$', r'\.fif']), check_size_fif(source)]):
+        elif all([file_contains(basename(source), [r'\.fif$', r'\.fif']), check_size_fif(source)]):
             match, source, destination = check_fif(source, destination)
         else:
-            match = filecmp.cmp(source, destination, shallow=False)
+            # For regular files, first try quick size comparison
+            src_size = getsize(source)
+            dst_size = getsize(destination)
+            
+            # If sizes are very different (>1% difference), files are definitely different
+            size_diff_percent = abs(src_size - dst_size) / max(src_size, 1) * 100
+            if size_diff_percent > 1:
+                match = False
+            else:
+                # For small size differences or equal sizes, use checksum comparison
+                src_checksum = calculate_file_checksum(source)
+                dst_checksum = calculate_file_checksum(destination)
+                
+                if src_checksum and dst_checksum:
+                    match = src_checksum == dst_checksum
+                else:
+                    # Fallback to byte-by-byte comparison if checksum fails
+                    match = filecmp.cmp(source, destination, shallow=False)
 
     return match, source, destination
     
@@ -378,7 +431,7 @@ def process_file_worker(file_info, logfile, log_path):
 
     return operation_success, source, destination, msg
 
-def parallel_copy_files(config, max_workers=4):
+def parallel_copy_files(config, max_workers=16):
     """
     Copy files in parallel using ThreadPoolExecutor.
     
