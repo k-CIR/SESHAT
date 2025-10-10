@@ -140,6 +140,7 @@ class ConfigMainWindow:
         self.terminal_process = None
         self.config_saved = bool(config_file)  # True if loading existing config, False for new
         self.execute_btn = None  # Will be set in create_run_tab
+        self.abort_btn = None  # Will be set in create_run_tab
         
         # Load configuration
         if self.config_file:
@@ -188,7 +189,7 @@ class ConfigMainWindow:
         self.status_label = ttk.Label(main_frame, text=f"Config file: {self.config_file if self.config_file else 'None'}")
         self.status_label.pack(anchor='w', pady=(5, 0))
         
-        # Set initial execute button state
+        # Set initial button states
         if self.config_saved:
             self.mark_config_saved()
         else:
@@ -512,15 +513,21 @@ class ConfigMainWindow:
         for key, value in self.config_data['RUN'].items():
             self.create_run_form_widget(run_settings_frame, key, value)
         
-        # Execute button
+        # Execute and control buttons
         execute_frame = ttk.Frame(run_frame)
         execute_frame.pack(fill='x', padx=5, pady=5)
         
         self.execute_btn = ttk.Button(execute_frame, 
                                      text="Save to Execute" if not self.config_saved else "Execute Pipeline",
                                      command=self.execute_pipeline)
-        self.execute_btn.pack(anchor='w')
+        self.execute_btn.pack(side='left', anchor='w')
         self.execute_btn.configure(state='disabled' if not self.config_saved else 'normal')
+        
+        self.abort_btn = ttk.Button(execute_frame, 
+                                   text="Abort",
+                                   command=self.abort_pipeline,
+                                   state='disabled')
+        self.abort_btn.pack(side='left', padx=(10, 0), anchor='w')
         
         # Terminal output
         terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
@@ -715,12 +722,16 @@ class ConfigMainWindow:
         self.config_saved = False
         if self.execute_btn:
             self.execute_btn.configure(text="Save to Execute", state='disabled')
+        if self.abort_btn:
+            self.abort_btn.configure(state='disabled')
     
     def mark_config_saved(self):
         """Mark configuration as saved and update UI accordingly"""
         self.config_saved = True
         if self.execute_btn:
             self.execute_btn.configure(text="Execute Pipeline", state='normal')
+        if self.abort_btn:
+            self.abort_btn.configure(state='disabled')
     
     def load_config(self, config_file=None):
         """Load configuration from file"""
@@ -845,6 +856,10 @@ class ConfigMainWindow:
         self.terminal_output.insert('end', "Executing pipeline...\n")
         self.terminal_output.configure(state='disabled')
         
+        # Enable abort button, disable execute button
+        self.execute_btn.configure(state='disabled')
+        self.abort_btn.configure(state='normal')
+        
         # Build command
         base_dir = os.path.dirname(os.path.abspath(__file__))
         pipeline_path = os.path.join(base_dir, 'natmeg_pipeline.py')
@@ -853,6 +868,8 @@ class ConfigMainWindow:
             self.terminal_output.configure(state='normal')
             self.terminal_output.insert('end', "Error: natmeg_pipeline.py not found!\n")
             self.terminal_output.configure(state='disabled')
+            self.execute_btn.configure(state='normal')
+            self.abort_btn.configure(state='disabled')
             return
         
         cmd = [sys.executable, '-u', pipeline_path, 'run']
@@ -862,19 +879,97 @@ class ConfigMainWindow:
         # Start process in a separate thread
         def run_pipeline():
             try:
-                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                         universal_newlines=True, bufsize=1)
+                self.terminal_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                                        universal_newlines=True, bufsize=1, 
+                                                        encoding='utf-8', errors='replace')
                 
-                for line in iter(process.stdout.readline, ''):
+                for line in iter(self.terminal_process.stdout.readline, ''):
                     if line:
-                        self.root.after(0, self.append_output, line)
+                        # Clean up problematic Unicode characters
+                        cleaned_line = self.clean_terminal_output(line)
+                        self.root.after(0, self.append_output, cleaned_line)
                 
-                process.wait()
-                self.root.after(0, self.append_output, f"\nProcess finished with exit code: {process.returncode}\n")
+                self.terminal_process.wait()
+                exit_code = self.terminal_process.returncode
+                self.terminal_process = None
+                
+                self.root.after(0, self.append_output, f"\nProcess finished with exit code: {exit_code}\n")
+                self.root.after(0, self.reset_buttons)
+                
             except Exception as e:
+                self.terminal_process = None
                 self.root.after(0, self.append_output, f"Error running pipeline: {e}\n")
+                self.root.after(0, self.reset_buttons)
         
         threading.Thread(target=run_pipeline, daemon=True).start()
+    
+    def abort_pipeline(self):
+        """Abort the running pipeline"""
+        if self.terminal_process:
+            try:
+                self.terminal_process.terminate()
+                self.append_output("\n*** Pipeline execution aborted by user ***\n")
+                
+                # Wait a bit for graceful termination, then force kill if needed
+                def force_kill():
+                    if self.terminal_process and self.terminal_process.poll() is None:
+                        self.terminal_process.kill()
+                        self.append_output("*** Process forcefully terminated ***\n")
+                
+                self.root.after(3000, force_kill)  # Force kill after 3 seconds
+                
+            except Exception as e:
+                self.append_output(f"Error aborting process: {e}\n")
+            finally:
+                self.reset_buttons()
+    
+    def clean_terminal_output(self, text):
+        """Clean problematic Unicode characters from terminal output"""
+        # Dictionary of common problematic Unicode characters and their replacements
+        unicode_replacements = {
+            '\u258f': '▏',  # Left one-eighth block
+            '\u258e': '▎',  # Left one-quarter block  
+            '\u258d': '▍',  # Left three-eighths block
+            '\u258c': '▌',  # Left half block
+            '\u258b': '▋',  # Left five-eighths block
+            '\u258a': '▊',  # Left three-quarters block
+            '\u2589': '▉',  # Left seven-eighths block
+            '\u2588': '█',  # Full block
+            '\u2590': '▐',  # Right half block
+            '\u2591': '░',  # Light shade
+            '\u2592': '▒',  # Medium shade
+            '\u2593': '▓',  # Dark shade
+            '\u25cf': '●',  # Black circle
+            '\u25cb': '○',  # White circle
+            '\u25aa': '▪',  # Black small square
+            '\u25ab': '▫',  # White small square
+            '\u2502': '│',  # Box vertical
+            '\u2500': '─',  # Box horizontal
+            '\u250c': '┌',  # Box top-left
+            '\u2510': '┐',  # Box top-right
+            '\u2514': '└',  # Box bottom-left
+            '\u2518': '┘',  # Box bottom-right
+            '\u251c': '├',  # Box vertical-right
+            '\u2524': '┤',  # Box vertical-left
+            '\u252c': '┬',  # Box horizontal-down
+            '\u2534': '┴',  # Box horizontal-up
+            '\u253c': '┼',  # Box cross
+        }
+        
+        # Replace problematic characters
+        for unicode_char, replacement in unicode_replacements.items():
+            text = text.replace(unicode_char, replacement)
+        
+        # Remove any remaining non-printable characters except newlines and tabs
+        import re
+        text = re.sub(r'[^\x20-\x7E\n\t\r]', '?', text)
+        
+        return text
+    
+    def reset_buttons(self):
+        """Reset button states after pipeline execution"""
+        self.execute_btn.configure(state='normal')
+        self.abort_btn.configure(state='disabled')
     
     def append_output(self, text):
         """Append text to terminal output (thread-safe)"""
