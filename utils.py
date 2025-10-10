@@ -19,6 +19,9 @@ import os
 import logging
 from logging import handlers
 from typing import Optional, Dict, Tuple
+from pathlib import Path
+import json
+import yaml
 
 # tkinter file dialog imports
 
@@ -55,6 +58,54 @@ _CONFIGURED: bool = False
 _FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
 _CONSOLE_HANDLER: Optional[logging.Handler] = None
 
+def project_paths(config: str, init=False):
+    """Create a directory structure for a new project."""
+    
+    if isinstance(config, str):
+        if config.endswith('.json'):
+            with open(config, 'r') as f:
+                config = json.load(f)
+        elif config.endswith('.yml') or config.endswith('.yaml'):
+            with open(config, 'r') as f:
+                config = yaml.safe_load(f)
+        else:
+            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
+    
+    base_root = config['Project'].get('Root', '.')
+    project_name = config['Project']['Name']
+    project_root = Path(os.path.join(base_root, project_name))
+    raw_root = config['Project'].get('Raw', project_root / 'raw')
+    bids_root = config['Project'].get('BIDS', project_root / 'bids')
+    log_file = config['Project'].get('LogFile', 'pipeline_log.log')
+    
+    paths = {
+        'project_root': project_root,
+        'raw': raw_root,
+        'scripts': project_root / 'scripts',
+        'logs': project_root / 'logs',
+        'docs': project_root / 'docs'
+    }
+    
+    if init:
+        # Create project directories
+        try:
+            for path in paths.values():
+                if not path.exists():
+                    path.mkdir(parents=True)
+                    print(f"The directory '{path}' was created.")
+                else:
+                    print(f"The directory '{path}' already exists.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
+    
+    paths['log_file'] = paths['logs'] / log_file
+    paths['bids'] = bids_root
+    paths['sinuhe'] = config['Project'].get('Sinuhe raw', None)
+    paths['kaptah'] = config['Project'].get('Kaptah raw', None)
+    paths['Calibration'] = config['Project'].get('Calibration', None)
+    paths['Crosstalk'] = config['Project'].get('Crosstalk', None)
+    
+    return paths
 
 class _ColoredFormatter(logging.Formatter):
     COLORS = {
@@ -144,30 +195,85 @@ def log(
     process: str,
     message: str,
     level: str = 'info',
-    logfile: str = 'log.log',
-    logpath: str = '.'
+    log_file_path: str = './log.log',
+    logfile: Optional[str] = None,
+    logpath: Optional[str] = None
 ):
     """Project-wide logging wrapper (backward-compatible).
 
     - Uses centralized logging with colored console + TSV file output.
     - Accepts legacy utils.log signature and common misordered usage.
-    - Ensures a file handler for the given logpath/logfile exists.
+    - Ensures a file handler for the given log_file_path exists.
+    
+    Args:
+        process: Process name for logging context
+        message: Log message content
+        level: Log level ('debug', 'info', 'warning', 'error', 'critical')
+        log_file_path: Full path to log file (preferred method)
+        logfile: Legacy parameter - filename only (deprecated, use log_file_path)
+        logpath: Legacy parameter - directory only (deprecated, use log_file_path)
     """
     process, message, level = _normalize_legacy_call(process, message, level)
     level = level.lower()
 
+    # Handle backward compatibility
+    if logfile is not None and logpath is not None:
+        # Legacy call with separate logfile and logpath
+        file_path = os.path.join(logpath, logfile)
+        log_dir = logpath
+        log_file = logfile
+    else:
+        # New unified log_file_path
+        file_path = log_file_path
+        log_dir = os.path.dirname(file_path)
+        log_file = os.path.basename(file_path)
+
     if not _CONFIGURED:
         # Default configuration if not yet configured
-        configure_logging(log_dir=logpath, log_file=logfile)
+        configure_logging(log_dir=log_dir, log_file=log_file)
     else:
         # Ensure file handler exists for this target
-        file_path = os.path.join(logpath, logfile)
         if file_path not in _FILE_HANDLER_REGISTRY:
-            configure_logging(log_dir=logpath, log_file=logfile)
+            configure_logging(log_dir=log_dir, log_file=log_file)
 
+    import inspect
+    
+    # Get the caller's frame to show the actual script that called log()
+    frame = inspect.currentframe()
+    caller_filename = 'unknown'
+    caller_lineno = 0
+    caller_funcname = 'unknown'
+    
+    try:
+        # Go up the stack to find the caller (skip this function and any wrapper functions)
+        if frame and frame.f_back:
+            caller_frame = frame.f_back
+            while caller_frame and caller_frame.f_code.co_filename.endswith('utils.py'):
+                caller_frame = caller_frame.f_back
+            
+            if caller_frame:
+                caller_filename = os.path.basename(caller_frame.f_code.co_filename)
+                caller_lineno = caller_frame.f_lineno
+                caller_funcname = caller_frame.f_code.co_name
+    finally:
+        del frame  # Prevent reference cycles
+    
     logger = get_logger(process)
     log_fn = getattr(logger, level if level in ('debug', 'info', 'warning', 'error', 'critical') else 'info')
-    log_fn(message)
+    
+    # Create a custom log record with the caller's information
+    if hasattr(logger, '_log'):
+        # Use the internal _log method to set custom location info
+        log_level = getattr(logging, level.upper(), logging.INFO)
+        # Create a LogRecord manually with correct pathname and lineno
+        record = logger.makeRecord(
+            logger.name, log_level, caller_filename, caller_lineno,
+            message, (), None, caller_funcname
+        )
+        logger.handle(record)
+    else:
+        # Fallback to regular logging
+        log_fn(message)
 
 
 ###############################################################################

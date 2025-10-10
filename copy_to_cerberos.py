@@ -24,33 +24,11 @@ from utils import (
     headpos_patterns,
     proc_patterns,
     file_contains,
-    askForConfig
+    askForConfig,
+    project_paths
 )
 
 global local_dir
-
-def get_parameters(config: Union[str, dict]) -> dict:
-    """Reads a configuration file and returns a dictionary with the parameters.
-    
-    Or extracts the parameters from a configuration dict.
-    
-    """
-    if isinstance(config, str):
-        if config.endswith('.json'):
-            with open(config, 'r') as f:
-                config_dict = json.load(f)
-        elif config.endswith('.yml') or config.endswith('.yaml'):
-            with open(config, 'r') as f:
-                config_dict = yaml.safe_load(f)
-        else:
-            raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
-    elif isinstance(config, dict):
-        config_dict = deepcopy(config)
-    
-    copy_config = deepcopy(config_dict['Project'])
-    
-    return copy_config
-
 
 def check_fif(file_path):
     """Check if a file is a .fif file based on its extension."""
@@ -172,10 +150,10 @@ def copy_file_or_dir(source, destination):
     else:
         copy2(source, destination)
 
-def copy_squid_databases(config: dict):
+def copy_squid_databases(calibration_path=None, crosstalk_path=None):
     
-    calibration_dest = config.get('Calibration', calibration)
-    crosstalk_dest = config.get('Crosstalk', crosstalk)
+    calibration_dest = calibration_path
+    crosstalk_dest = crosstalk_path
     
     if calibration and exists(calibration):
         if not exists(dirname(calibration_dest)):
@@ -191,7 +169,7 @@ def copy_squid_databases(config: dict):
     else:
         print(f'Crosstalk file {crosstalk} does not exist.')
 
-def copy_data(source, destination, logfile=None, log_path=None):
+def copy_data(source, destination):
     """
     Copy file from source to destination with intelligent handling of .fif files.
     
@@ -253,25 +231,23 @@ def copy_data(source, destination, logfile=None, log_path=None):
             message = f'Copied'
             level = 'info'
             new_file = 1
-            
-    # if logfile and log_path:
-    #     log('Copy', message, level, logfile=logfile, logpath=log_path)
     
     return match, source, destination, message, existing_file, new_file, failed_file
 
-def make_process_list(config, check_existing=False):
-    local_dir = config['Raw']
+def make_process_list(paths, check_existing=False):
+    
+    local_dir = paths['raw']
     if not exists(local_dir):
         os.makedirs(local_dir, exist_ok=True)
             
-    project_root = dirname(local_dir)
-    log_path = join(project_root, 'log')
-    os.makedirs(log_path, exist_ok=True)
-    logfile = config.get('Logfile', 'pipeline_log.log')
-    configure_logging(log_dir=log_path, log_file=logfile)
+    project_root = paths['project_root']
+    log_path = paths['logs']
+    logfile = paths['log_file']
+    docspath = paths.get('docs', '')
+    scriptspath = paths.get('scripts', '')
     
-    sinuhe = config.get('Sinuhe raw', '')
-    kaptah = config.get('Kaptah raw', '')
+    sinuhe = paths.get('sinuhe', '')
+    kaptah = paths.get('kaptah', '')
     
     files = []
     
@@ -282,7 +258,7 @@ def make_process_list(config, check_existing=False):
 
         for item in other_files_and_dirs:
             source = f'{sinuhe}/{item}'
-            destination = f'{local_dir}/{item}'
+            destination = f'{docspath}/{item}'
             files.append(check_match(source, destination))
 
             # copy_file(source, destination, logfile=logfile, log_path=log_path)
@@ -292,12 +268,13 @@ def make_process_list(config, check_existing=False):
             if isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
             ])
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
+            local_subject_docs_dir = f'{docspath}/sub-{subject}'
             local_subject_dir = f'{local_dir}/sub-{subject}'
             
             items = [f for f in glob(f'*', root_dir=sinuhe_subject_dir) if f not in sessions]
             for item in items:
                 source = f'{sinuhe_subject_dir}/{item}'
-                destination = f'{local_subject_dir}/{item}'
+                destination = f'{local_subject_docs_dir}_{item}'
                 files.append(check_match(source, destination))
 
                 # copy_file(source, destination, logfile=logfile, log_path=log_path)
@@ -310,12 +287,12 @@ def make_process_list(config, check_existing=False):
                     files.append(check_match(source, destination))
                     # copy_file(source, destination, logfile=logfile, log_path=log_path)
     elif not isdir(sinuhe):
-            log('Copy', f"{sinuhe} is not a directory", 'error', logfile=logfile, logpath=log_path)
+            log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
     
     elif not glob('*', root_dir=sinuhe):
-        log('Copy', f"{sinuhe} is empty", 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', f"{sinuhe} is empty", 'warning', logfile)
     else: 
-        log('Copy', 'No TRIUX directory defined', 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', 'No TRIUX directory defined', 'warning', logfile)
 
     
     if kaptah:
@@ -327,7 +304,7 @@ def make_process_list(config, check_existing=False):
         
         for item in other_files_and_dirs:
             source = f'{kaptah}/{item}'
-            destination = f'{local_dir}/{item}'
+            destination = f'{docspath}/{item}'
             files.append(check_match(source, destination))
         
         for subject in subjects:
@@ -348,7 +325,7 @@ def make_process_list(config, check_existing=False):
                      if not any(f.startswith(f'20{session}') for session in sessions)]
             for item in items:
                 source = f'{kaptah_subject_dir}/{item}'
-                destination = f'{local_subject_dir}/{item}'
+                destination = f'{docspath}/sub-{subject}_{item}'
                 files.append(check_match(source, destination))
 
             for session in sessions:
@@ -385,16 +362,16 @@ def make_process_list(config, check_existing=False):
                     files.append(check_match(source, destination))
     
     elif not isdir(kaptah):
-            log('Copy', f"{kaptah} is not a directory", 'error', logfile=logfile, logpath=log_path)
+            log('Copy', f"{kaptah} is not a directory", 'error', logfile)
     
     elif not glob('*', root_dir=kaptah):
-        log('Copy', f"{kaptah} is empty", 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', f"{kaptah} is empty", 'warning', logfile)
     else: 
-        log('Copy', 'No Hedscan directory defined', 'warning', logfile=logfile, logpath=log_path)
+        log('Copy', 'No Hedscan directory defined', 'warning', logfile)
 
     return files
 
-def process_file_worker(file_info, logfile, log_path):
+def process_file_worker(file_info, logfile):
     """
     Worker function to process a single file transfer.
     
@@ -409,7 +386,7 @@ def process_file_worker(file_info, logfile, log_path):
     match, source, destination = file_info
 
     try:
-        match, source, destination, msg, existing_file, new_file, failed_file = copy_data(source, destination, logfile=logfile, log_path=log_path)
+        match, source, destination, msg, existing_file, new_file, failed_file = copy_data(source, destination)
     except Exception as e:
         msg = f"Error processing file: {str(e)}"
         match = False
@@ -417,38 +394,39 @@ def process_file_worker(file_info, logfile, log_path):
 
     return match, source, destination, msg, existing_file, new_file, failed_file
 
-def parallel_copy_files(config, max_workers=4):
+def parallel_copy_files(paths, max_workers=4):
     """
     Copy files in parallel using ThreadPoolExecutor.
     
     Args:
-        config: Configuration dictionary
+        paths: directories
         max_workers: Maximum number of worker threads
     
     Returns:
         List of results from file processing
     """
-    files = make_process_list(config)
+    files = make_process_list(paths)
     files_to_process = [file for file in files if not file[0]]
     
     # Extract log configuration from config
-    local_dir = config['Raw']
-    project_root = dirname(local_dir)
-    log_path = join(project_root, 'log')
-    logfile = config.get('Logfile', 'pipeline_log.log')
+    
+    
+    local_dir = paths.get('raw', '')
+    project_root = paths.get('project_root', '')
+    logfile = paths.get('log_file', '')
 
     results = []
     new_file_count = 0
     existing_file_count = len([file for file in files if file[0]])
     failed_file_count = 0
     
-    progress_bar = tqdm(total=len(files_to_process), desc="Copying files", unit=f'/{len(files_to_process)}')
+    progress_bar = tqdm(total=len(files_to_process), desc="Processing files", unit=f' file(s)')
 
     # Use ThreadPoolExecutor for I/O bound operations like file copying
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_file = {
-            executor.submit(process_file_worker, file_info, logfile, log_path): file_info 
+            executor.submit(process_file_worker, file_info, logfile): file_info 
             for file_info in files
         }
         
@@ -465,9 +443,10 @@ def parallel_copy_files(config, max_workers=4):
                 # Update progress bar
                 status = "✓" if match else "✗"
                 progress_bar.set_postfix({
-                    'Success': new_file_count, 
+                    'New files': new_file_count,
+                    'Existing files': existing_file_count,
                     'Failed': failed_file_count,
-                    'Current': f"{status} {basename(source)}"
+                    'Latest': f"{status} {basename(source)}"
                 })
                 progress_bar.update(1)
                     
@@ -476,14 +455,14 @@ def parallel_copy_files(config, max_workers=4):
                 match, source, destination = file_info
                 error_msg = f'Exception occurred: {exc}'
                 results.append((False, source, destination, error_msg))
-                log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error',
-                    logfile=logfile, logpath=log_path)
+                log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
                 
                 # Update progress bar for exceptions
                 progress_bar.set_postfix({
-                    'Success': new_file_count, 
+                    'New files': new_file_count,
+                    'Existing files': existing_file_count,
                     'Failed': failed_file_count,
-                    'Current': f"✗ {basename(source)} (ERROR)"
+                    'Latest': f"✗ {basename(source)} (ERROR)"
                 })
                 progress_bar.update(1)
        
@@ -491,25 +470,25 @@ def parallel_copy_files(config, max_workers=4):
         progress_bar.close()
     # Log summary
     log('Copy', f'Parallel copy completed. Files to process: {len(files_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
-        logfile=logfile, logpath=log_path)
+        'info',
+        logfile)
 
     return results
 
-def update_copy_report(results, config):
+def update_copy_report(results, paths):
     """
     Update the copy results report with new entries, avoiding duplicates.
     
     Args:
         results: List of tuples (success, source, destination, message) from file operations
-        config: Configuration dictionary containing project paths
+        paths: Project paths
     
     Returns:
         int: Number of new entries added to the report
     """
-    local_dir = config['Raw']
-    project_root = dirname(local_dir)
-    log_path = join(project_root, 'log')
-    report_file = f'{log_path}/copy_results.json'
+    
+    logfile = paths['log_file']
+    report_file = f'{paths['logs']}/copy_results.json'
     
     # Load existing report if it exists
     existing_report = []
@@ -602,7 +581,8 @@ def update_copy_report(results, config):
     
     # Log summary of this session
     log('Copy', f'Report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
-        logfile=config.get('Logfile', 'pipeline_log.log'), logpath=log_path)
+        'info',
+        logfile)
     
     return len(new_entries)
 
@@ -623,35 +603,21 @@ def args_parser():
     return args
 
 # Create local directories for each project
-def main(config: Union[str, dict]=None):
+def main(config: str=None):
+
     if config is None:
         args = args_parser()
-        config_file = args.config
-        if not config_file or not exists(config_file):
-            config_file = askForConfig()
-        if config_file:
-            config = get_parameters(config_file)
-            print(f'Using configuration file: {config_file}')
-            
-        else:
-            print('No configuration file provided. Please provide a valid configuration file with -c or --config option.')
-            return
-    elif isinstance(config, str):
-        # If config is a string, treat it as a file path
-        config_file = config
-        if exists(config_file):
-            config = get_parameters(config_file)
-            print(f'Using configuration file: {config_file}')
-        else:
-            print(f'Configuration file not found: {config_file}')
-            return
+        config = args.config
+        if not config or not exists(config):
+            config = askForConfig()
 
+    paths = project_paths(config, init=True)
     # If config is already a dict, use it as-is
-    copy_squid_databases(config)
+    copy_squid_databases(paths['Calibration'], paths['Crosstalk'])
     
     # Perform parallel file copying
-    results = parallel_copy_files(config, max_workers=8)
-    update_copy_report(results, config)
+    results = parallel_copy_files(paths, max_workers=8)
+    update_copy_report(results, paths)
     return True
 
 if __name__ == "__main__":

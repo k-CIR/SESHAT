@@ -233,7 +233,7 @@ class MaxFilter:
         
         parameters = config_dict['standard_settings'] | config_dict['advanced_settings']
         self.logfile = parameters.get('logfile', 'maxfilter.log')
-        self.logpath = parameters.get('data_path').replace('raw', 'log')
+        self.logpath = parameters.get('data_path').replace('raw', 'logs')
 
         configure_logging(log_dir=self.logpath, log_file=self.logfile)
 

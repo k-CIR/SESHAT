@@ -448,7 +448,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     overwrite = config.get('overwrite', False)
     logfile = config.get('logfile', 'adding_hpi.log')
     
-    log_path = opmMEGdir.replace('raw', 'log')
+    log_path = opmMEGdir.replace('raw', 'logs')
     if not os.path.exists(log_path):
         os.makedirs(log_path)
     configure_logging(log_dir=log_path, log_file=logfile)
@@ -1038,7 +1038,7 @@ def main(config: Union[str, dict]=None):
     overwrite = config.get('overwrite', False)
     plotResult = config.get('plot', False)
 
-    log_path = opmMEGdir.replace('raw', 'log')
+    log_path = opmMEGdir.replace('raw', 'logs')
     if not os.path.exists(log_path):
         os.makedirs(log_path)
     logfile = config.get('logfile', 'adding_hpi.log')
