@@ -16,8 +16,8 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-calibration = 'neuro/databases/sss/sss_cal.dat'
-crosstalk = 'neuro/databases/ctc/ct_sparse.fif'
+calibration = '/neuro/databases/sss/sss_cal.dat'
+crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
 
 from utils import (
     log, configure_logging,
