@@ -330,9 +330,9 @@ def make_process_list(paths, check_existing=False):
 
             for session in sessions:
                 
-                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir) 
-                     if any(f.startswith(f'20{session}') for session in sessions)])
-                
+                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir)
+                                if f.startswith(f'20{session}')])
+
                 # Create a mapping of original to renamed files to handle files with task name at different times
                 file_mapping = {}
                 name_counts = {}

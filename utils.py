@@ -80,7 +80,7 @@ def project_paths(config: str, init=False):
     
     paths = {
         'project_root': project_root,
-        'raw': raw_root,
+        'raw': Path(raw_root),
         'scripts': project_root / 'scripts',
         'logs': project_root / 'logs',
         'docs': project_root / 'docs'
