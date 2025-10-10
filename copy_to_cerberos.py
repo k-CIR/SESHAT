@@ -1,7 +1,6 @@
 from glob import glob
 from mne.io import read_raw, read_info
 from mne._fiff.write import _get_split_size
-from mne.viz.utils import compare_fiff
 import re
 import json
 import argparse
@@ -15,13 +14,10 @@ from datetime import datetime
 import filecmp
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
-from pathlib import Path
 from tqdm import tqdm
-import hashlib
 
-calibration = '/neuro/databases/sss/sss_cal.dat'
-crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
+calibration = 'neuro/databases/sss/sss_cal.dat'
+crosstalk = 'neuro/databases/ctc/ct_sparse.fif'
 
 from utils import (
     log, configure_logging,
@@ -55,96 +51,126 @@ def get_parameters(config: Union[str, dict]) -> dict:
     
     return copy_config
 
-def copy_if_newer_or_larger(source, destination):
-    """
-    Copy file from source to destination if source is newer, larger, or different.
-    Uses more sophisticated comparison for better reliability.
-    """
-    if not exists(destination):
-        if isdir(source):
-            copytree(source, destination)
-        else:
-            copy2(source, destination)
-    else:
-        should_copy = False
-        
-        # Check if source is newer
-        if getmtime(source) > getmtime(destination):
-            should_copy = True
-        
-        # Check size difference - but be tolerant of small differences
-        src_size = getsize(source)
-        dst_size = getsize(destination)
-        size_diff_percent = abs(src_size - dst_size) / max(src_size, 1) * 100
-        
-        # If size difference is significant (>1%), copy
-        if size_diff_percent > 1:
-            should_copy = True
-        # For small size differences, use checksum to decide
-        elif size_diff_percent > 0:
-            src_checksum = calculate_file_checksum(source)
-            dst_checksum = calculate_file_checksum(destination)
-            if src_checksum and dst_checksum and src_checksum != dst_checksum:
-                should_copy = True
-        
-        if should_copy:
-            if isdir(source):
-                copytree(source, destination, dirs_exist_ok=True)
-            else:
-                copy2(source, destination)
 
-def check_fif(source, destination):
-
-    fnames_src = read_raw(source, allow_maxshield=True, verbose='error').filenames
-    info_src = read_info(source, verbose='error')
-    [print(k, v) for k, v in info_src.items()]
-    fnames_dst = read_raw(destination, allow_maxshield=True, verbose='error').filenames
-    info_dst = read_info(destination, verbose='error')
-
-    checks = {
-        # 'times': (raw_src.times == raw_dst.times).all(),
-        'meas_id_version': info_src['meas_id']['version'] == info_dst['meas_id']['version'],
-        'secs': info_src['meas_id']['secs'] == info_dst['meas_id']['secs'],
-        'size': info_src.__sizeof__() == info_dst.__sizeof__(),
-        'date': info_src['meas_date'] == info_dst['meas_date'],
-        'sfreq': info_src['sfreq'] == info_dst['sfreq'],
+def check_fif(file_path):
+    """Check if a file is a .fif file based on its extension."""
+    is_fif = file_contains(basename(file_path), [r'\.fif$', r'\.fif'])
+    is_large = getsize(file_path) > _get_split_size('2GB')
+    is_fif_spec = file_contains(basename(file_path), headpos_patterns + ['ave.fif', 'config.fif'])
+    is_split = file_contains(basename(file_path), [r'-\d+.fif'] + [r'-\d+_' + p for p in proc_patterns])
+    fif_check = {
+        'is_fif': is_fif,
+        'is_large': is_large,
+        'is_fif_spec': is_fif_spec,
+        'is_split': is_split
     }
+    return fif_check
 
-    not_compare = [c for c in checks if not checks[c]]
-
-    if all(checks.values()) and not not_compare:
-        return True, [str(f) for f in fnames_src][0], [str(f) for f in fnames_dst]
-
-    else:
-        print(f'The following checks failed: {not_compare}')
-        return False, [str(f) for f in fnames_src][0], [str(f) for f in fnames_dst]
-
-def check_size_fif(source, split_size='2GB'):
-    raw_size = getsize(source)
+def get_split_file_parts(file_path):
+    """
+    Get all parts of a potentially split .fif file following MNE naming convention.
+    
+    Args:
+        base_file: Base .fif file path
         
-    # print(f'{basename(source)}: {round(raw_size / 1e9, 2)} GB')
-    if raw_size > _get_split_size(split_size):
-        return True
+    Returns:
+        list: All file parts that exist (base file and any split parts)
+    """
+    if not exists(file_path):
+        return file_path
+    
+    parts = [file_path]
+    base_path = re.sub(r'-\d+\.fif$', '.fif', file_path).replace('.fif', '')
+    
+    # Look for split files: filename_raw-1.fif, filename_raw-2.fif, etc.
+    i = 1
+    while True:
+        split_file = f"{base_path}-{i}.fif"
+        if exists(split_file):
+            parts.append(split_file)
+            i += 1
+        else:
+            break
+    
+    if len(parts) == 1:
+        return file_path
     else:
-        return False
+        return parts
 
-def is_binary(file_path):
-    """Check if a file is binary by reading a chunk of it."""
-    with open(file_path, 'rb') as f:
-        chunk = f.read(1024)  # Read first 1KB
-        return b'\0' in chunk  # Binary files typically contain null bytes
+def check_match(source, destination, size_tolerance_bytes=4096, check_info=False):
+    """
+    Check if the file has been transferred correctly by comparing source and destination.
+    For .fif files, use MNE to read and compare metadata.
+    For other files, use filecmp.
+    """
+    match = False
+    info_match = True
 
-def calculate_file_checksum(file_path, algorithm='sha256', chunk_size=8192):
-    """Calculate checksum for a file to verify integrity."""
-    hash_algo = hashlib.new(algorithm)
-    try:
-        with open(file_path, 'rb') as f:
-            while chunk := f.read(chunk_size):
-                hash_algo.update(chunk)
-        return hash_algo.hexdigest()
-    except Exception as e:
-        print(f"Error calculating checksum for {file_path}: {e}")
-        return None
+    if isinstance(destination, list):
+        destination = destination[0]
+    
+    if not exists(destination):
+        match = False
+    
+    else:
+        # Make a simple directory comparison if both are directories
+        if isdir(source):
+            match = filecmp.dircmp(source, destination).funny_files == []
+        
+        # Get source size for all file types
+        source_size = getsize(source)
+        
+        # Check if fif file
+        if check_fif(source)['is_fif']:
+            
+            # Check metadata if requested, might take longer time
+            
+            if check_info:
+                info_src = read_info(source, verbose='error')
+                info_dst = read_info(destination, verbose='error')
+
+                metadata_checks = {
+                'meas_id_version': info_src['meas_id']['version'] == info_dst['meas_id']['version'],
+                'secs': info_src['meas_id']['secs'] == info_dst['meas_id']['secs'],
+                'date': info_src['meas_date'] == info_dst['meas_date'],
+                'sfreq': info_src['sfreq'] == info_dst['sfreq'],
+                'nchan': info_src['nchan'] == info_dst['nchan']
+                }
+                info_match = all(metadata_checks.values())
+            
+            # Just check fif-size (sum split files if any)
+            if isinstance(get_split_file_parts(destination), list):
+                dest_size = sum([getsize(dest) for dest in get_split_file_parts(destination)])
+            else:
+                dest_size = getsize(destination)
+        else:
+            # For non-fif files, simple size comparison
+            dest_size = getsize(destination)
+        
+        # Calculate tolerance - for large files (>100MB), use 0.1% or min 4KB
+        if source_size > 100 * 1024 * 1024:  # 100MB
+            tolerance = max(size_tolerance_bytes, int(source_size * 0.001))  # 0.1%
+        else:
+            tolerance = size_tolerance_bytes
+        
+        size_diff = abs(source_size - dest_size)
+        
+        match_size = size_diff <= tolerance
+        
+        destination_newer = getmtime(source) < getmtime(destination) + 10 # within 10 seconds
+        
+        match = all([match_size, destination_newer, info_match])
+    
+    return match, source, destination
+
+def copy_file_or_dir(source, destination):
+    """
+    Copy file from source to destination.
+    """
+    if isdir(source):
+        copytree(source, destination)
+    else:
+        copy2(source, destination)
 
 def copy_squid_databases(config: dict):
     
@@ -154,54 +180,17 @@ def copy_squid_databases(config: dict):
     if calibration and exists(calibration):
         if not exists(dirname(calibration_dest)):
             os.makedirs(dirname(calibration_dest), exist_ok=True)    
-        copy_if_newer_or_larger(calibration, calibration_dest)
+        copy_data(calibration, calibration_dest)
     else:
         print(f'Calibration file {calibration} does not exist.')
     
     if crosstalk and exists(crosstalk):
         if not exists(dirname(crosstalk_dest)):
             os.makedirs(dirname(crosstalk_dest), exist_ok=True)
-        copy_if_newer_or_larger(crosstalk, crosstalk_dest)
+        copy_data(crosstalk, crosstalk_dest)
     else:
         print(f'Crosstalk file {crosstalk} does not exist.')
 
-def check_match(source, destination):
-    """
-    Check if the file has been transferred correctly by comparing source and destination.
-    For .fif files, use MNE to read and compare metadata.
-    For other files, use checksums for reliable comparison.
-    """
-    match = False
-    if not exists(destination):
-        match = False
-    else:
-        if isdir(source):
-            match = filecmp.dircmp(source, destination).funny_files == []
-        # Check if fif file and size > 2GB, then expecting split and use check_fif
-        elif all([file_contains(basename(source), [r'\.fif$', r'\.fif']), check_size_fif(source)]):
-            match, source, destination = check_fif(source, destination)
-        else:
-            # For regular files, first try quick size comparison
-            src_size = getsize(source)
-            dst_size = getsize(destination)
-            
-            # If sizes are very different (>1% difference), files are definitely different
-            size_diff_percent = abs(src_size - dst_size) / max(src_size, 1) * 100
-            if size_diff_percent > 1:
-                match = False
-            else:
-                # For small size differences or equal sizes, use checksum comparison
-                src_checksum = calculate_file_checksum(source)
-                dst_checksum = calculate_file_checksum(destination)
-                
-                if src_checksum and dst_checksum:
-                    match = src_checksum == dst_checksum
-                else:
-                    # Fallback to byte-by-byte comparison if checksum fails
-                    match = filecmp.cmp(source, destination, shallow=False)
-
-    return match, source, destination
-    
 def copy_data(source, destination, logfile=None, log_path=None):
     """
     Copy file from source to destination with intelligent handling of .fif files.
@@ -212,54 +201,63 @@ def copy_data(source, destination, logfile=None, log_path=None):
         logfile: Optional log filename
         log_path: Optional log directory path
     """
-    if exists(destination):
-        return check_match(source, destination)
-    else:
-        # Create destination directory if it doesn't exist
+    existing_file = 0
+    new_file = 0
+    failed_file = 0
+
+    if check_match(source, destination)[0]:
+        
+       match = True
+       source = get_split_file_parts(source)
+       destination = get_split_file_parts(destination)
+       message = "File already up to date"
+       level = 'info'
+       existing_file = 1
+
+    if not check_match(source, destination)[0]:
+
         os.makedirs(dirname(destination), exist_ok=True)
         
         # Files are different, need to handle based on file type
-        is_fif_file = file_contains(basename(source), [r'\.fif$', r'\.fif'])
-        fif_2GB = check_size_fif(source)
-        fif_except = not file_contains(basename(source), headpos_patterns + ['ave.fif', 'config.fif'])
-        is_not_split = not file_contains(basename(source), [r'-\d+.fif'] + [r'-\d+_' + p for p in proc_patterns])
+        is_fif, fif_large, fif_special, is_split = check_fif(source).values()
+        use_mne_read_raw = all([is_fif, fif_large, not fif_special, not is_split])
         
-        if all([is_fif_file, fif_2GB, fif_except, is_not_split]):
+        if use_mne_read_raw:
             # Check if larger than 2GB
             try:
                 raw = read_raw(source, allow_maxshield=True, verbose='error')
                 raw.save(destination, overwrite=True, verbose='error')
-                destination = [str(f) for f in 
-                               read_raw(destination, allow_maxshield=True, verbose='error').filenames]
-                if logfile and log_path:
-                    log('Copy', f'Copied (split if > 2GB) {source} --> {destination}', 
-                        logfile=logfile, logpath=log_path)
-                return True, source, destination
+                # Use fast method to get split file parts (avoids slow read_raw)
+                destination = get_split_file_parts(destination)
+                message = f'Copied (split if > 2GB)'
+                match = True
+                level = 'info'
+                new_file = 1
+
             except Exception as e:
                 try:
-                    copy_if_newer_or_larger(source, destination)
-                    if logfile and log_path:
-                        log('Copy', f'Fallback copy: {source} --> {destination} (MNE failed: {e})', 'warning',
-                            logfile=logfile, logpath=log_path)
-                    return True, source, destination
+                    copy_file_or_dir(source, destination)
+                    match = True
+                    message = f'MNE failed, copied'
+                    level = 'warning'
+                    new_file = 1
                 except Exception as e2:
-                    if logfile and log_path:
-                        log('Copy', f'Copy failed: {source} --> {destination} ({e2})', 'error',
-                            logfile=logfile, logpath=log_path)
-                    return False, source, destination
+                    match = False
+                    message = f'Failed to copy: {str(e2)}'
+                    level = 'error'
+                    failed_file = 1
         else:
             # For non-fif files, use standard copy logic
-            try:
-                copy_if_newer_or_larger(source, destination)
-                if logfile and log_path:
-                    log('Copy', f'{source} --> {destination}', 'info',
-                            logfile=logfile, logpath=log_path)
-                return True, source, destination
-            except Exception as e:
-                if logfile and log_path:
-                    log('Copy', f'Copy failed: {source} --> {destination} ({e})', 'error',
-                        logfile=logfile, logpath=log_path)
-                return False, source, destination
+            copy_file_or_dir(source, destination)
+            match = True
+            message = f'Copied'
+            level = 'info'
+            new_file = 1
+            
+    # if logfile and log_path:
+    #     log('Copy', message, level, logfile=logfile, logpath=log_path)
+    
+    return match, source, destination, message, existing_file, new_file, failed_file
 
 def make_process_list(config, check_existing=False):
     local_dir = config['Raw']
@@ -285,7 +283,7 @@ def make_process_list(config, check_existing=False):
         for item in other_files_and_dirs:
             source = f'{sinuhe}/{item}'
             destination = f'{local_dir}/{item}'
-            files.append((source, destination))
+            files.append(check_match(source, destination))
 
             # copy_file(source, destination, logfile=logfile, log_path=log_path)
         
@@ -300,7 +298,7 @@ def make_process_list(config, check_existing=False):
             for item in items:
                 source = f'{sinuhe_subject_dir}/{item}'
                 destination = f'{local_subject_dir}/{item}'
-                files.append((source, destination))
+                files.append(check_match(source, destination))
 
                 # copy_file(source, destination, logfile=logfile, log_path=log_path)
                 
@@ -309,7 +307,7 @@ def make_process_list(config, check_existing=False):
                 for item in items:
                     source = f'{sinuhe_subject_dir}/{session}/meg/{item}'
                     destination = f'{local_dir}/sub-{subject}/{session}/triux/{item}'
-                    files.append((source, destination))
+                    files.append(check_match(source, destination))
                     # copy_file(source, destination, logfile=logfile, log_path=log_path)
     elif not isdir(sinuhe):
             log('Copy', f"{sinuhe} is not a directory", 'error', logfile=logfile, logpath=log_path)
@@ -330,7 +328,7 @@ def make_process_list(config, check_existing=False):
         for item in other_files_and_dirs:
             source = f'{kaptah}/{item}'
             destination = f'{local_dir}/{item}'
-            files.append((source, destination))
+            files.append(check_match(source, destination))
         
         for subject in subjects:
 
@@ -351,13 +349,13 @@ def make_process_list(config, check_existing=False):
             for item in items:
                 source = f'{kaptah_subject_dir}/{item}'
                 destination = f'{local_subject_dir}/{item}'
-                files.append((source, destination))
+                files.append(check_match(source, destination))
 
             for session in sessions:
-
-                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir)
-                                if f.startswith(f'20{session}')])
-
+                
+                items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir) 
+                     if any(f.startswith(f'20{session}') for session in sessions)])
+                
                 # Create a mapping of original to renamed files to handle files with task name at different times
                 file_mapping = {}
                 name_counts = {}
@@ -365,7 +363,6 @@ def make_process_list(config, check_existing=False):
                 for item in items:
                     if 'file-' in item:
                         prefix, suffix = item.split('file-', 1)
-
                         # Count occurrences of each suffix
                         name_counts[suffix] = name_counts.get(suffix, 0) + 1
                         
@@ -385,7 +382,7 @@ def make_process_list(config, check_existing=False):
                     
                     destination = f'{local_dir}/sub-{subject}/{session}/hedscan/{dst_item}'
                     
-                    files.append((source, destination))
+                    files.append(check_match(source, destination))
     
     elif not isdir(kaptah):
             log('Copy', f"{kaptah} is not a directory", 'error', logfile=logfile, logpath=log_path)
@@ -394,7 +391,6 @@ def make_process_list(config, check_existing=False):
         log('Copy', f"{kaptah} is empty", 'warning', logfile=logfile, logpath=log_path)
     else: 
         log('Copy', 'No Hedscan directory defined', 'warning', logfile=logfile, logpath=log_path)
-
 
     return files
 
@@ -410,28 +406,18 @@ def process_file_worker(file_info, logfile, log_path):
     Returns:
         Tuple of (success, source, destination, message)
     """
-    source, destination = file_info
+    match, source, destination = file_info
 
     try:
-        match_exists, source, destination = check_match(source, destination)
-        if not match_exists:
-            success, src, dst = copy_data(source, destination, logfile=logfile, log_path=log_path)
-            if success:
-                msg = "Copy completed successfully"
-                operation_success = True
-            else:
-                msg = "Copy failed"
-                operation_success = False
-        else:
-            msg = "File already up to date"
-            operation_success = True  # File is already correct, consider this success
+        match, source, destination, msg, existing_file, new_file, failed_file = copy_data(source, destination, logfile=logfile, log_path=log_path)
     except Exception as e:
         msg = f"Error processing file: {str(e)}"
-        operation_success = False
+        match = False
+        failed_file = 1
 
-    return operation_success, source, destination, msg
+    return match, source, destination, msg, existing_file, new_file, failed_file
 
-def parallel_copy_files(config, max_workers=16):
+def parallel_copy_files(config, max_workers=4):
     """
     Copy files in parallel using ThreadPoolExecutor.
     
@@ -443,17 +429,21 @@ def parallel_copy_files(config, max_workers=16):
         List of results from file processing
     """
     files = make_process_list(config)
+    files_to_process = [file for file in files if not file[0]]
     
     # Extract log configuration from config
     local_dir = config['Raw']
     project_root = dirname(local_dir)
     log_path = join(project_root, 'log')
     logfile = config.get('Logfile', 'pipeline_log.log')
-    
+
     results = []
-    successful_copies = 0
-    failed_copies = 0
+    new_file_count = 0
+    existing_file_count = len([file for file in files if file[0]])
+    failed_file_count = 0
     
+    progress_bar = tqdm(total=len(files_to_process), desc="Copying files", unit=f'/{len(files_to_process)}')
+
     # Use ThreadPoolExecutor for I/O bound operations like file copying
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
@@ -462,34 +452,28 @@ def parallel_copy_files(config, max_workers=16):
             for file_info in files
         }
         
-        # Setup progress bar if tqdm is available
-
-        progress_bar = tqdm(total=len(files), desc="Copying files", unit="file")
-        
         # Process completed tasks
         for future in as_completed(future_to_file):
             file_info = future_to_file[future]
             try:
-                success, source, destination, message = future.result()
-                results.append((success, source, destination, message))
-
-                if success:
-                    successful_copies += 1
-                else:
-                    failed_copies += 1
+                match, source, destination, message, existing_file, new_file, failed_file = future.result()
+                results.append((match, source, destination, message))
+                
+                failed_file_count += failed_file
+                new_file_count += new_file
                 
                 # Update progress bar
-                status = "✓" if success else "✗"
+                status = "✓" if match else "✗"
                 progress_bar.set_postfix({
-                    'Success': successful_copies, 
-                    'Failed': failed_copies,
+                    'Success': new_file_count, 
+                    'Failed': failed_file_count,
                     'Current': f"{status} {basename(source)}"
                 })
                 progress_bar.update(1)
                     
             except Exception as exc:
-                failed_copies += 1
-                source, destination = file_info
+                failed_file_count += 1
+                match, source, destination = file_info
                 error_msg = f'Exception occurred: {exc}'
                 results.append((False, source, destination, error_msg))
                 log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error',
@@ -497,26 +481,23 @@ def parallel_copy_files(config, max_workers=16):
                 
                 # Update progress bar for exceptions
                 progress_bar.set_postfix({
-                    'Success': successful_copies, 
-                    'Failed': failed_copies,
+                    'Success': new_file_count, 
+                    'Failed': failed_file_count,
                     'Current': f"✗ {basename(source)} (ERROR)"
                 })
                 progress_bar.update(1)
-        
+       
         # Close progress bar
         progress_bar.close()
-    
     # Log summary
-    total_files = len(files)
-    log('Copy', f'Parallel copy completed. Total: {total_files}, Success: {successful_copies}, Failed: {failed_copies}',
+    log('Copy', f'Parallel copy completed. Files to process: {len(files_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         logfile=logfile, logpath=log_path)
-    
+
     return results
 
 def update_copy_report(results, config):
     """
-    Update the copy results report with new entries, consolidating by original file.
-    Each original file appears once with multiple destinations as lists when applicable.
+    Update the copy results report with new entries, avoiding duplicates.
     
     Args:
         results: List of tuples (success, source, destination, message) from file operations
@@ -539,102 +520,93 @@ def update_copy_report(results, config):
         except (json.JSONDecodeError, FileNotFoundError):
             existing_report = []
     
-    # Convert existing report to consolidated format (group by original file)
-    consolidated_report = {}
+    # Create a set of existing entries for duplicate detection
+    # Use (source, destination) as unique identifier
+    existing_entries = set()
     for entry in existing_report:
-        original_file = entry['Original File']
-        new_files = entry.get('New file(s)', '')
-        
-        if original_file not in consolidated_report:
-            # Create new consolidated entry
-            consolidated_report[original_file] = {
-                'Original File': original_file,
-                'Copy Date': entry.get('Copy Date', ''),
-                'Copy Time': entry.get('Copy Time', ''),
-                'New file(s)': [],
-                'Transfer status': entry.get('Transfer status', 'Unknown'),
-                'message': entry.get('message', ''),
-                'timestamp': entry.get('timestamp', '')
-            }
-        
-        # Add destination files to the list
-        if isinstance(new_files, list):
-            consolidated_report[original_file]['New file(s)'].extend(new_files)
-        elif new_files:  # Single file, not empty
-            consolidated_report[original_file]['New file(s)'].append(new_files)
+        if isinstance(entry.get('New file(s)'), list):
+            # Handle multiple destination files (split files)
+            for dest in entry['New file(s)']:
+                existing_entries.add((entry['Original File'], dest))
+        else:
+            # Handle single destination file
+            existing_entries.add((entry['Original File'], entry.get('New file(s)', '')))
     
-    # Process new results and consolidate by original file
-    new_consolidated = {}
+    # Process new results and add only non-duplicates
+    # Group results by source file to handle multiple destinations correctly
+    source_groups = {}
     for res in results:
         source_file = res[1]
         dest_files = res[2]
-        success = res[0]
-        message = res[3]
         
-        if source_file not in new_consolidated:
-            # Create new consolidated entry for this source file
-            new_consolidated[source_file] = {
+        if source_file not in source_groups:
+            source_groups[source_file] = {
+                'success': res[0],
+                'message': res[3],
+                'destinations': dest_files
+            }
+    
+    new_entries = []
+    for source_file, group_info in source_groups.items():
+        # Filter out destinations that already exist in the report
+        new_destinations = []
+        
+        if isinstance(group_info['destinations'], list):
+            for dest_file in group_info['destinations']:
+                if (source_file, dest_file) not in existing_entries:
+                    new_destinations.append(dest_file)
+        else:
+            if (source_file, group_info['destinations']) not in existing_entries:
+                new_destinations = group_info['destinations']
+        
+        # Only create an entry if there are new destinations
+        if new_destinations:
+            # Get file sizes
+            original_size = None
+            if exists(source_file):
+                try:
+                    original_size = getsize(source_file)
+                except (OSError, FileNotFoundError):
+                    original_size = None
+            
+            # Calculate destination file sizes
+            dest_size = None
+            try:
+                if isinstance(new_destinations, list):
+                    dest_size = sum([getsize(dest) for dest in new_destinations if exists(dest)])
+                else:
+                    dest_size = getsize(new_destinations) if exists(new_destinations) else None
+            except (OSError, FileNotFoundError):
+                dest_size = None
+
+            # Prepare size values (single value or list matching destination structure)
+
+            new_entries.append({
                 'Original File': source_file,
                 'Copy Date': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%y%m%d'),
                 'Copy Time': datetime.fromtimestamp(os.path.getctime(source_file)).strftime('%H%M%S'),
-                'New file(s)': [],
-                'Transfer status': 'Success' if success else 'Failed',
-                'message': message,
+                'New file(s)': new_destinations,
+                'Original Size': original_size,
+                'Total Destination Size': dest_size,
+                'Transfer Status': 'Success' if group_info['success'] else 'Failed',
+                'status': group_info['message'],  # Standardized field name for filtering
                 'timestamp': datetime.now().isoformat()
-            }
-        
-        # Add destination files to the consolidated entry
-        if isinstance(dest_files, list):
-            new_consolidated[source_file]['New file(s)'].extend(dest_files)
-        else:
-            new_consolidated[source_file]['New file(s)'].append(dest_files)
-        
-        # Update status - if any operation failed, mark as failed
-        if not success:
-            new_consolidated[source_file]['Transfer status'] = 'Failed'
+            })
     
-    # Merge new consolidated entries with existing ones
-    for source_file, new_entry in new_consolidated.items():
-        if source_file in consolidated_report:
-            # Merge with existing entry - add new destinations
-            existing_entry = consolidated_report[source_file]
-            existing_dests = set(existing_entry['New file(s)'])
-            new_dests = set(new_entry['New file(s)'])
-            
-            # Only add truly new destinations
-            unique_new_dests = new_dests - existing_dests
-            if unique_new_dests:
-                existing_entry['New file(s)'].extend(list(unique_new_dests))
-                existing_entry['timestamp'] = new_entry['timestamp']
-                # Update status if this operation failed
-                if new_entry['Transfer status'] == 'Failed':
-                    existing_entry['Transfer status'] = 'Failed'
-        else:
-            # Add completely new entry
-            consolidated_report[source_file] = new_entry
+    # Combine existing and new entries
+    updated_report = existing_report + new_entries
     
-    # Convert consolidated format back to list, ensuring 'New file(s)' is properly formatted
-    final_report = []
-    for entry in consolidated_report.values():
-        # If only one destination file, keep as string for consistency
-        if len(entry['New file(s)']) == 1:
-            entry['New file(s)'] = entry['New file(s)'][0]
-        # If multiple files, keep as list
-        final_report.append(entry)
-    
-    # Write consolidated report back to file
+    # Write updated report back to file
     with open(report_file, 'w') as f:
-        json.dump(final_report, f, indent=4)
-    
-    # Count new entries added
-    new_entries_count = len(new_consolidated)
+        json.dump(updated_report, f, indent=4)
     
     # Log summary of this session
-    log('Copy', f'Report updated: {new_entries_count} new consolidated entries, total {len(final_report)} entries',
+    log('Copy', f'Report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
         logfile=config.get('Logfile', 'pipeline_log.log'), logpath=log_path)
     
-    return new_entries_count
-    
+    return len(new_entries)
+
+
 
 def args_parser():
     parser = argparse.ArgumentParser(description=
@@ -679,12 +651,7 @@ def main(config: Union[str, dict]=None):
     
     # Perform parallel file copying
     results = parallel_copy_files(config, max_workers=8)
-    
-    # Update the copy report with new results
-    new_entries_count = update_copy_report(results, config)
-    
-    print(f"Copy operation completed. {new_entries_count} new entries added to report.")
-
+    update_copy_report(results, config)
     return True
 
 if __name__ == "__main__":
