@@ -4,8 +4,9 @@ import json
 import yaml
 import os
 from shutil import copy2
+import re
 from copy import deepcopy
-from os.path import exists, basename, dirname, join
+from os.path import exists, basename, dirname, join, getsize
 import sys
 from glob import glob
 import numpy as np
@@ -240,7 +241,7 @@ def update_sidecars(config: dict):
             bp_json = bp.copy().update(extension='.json', split=None)
             # Check if json exists, if not create it
             if not exists(bp_json.fpath):
-                raw = read_raw_bids(bp)
+                raw = read_raw_bids(bp, verbose='error')
                 _sidecar_json(raw=raw,
                               task=bp.task,
                               manufacturer='Elekta',
@@ -598,6 +599,8 @@ def generate_new_conversion_table(config: dict):
     df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
     return df
 
+# TODO: continue check here
+
 
 def load_conversion_table(config: dict):
     """
@@ -691,9 +694,9 @@ def update_conversion_table(conversion_table: pd.DataFrame,
         files = (glob(row['bids_name'] + '*',
                  root_dir=row['bids_path']) + 
             glob(row['bids_name'].rsplit('_', 1)[0] + '_split*' + row['bids_name'].rsplit('_', 1)[1] + '*', 
-                 root_dir=row['bids_path'])) 
+                 root_dir=row['bids_path']))
     
-        if not files and row['status'] != 'skip' or row['status'] != 'processed':
+        if not files:
             conversion_table.at[i, 'run_conversion'] = 'yes'
             conversion_table.at[i, 'time_stamp'] = ts
         
@@ -701,6 +704,289 @@ def update_conversion_table(conversion_table: pd.DataFrame,
     
     conversion_table.to_csv(f'{conversion_file}', sep='\t', index=False)
     return conversion_table
+
+def update_bids_report(conversion_table: pd.DataFrame, config: dict):
+    """
+    Update the BIDS results report with processed entries in JSON format, 
+    linking to the copy results for complete pipeline tracking.
+    
+    Creates a JSON report similar to copy_results.json but for BIDS conversions,
+    allowing tracking of the complete pipeline from copy → BIDS.
+    
+    Args:
+        conversion_table (pd.DataFrame): Conversion table with BIDS processing results
+        config (dict): Configuration dictionary containing project paths
+    
+    Returns:
+        int: Number of entries processed
+    """
+    project_root = join(config.get('Root', ''), config.get('Name', ''))
+    log_path = join(project_root, 'log')
+    report_file = f'{log_path}/bids_results.json'
+    
+    # Load existing report if it exists
+    existing_report = []
+    if exists(report_file):
+        try:
+            with open(report_file, 'r') as f:
+                existing_report = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            existing_report = []
+    
+    # Create a set of existing entries for duplicate detection
+    existing_entries = set()
+    for entry in existing_report:
+        print(entry['Source File'])
+        source_file = entry['Source File']
+        bids_file = entry['BIDS File']
+        
+        # Convert lists to tuples for hashability
+        if isinstance(source_file, list):
+            source_file = tuple(source_file)
+        if isinstance(bids_file, list):
+            bids_file = tuple(bids_file)
+            
+        existing_entries.add((source_file, bids_file))
+    
+    # Group split files together by base filename
+    df = conversion_table.drop_duplicates(subset=['raw_path', 'raw_name', 'bids_path', 'bids_name'])
+    grouped_entries = {}
+    for i, row in conversion_table.iterrows():
+        source_file = f"{row['raw_path']}/{row['raw_name']}"
+        source_base = re.sub(r'_raw-\d+\.fif$', '.fif', source_file)
+        
+        # Create a base key for grouping (remove split suffixes)
+        
+        files = (glob(row['bids_name'] + '*',
+                 root_dir=row['bids_path']) + 
+            glob(row['bids_name'].rsplit('_', 1)[0] + '_split*' + row['bids_name'].rsplit('_', 1)[1] + '*', 
+                 root_dir=row['bids_path']))
+    
+        # TODO: update bids_results here as well
+        if len(files) > 1:
+            split = True
+            bids_file = files
+        elif len(files) == 1:
+            split = False
+            bids_file = files[0]
+        
+        # Use source base + task + acquisition as the grouping key
+        group_key = (source_base, row['task'], row['acquisition'], row.get('processing', ''))
+        
+        if group_key not in grouped_entries:
+            grouped_entries[group_key] = {
+                'source_files': [],
+                'bids_files': [],
+                'source_sizes': [],
+                'bids_sizes': [],
+                'row_data': row  # Keep first row's metadata
+            }
+        
+        # Add files to the group
+        grouped_entries[group_key]['source_files'].append(source_file)
+        if split:
+            grouped_entries[group_key]['bids_files'].extend(bids_file)
+        else:
+            grouped_entries[group_key]['bids_files'].append(bids_file)
+        
+        # Get file sizes
+        source_size = None
+        if exists(source_file):
+            try:
+                source_size = getsize(source_file)
+            except (OSError, FileNotFoundError):
+                source_size = None
+        
+        bids_size = None
+        if split:
+            for file in bids_file:
+                if exists(f"{row['bids_path']}/{file}"):
+                    try:
+                        if bids_size is None:
+                            bids_size = 0
+                        bids_size += getsize(f"{row['bids_path']}/{file}")
+                    except (OSError, FileNotFoundError):
+                        continue
+        else:
+            if exists(bids_file):
+                try:
+                    bids_size = getsize(bids_file)
+                except (OSError, FileNotFoundError):
+                    bids_size = None
+        
+        grouped_entries[group_key]['source_sizes'].append(source_size)
+        grouped_entries[group_key]['bids_sizes'].append(bids_size)
+
+    # Process grouped entries
+    new_entries = []
+    for group_key, group_data in grouped_entries.items():
+        row = group_data['row_data']
+        source_files = group_data['source_files']
+        bids_files = group_data['bids_files']
+        source_sizes = group_data['source_sizes']
+        bids_sizes = group_data['bids_sizes']
+        
+        # Check if this group is already in the existing report
+        # Use first source file and first bids file for duplicate detection
+        primary_source = source_files[0] if source_files else ""
+        primary_bids = bids_files if bids_files else ""
+        
+        if (primary_source) not in existing_entries:
+            # Sort source files: base file first, then splits in order
+            # Create list of (source_file, bids_file, source_size, bids_size) tuples for sorting
+            file_tuples = list(zip(source_files, [bids_files], source_sizes, bids_sizes))
+            
+            # Sort by source filename: base file (no -N suffix) first, then by split number
+            def sort_key(file_tuple):
+                source_file = file_tuple[0]
+                filename = source_file.split('/')[-1]  # Get just the filename
+                if '_raw-' in filename and filename.endswith('.fif'):
+                    # Extract split number for sorting
+                    import re
+                    match = re.search(r'_raw-(\d+)\.fif$', filename)
+                    if match:
+                        return (1, int(match.group(1)))  # Split file: (1, split_number)
+                return (0, 0)  # Base file comes first: (0, 0)
+            
+            file_tuples.sort(key=sort_key)
+            
+            # Unpack sorted tuples
+            source_files, bids_files, source_sizes, bids_sizes = zip(*file_tuples) if file_tuples else ([], [], [], [])
+            source_files, bids_files, source_sizes, bids_sizes = list(source_files), list(bids_files), list(source_sizes), list(bids_sizes)
+            
+            # Find actual BIDS filenames for split files using find_matching_paths
+            if len(source_files) > 1:
+                # Multiple files - find the actual BIDS files that were created
+                # Parse the first BIDS path to get the directory and pattern info
+                from pathlib import Path
+                first_bids_path = Path(bids_files[0])
+                bids_directory = first_bids_path.parent
+                
+                # Extract BIDS components from the first file to search for all related files
+                # e.g., "sub-0953_ses-241104_task-Phalanges_acq-hedscan_meg.fif" or 
+                # "sub-0953_ses-241104_task-Phalanges_acq-hedscan_proc-hpi_meg.fif"
+                parts = first_bids_path.name.split('_')
+                if len(parts) >= 4:
+                    subject = parts[0]  # sub-0953
+                    session = parts[1]  # ses-241104  
+                    task = parts[2]     # task-Phalanges
+                    acq = parts[3]      # acq-hedscan
+                    
+                    # Check if there's a processing component (proc-xxx)
+                    processing = None
+                    for part in parts[4:]:
+                        if part.startswith('proc-'):
+                            processing = part.replace('proc-', '')
+                            break
+                    
+                    # Find all matching files (base + splits) using find_matching_paths
+                    try:
+                        find_params = {
+                            'root': str(bids_directory),
+                            'subjects': [subject.replace('sub-', '')],
+                            'sessions': [session.replace('ses-', '')],
+                            'tasks': [task.replace('task-', '')], 
+                            'acquisitions': [acq.replace('acq-', '')],
+                            'suffixes': 'meg',
+                            'extensions': '.fif'
+                        }
+                        
+                        # Add processing parameter if it exists
+                        if processing:
+                            find_params['processings'] = [processing]
+                        
+                        matching_paths = find_matching_paths(**find_params)
+                        
+                        if matching_paths:
+                            # Convert BIDSPath objects to relative paths and sort them properly
+                            found_bids_files = []
+                            for p in matching_paths:
+                                # The BIDSPath.fpath gives us the full path to the file
+                                # We need to convert this to a path relative to our project root
+                                abs_path = str(p.fpath)
+                                
+                                # Build the expected BIDS relative path from project root
+                                # Format: neuro/data/local/OPM-benchmarking/BIDS/sub-XX/ses-XX/meg/filename.fif
+                                project_root = config.get('Root', '')
+                                project_name = config.get('Name', '')
+                                
+                                if project_root and project_name:
+                                    # Create path relative to project root
+                                    bids_rel_path = f"{project_root}/{project_name}/BIDS/{p.fpath.name}"
+                                    # But we need the full BIDS structure, so let's construct it properly
+                                    bids_structure = f"sub-{p.subject}/ses-{p.session}/{p.datatype}/{p.fpath.name}"
+                                    bids_rel_path = f"{project_root}/{project_name}/BIDS/{bids_structure}"
+                                else:
+                                    # Fallback to absolute path
+                                    bids_rel_path = abs_path
+                                    
+                                found_bids_files.append(bids_rel_path)
+                            
+                            # Sort: base file first, then splits in order
+                            def bids_sort_key(filepath):
+                                filename = Path(filepath).name
+                                if '_split-' in filename:
+                                    # Extract split number for sorting splits
+                                    import re
+                                    match = re.search(r'_split-(\d+)_', filename)
+                                    if match:
+                                        return (1, int(match.group(1)))  # Split file: (1, split_number)
+                                return (0, 0)  # Base file comes first: (0, 0)
+                            
+                            found_bids_files.sort(key=bids_sort_key)
+                            bids_files = found_bids_files
+                    except Exception as e:
+                        # Fallback to original files if find_matching_paths fails
+                        print(f"Warning: Could not find matching BIDS files: {e}")
+                        pass
+            
+            # Calculate total sizes
+            total_source_size = sum(size for size in source_sizes if size is not None) if source_sizes else None
+            total_bids_size = sum(size for size in bids_sizes if size is not None) if any(size is not None for size in bids_sizes) else None
+            
+            # Determine if this is a split file group or single file
+            if len(source_files) > 1:
+                # Multiple files - use arrays
+                source_file_entry = source_files
+                bids_file_entry = bids_files
+                split_info = None  # Set to None for consolidated entries
+            else:
+                # Single file - use string (compatible with existing format)
+                source_file_entry = source_files[0] if source_files else ""
+                bids_file_entry = bids_files[0] if bids_files else ""
+                split_info = row['split'] if pd.notna(row['split']) and row['split'] != '' else None
+            
+            new_entries.append({
+                'Source File': source_file_entry,
+                'Processing Date': row['time_stamp'],
+                'BIDS File': bids_file_entry,
+                'Source Size': total_source_size,
+                'BIDS Size': total_bids_size,
+                'Participant': row['participant_to'],
+                'Session': row['session_to'], 
+                'Task': row['task'],
+                'Split': split_info,
+                'Acquisition': row['acquisition'],
+                'Datatype': row['datatype'],
+                'Processing': row['processing'] if row['processing'] else None,
+                'Conversion Status': 'Success' if row['run_conversion'] == 'no' else 'Pending',
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    # Combine existing and new entries
+    updated_report = existing_report + new_entries
+    
+    # Write updated report back to file
+    with open(report_file, 'w') as f:
+        json.dump(updated_report, f, indent=4)
+    
+    # Log summary
+    logfile = config.get('Logfile', 'bidsify.log')
+    logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
+    log('BIDS', f'BIDS report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
+        logfile=logfile, logpath=logpath)
+    
+    return len(new_entries)
 
         
 def bidsify(config: dict):
@@ -757,7 +1043,12 @@ def bidsify(config: dict):
     logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
 
     configure_logging(log_dir=logpath, log_file=logfile)
-    # overwrite = config['Overwrite']
+    
+    # Pipeline tracking removed - using simple JSON logging
+    
+    # Ensure log directory exists and initialize BIDS report if needed
+    log_path = join(path_project, 'log')
+    os.makedirs(log_path, exist_ok=True)
 
     df, conversion_file = load_conversion_table(config)
     #df = update_conversion_table(df, conversion_file)
@@ -803,24 +1094,15 @@ def bidsify(config: dict):
     deviants = df[df['status'] == 'check']
     if len(deviants) > 0:
         log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
+        # Still create BIDS report even when deviants found
+        update_bids_report(df, config)
         return
 
     for i, d in df.iterrows():
         
-        # Skip files
-        if d['status'] == 'skip':
-           d['run_conversion'] = 'no' 
-
+        # Ignore files that are already converted
         if d['run_conversion'] == 'no' and not overwrite:
             #print(f"{d['bids_name']} already converted")
-            continue
-        
-        # Force conversion
-        if d['run_conversion'] == 'yes' and d['status'] == 'processed':
-            d['status'] = 'ok'
-        
-        # Ignore files that are already converted
-        if d['status'] == 'skip' or d['status'] == 'processed':
             continue
         
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
@@ -897,6 +1179,9 @@ def bidsify(config: dict):
                     overwrite=True,
                     verbose='error'
                 )
+                
+                # Operation tracked via JSON logging in update_bids_report()
+                        
             except Exception as e:
                 print(f"Error writing BIDS file: {e}")
                 # If write_raw_bids fails, try to save the raw file directly
@@ -948,13 +1233,18 @@ def bidsify(config: dict):
         
         # Update the conversion table
         df.at[i, 'time_stamp'] = ts
-        df.at[i, 'status'] = 'processed'
+        df.at[i, 'run_conversion'] = 'no'
         df.at[i, 'run_conversion'] = 'no'
         df.at[i, 'bids_path'] = dirname(bids_path)
         df.at[i, 'bids_name'] = basename(bids_path)
 
     # Save updated conversion table
     update_conversion_table(df, conversion_file)
+    
+    # Update BIDS processing report in JSON format for pipeline tracking
+    # Use original dataframe which includes split files
+    update_bids_report(df, config)
+    
     log('BIDS', f'All files bidsified according to {conversion_file}', level='info', logfile=logfile, logpath=logpath)
     # df.to_csv(f'{path_BIDS}/conversion_logs/bids_conversion.tsv', sep='\t', index=False)
     
