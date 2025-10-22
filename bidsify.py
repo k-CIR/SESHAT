@@ -1093,7 +1093,7 @@ def bidsify(config: dict):
     participant_mapping = join(path_project, config.get('Participants_mapping_file', ''))
     logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
 
-    configure_logging(logfile)
+    configure_logging(logpath, logfile)
     
     # Pipeline tracking removed - using simple JSON logging
     

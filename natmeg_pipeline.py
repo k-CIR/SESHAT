@@ -127,20 +127,21 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                         
             logfile = config['Project'].get('Logfile', 'pipeline_log.log')
 
-            project_root = os.path.join(config['Project'].get('Root', '.'), config.get('Name', ''))
-            logpath = os.path.join(project_root, 'log')
+            project_root = os.path.join(config['Project'].get('Root', '.'), config['Project'].get('Name', ''))
+            logpath = os.path.join(project_root, 'logs')
+            exists(logpath)
             os.makedirs(logpath, exist_ok=True)
             # Initialize centralized logging once for this run
             configure_logging(log_dir=logpath, log_file=logfile)
             dry_run = getattr(args, 'dry_run', False)
 
-            log("Pipeline", '----------------------------------------------------', 'info', logfile=logfile, logpath=logpath)
-            log("Pipeline",f'Using config file: {args.config}', 'info', logfile=logfile, logpath=logpath)
+            log("Pipeline", '----------------------------------------------------', 'info', )
+            log("Pipeline",f'Using config file: {args.config}', 'info', f'{logpath}/{logfile}')
 
             if dry_run:
-                log("Pipeline","DRY RUN MODE - No actual processing will be performed", 'info', logfile=logfile, logpath=logpath)
+                log("Pipeline","DRY RUN MODE - No actual processing will be performed", 'info', f'{logpath}/{logfile}')
 
-            log("Pipeline", "Starting", 'info', logfile=logfile, logpath=logpath)
+            log("Pipeline", "Starting", 'info', f'{logpath}/{logfile}')
             
             pipeline_success = []
             
@@ -186,14 +187,14 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 try:
                     import render_report
                     render_report.main(args.config)
-                    log("Pipeline", "Report generated (report.html)", 'info', logfile=logfile, logpath=logpath)
+                    log("Pipeline", "Report generated (report.html)", 'info', f'{logpath}/{logfile}')
                 except Exception as e:
-                    log("Pipeline", f"Report generation failed: {e}", 'warning', logfile=logfile, logpath=logpath)
+                    log("Pipeline", f"Report generation failed: {e}", 'warning', f'{logpath}/{logfile}')
 
             if all(pipeline_success):
-                log("Pipeline", "Completed successfully!", 'info', logfile=logfile, logpath=logpath)
+                log("Pipeline", "Completed successfully!", 'info', f'{logpath}/{logfile}')
             else:
-                log("Pipeline", f"Completed with errors, see {logpath}/{logfile}", 'error', logfile=logfile, logpath=logpath)
+                log("Pipeline", f"Completed with errors, see {logpath}/{logfile}", 'error', f'{logpath}/{logfile}')
 
         elif args.command == 'copy':
             import copy_to_cerberos
