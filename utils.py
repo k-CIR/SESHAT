@@ -45,7 +45,7 @@ def askdirectory(**kwargs):
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
 proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
-headpos_patterns = ['trans', 'headpos']
+headpos_patterns = ['headpos', 'headshape']
 opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
 
@@ -342,6 +342,7 @@ def extract_info_from_filename(file_name: str):
             - processing (list): Processing steps applied (e.g., ['tsss', 'mc'])
             - description (list): File type descriptors (e.g., ['trans', 'headpos'])
             - datatypes (list): Data modalities (e.g., ['meg', 'opm'])
+            - suffix (str): Special suffix (e.g., 'headshape') or None
             - extension (str): File extension (e.g., '.fif')
     
     Special Handling:
@@ -379,28 +380,41 @@ def extract_info_from_filename(file_name: str):
         Function handles edge cases and various naming inconsistencies
         commonly found in MEG datasets across different acquisition systems
     """
+    suffix = ''
+    desc = ''
+    proc = ['']
+    split = ''
+    datatypes = ['']
+    extension = ''
     
     # Extract participant, task, processing, datatypes and extension
     participant = re.search(r'(NatMEG_|sub-)(\d+)', file_name).group(2).zfill(4)
-    extension = '.' + re.search(r'\.(.*)', file_name).group(1)
+    extension = '.' + re.search(r'\.(.*)', basename(file_name)).group(1)
     datatypes = list(set([r.lower() for r in re.findall(r'(meg|raw|opm|eeg|behav)', basename(file_name), re.IGNORECASE)] +
                          ['opm' if 'kaptah' in file_name else '']))
+    suffix = 'meg' if any(item in datatypes for item in ['raw', 'meg']) else ''
     datatypes = [d for d in datatypes if d != '']
-
+    
     proc = re.findall('|'.join(proc_patterns), basename(file_name))
-    desc = re.findall('|'.join(headpos_patterns), basename(file_name))
+    
+    if file_contains(basename(file_name), ['trans']):
+        desc = 'trans'
+        suffix = 'meg'
+    
+    if file_contains(file_name, headpos_patterns):
+        suffix = 'headshape'
 
     split = re.search(r'(\-\d+\.fif)', basename(file_name))
     split = split.group(1).strip('.fif') if split else ''
     
-    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + desc)
+    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension]  + [suffix] + headpos_patterns + proc + [split] + ['\\+'] + ['\\-'] + [desc])
     
     if file_contains(file_name, opm_exceptions_patterns):
         datatypes.append('opm')
     
     if 'opm' in datatypes or 'kaptah' in file_name:    
 
-        exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc-']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + ['file']+ desc + [r'\d{8}_', r'\d{6}_'])
+        exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc-']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + ['file']+ [desc] + [r'\d{8}_', r'\d{6}_'])
         if not file_contains(file_name, opm_exceptions_patterns):
             exclude_from_task += '|hpi|ds'
 
@@ -430,6 +444,7 @@ def extract_info_from_filename(file_name: str):
         'processing': proc,
         'description': desc,
         'datatypes': datatypes,
+        'suffix': suffix,
         'extension': extension
     }
     
