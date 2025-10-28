@@ -502,18 +502,49 @@ def extract_info_from_filename(file_name: str):
  # Other useful utilities
 ###############################################################################
 def delete_files(root, pattern, test=True, recursive=True):
+
     files = sorted(glob(f'**/{pattern}', root_dir=root, recursive=recursive))
+    
+    if not files:
+        print("No files found matching the pattern.")
+        return
+    
     if not test:
-        print("##### DELETING #####")
+        print("##### FILES TO BE DELETED #####")
         for file in files:
             print(f'{root}/{file}')
-            os.remove(f'{root}/{file}')
-        print("##### Files deleted #####")
+        print(f"\nTotal: {len(files)} file(s)")
+        
+        # First confirmation
+        response1 = input("\nDo you want to delete these files? [y/n]: ").strip().lower()
+        if response1 != 'y':
+            print("Operation cancelled.")
+            return
+        
+        # Second confirmation
+        response2 = input("Are you sure? This cannot be undone [y/n]: ").strip().lower()
+        if response2 != 'y':
+            print("Operation cancelled.")
+            return
+        
+        # Proceed with deletion
+        print("\n##### DELETING #####")
+        deleted_count = 0
+        for file in files:
+            try:
+                os.remove(f'{root}/{file}')
+                print(f'Deleted: {root}/{file}')
+                deleted_count += 1
+            except Exception as e:
+                print(f'Failed to delete {root}/{file}: {e}')
+        print(f"##### {deleted_count} file(s) deleted #####")
     else:
         print("##### TESTING #####")
         for file in files:
             print(f'{root}/{file}')
-        print("##### TEST: No files deleted #####")
+        print(f"##### TEST: {len(files)} file(s) would be deleted (use --execute to actually delete) #####")
+
+
 
 def copy_files(src, dst, pattern, test=True, recursive=True):
     files = glob(f'**/{pattern}', root_dir=src, recursive=recursive)
@@ -528,3 +559,61 @@ def copy_files(src, dst, pattern, test=True, recursive=True):
             print("##### TESTING #####")
             print(f'{src}/{file}', f'{dst}/{file}')
             print("##### TEST: No files copied #####")
+
+
+def args_parser():
+    """
+    Parse command-line arguments for utility functions.
+    
+    Returns:
+        argparse.Namespace: Parsed command-line arguments
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='NatMEG Utilities - Run utility functions from command line',
+        add_help=True
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Delete files command
+    delete_parser = subparsers.add_parser('delete', help='Delete files matching a pattern')
+    delete_parser.add_argument('root', type=str, help='Root directory to search in')
+    delete_parser.add_argument('pattern', type=str, help='File pattern to match (e.g., "*.log")')
+    delete_parser.add_argument('--execute', action='store_true', help='Actually delete files (default is test mode)')
+    delete_parser.add_argument('--no-recursive', action='store_true', help='Do not search recursively')
+    
+    # Copy files command
+    copy_parser = subparsers.add_parser('copy', help='Copy files matching a pattern')
+    copy_parser.add_argument('src', type=str, help='Source directory')
+    copy_parser.add_argument('dst', type=str, help='Destination directory')
+    copy_parser.add_argument('pattern', type=str, help='File pattern to match')
+    copy_parser.add_argument('--execute', action='store_true', help='Actually copy files (default is test mode)')
+    copy_parser.add_argument('--no-recursive', action='store_true', help='Do not search recursively')
+    
+    args = parser.parse_args()
+    return args
+
+
+if __name__ == "__main__":
+    args = args_parser()
+    
+    if args.command == 'delete':
+        delete_files(
+            root=args.root,
+            pattern=args.pattern,
+            test=not args.execute,
+            recursive=not args.no_recursive
+        )
+    elif args.command == 'copy':
+        copy_files(
+            src=args.src,
+            dst=args.dst,
+            pattern=args.pattern,
+            test=not args.execute,
+            recursive=not args.no_recursive
+        )
+    else:
+        print("Please specify a command: delete or copy")
+        print("Run 'python utils.py --help' for more information")
