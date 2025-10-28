@@ -13,7 +13,6 @@ import re
 from os.path import basename, join, isdir, exists
 import os
 from glob import glob
-import pandas as pd
 from os.path import exists, dirname
 import os
 import logging
@@ -24,23 +23,10 @@ import json
 import yaml
 
 # tkinter file dialog imports
-
-import tkinter as tk
 from tkinter import filedialog
-import sys
 
 
-def askdirectory(**kwargs):
-    """tkinter filedialog.askdirectory wrapper"""
-    # Create hidden root window
-    
-    directory = filedialog.askdirectory(
-        title=kwargs.get('title', 'Select Directory'),
-        initialdir=kwargs.get('initialdir', '')
-    )
-
-    return directory
-
+# Predefined patterns for filename parsing
 
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
@@ -50,13 +36,18 @@ opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
 
 ###############################################################################
-# Centralized logging setup (colored console + structured file log)
+# Directory management and configuration handling
 ###############################################################################
 
-_LOGGER_NAME = 'NatMEG'
-_CONFIGURED: bool = False
-_FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
-_CONSOLE_HANDLER: Optional[logging.Handler] = None
+def askdirectory(**kwargs):
+    """tkinter filedialog.askdirectory wrapper"""
+    
+    directory = filedialog.askdirectory(
+        title=kwargs.get('title', 'Select Directory'),
+        initialdir=kwargs.get('initialdir', '')
+    )
+
+    return directory
 
 def project_paths(config: str, init=False):
     """Create a directory structure for a new project."""
@@ -107,6 +98,64 @@ def project_paths(config: str, init=False):
     
     return paths
 
+def askForConfig():
+    """
+    Open GUI file dialog for configuration file selection.
+    
+    Presents user with file browser dialog filtered for YAML and JSON
+    configuration files. Provides fallback when no config file is specified
+    via command line or programmatic interface.
+    
+    Supported Formats:
+    - YAML files: .yml, .yaml extensions
+    - JSON files: .json extension
+    
+    Args:
+        None
+    
+    Returns:
+        str: Full path to selected configuration file
+        
+    Side Effects:
+        - Opens tkinter file dialog window
+        - Prints selected file path to console
+        - Exits program with code 1 if no file selected
+        
+    Raises:
+        SystemExit: If user cancels dialog without selecting file
+        
+    Initial Directory:
+        Defaults to '/neuro/data/local' for convenient navigation
+    """
+    # Create hidden root window
+    # if not exists(default_output_path):
+    #     default_output_path = '.'
+    
+    config_file = filedialog.askopenfilename(
+        title="Select Configuration File",
+        initialdir=default_output_path,
+        filetypes=[
+            ("YAML files", "*.yml *.yaml"),
+            ("JSON files", "*.json"),
+            ("All files", "*.*")
+        ]
+    )
+
+    if not config_file:
+        print('No configuration file selected. Exiting opening dialog')
+        sys.exit(1)
+    
+    print(f'{config_file} selected')
+    return config_file
+
+###############################################################################
+# Centralized logging setup (colored console + structured file log)
+###############################################################################
+
+_LOGGER_NAME = 'NatMEG'
+_CONFIGURED: bool = False
+_FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
+_CONSOLE_HANDLER: Optional[logging.Handler] = None
 class _ColoredFormatter(logging.Formatter):
     COLORS = {
         logging.DEBUG: '\033[90m',
@@ -449,57 +498,3 @@ def extract_info_from_filename(file_name: str):
     }
     
     return info_dict
-
-###############################################################################
-# Configuration Management
-###############################################################################
-
-def askForConfig():
-    """
-    Open GUI file dialog for configuration file selection.
-    
-    Presents user with file browser dialog filtered for YAML and JSON
-    configuration files. Provides fallback when no config file is specified
-    via command line or programmatic interface.
-    
-    Supported Formats:
-    - YAML files: .yml, .yaml extensions
-    - JSON files: .json extension
-    
-    Args:
-        None
-    
-    Returns:
-        str: Full path to selected configuration file
-        
-    Side Effects:
-        - Opens tkinter file dialog window
-        - Prints selected file path to console
-        - Exits program with code 1 if no file selected
-        
-    Raises:
-        SystemExit: If user cancels dialog without selecting file
-        
-    Initial Directory:
-        Defaults to '/neuro/data/local' for convenient navigation
-    """
-    # Create hidden root window
-    # if not exists(default_output_path):
-    #     default_output_path = '.'
-    
-    config_file = filedialog.askopenfilename(
-        title="Select Configuration File",
-        initialdir=default_output_path,
-        filetypes=[
-            ("YAML files", "*.yml *.yaml"),
-            ("JSON files", "*.json"),
-            ("All files", "*.*")
-        ]
-    )
-
-    if not config_file:
-        print('No configuration file selected. Exiting opening dialog')
-        sys.exit(1)
-    
-    print(f'{config_file} selected')
-    return config_file

@@ -183,6 +183,25 @@ def create_participants_files(config: dict):
             json.dump(participants_json, f, indent=4)
     print(f"Writing {participants_json_path}")
 
+def create_proc_description(config: dict):
+    
+    bids_root = config['BIDS']
+    proc_root = config['BIDS'] + '/derivatives/preprocessed'    
+    os.makedirs(proc_root, exist_ok=True)
+    
+    proc_mapping = {
+        'sss': 'Signal Space Separation (SSS) applied',
+        'hpi': 'Digitized head position and HPI coils added',
+        'ds': 'Downsampled data',
+        'mc': 'Head motion correction applied',
+        'avgHead': 'Data aligned to average head position',
+        'corr': 'Correlation treashold applied',
+        'tsss': 'Temporal Signal Space Separation (tSSS) applied',
+    }
+    df = pd.DataFrame(list(proc_mapping.items()), columns=['desc_id', 'description'])
+    df.to_csv(join(proc_root, 'descriptions.tsv'), sep='\t', index=False)
+
+
 ###############################################################################
 # Help functions
 ###############################################################################
@@ -242,8 +261,16 @@ def update_sidecars(config: dict):
         - Adds metadata fields to comply with BIDS specification
     """
     bids_root = config['BIDS']
+    proc_root = join(bids_root, 'derivatives', 'preprocessed')
     # Find all meg files in the BIDS folder, ignore EEG for now
     bids_paths = find_matching_paths(bids_root,
+                                     suffixes='meg',
+                                    acquisitions=['triux', 'hedscan'],
+                                    splits=None,
+                                    descriptions=None,
+                                     extensions='.fif',
+                                     ignore_nosub=True)
+    proc_bids_paths = find_matching_paths(proc_root,
                                      suffixes='meg',
                                     acquisitions=['triux', 'hedscan'],
                                     splits=None,
@@ -256,11 +283,11 @@ def update_sidecars(config: dict):
             'InstitutionAddress': config['InstitutionName']
             }
     
-    for bp in bids_paths:
+    for bp in bids_paths + proc_bids_paths:
         if not file_contains(bp.basename, headpos_patterns + ['trans']):
             acq = bp.acquisition
-            proc = bp.processing
             suffix = bp.suffix
+            proc = bp.processing
             try:
                 info = mne.io.read_info(bp.fpath, verbose='error')
             except Exception as e:
@@ -329,12 +356,13 @@ def update_sidecars(config: dict):
 
                 # sidecar['ContinuousHeadLocalization']
                 
-                # TODO: Add maxfilter and headposition parameters
-                if proc:
-                    #print('Processing detected')
-                    proc_list = proc.split('+')
+            # TODO: Add maxfilter and headposition parameters
+            if proc:
+                #print('Processing detected')
+                proc_list = proc.split('+')
+                if info['proc_history']:
                     max_info = info['proc_history'][0]['max_info']
-                    
+                
                     if file_contains(proc, ['sss', 'tsss']):
                         sss_info = max_info['sss_info']
                         sidecar['SoftwareFilters']['MaxFilterVersion'] = info['proc_history'][0]['creator']
@@ -355,9 +383,8 @@ def update_sidecars(config: dict):
                                 'SubSpaceCorrelationLimit': max_st['subspcorr'],
                                 'LengtOfDataBuffert': max_st['buflen']
                             }
-                    
-                    # sidecar['MaxMovement'] 
-                    # Add average head position file
+            # sidecar['MaxMovement'] 
+            # Add average head position file
 
             if acq == 'hedscan':
                 sidecar['Manufacturer'] = 'FieldLine'
@@ -465,7 +492,7 @@ def copy_eeg_to_meg(file_name: str, bids_path: BIDSPath):
 ###############################################################################
 
 
-def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
+def bids_path_from_filename(file_name, date_session, config, pmap=None):
     """
     Extract BIDS path from filename using config and optional participant mapping.
     
@@ -484,6 +511,7 @@ def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
         print(f"Not exists: {file_name}")
         return None
     
+    bids_root = config.get('BIDS', '')
     info_dict = extract_info_from_filename(file_name)
     
     # Validate required fields
@@ -493,8 +521,14 @@ def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
         print(f"Missing required fields in {file_name}")
         return None
     
-    # Build processing info
+    acquisition = basename(os.path.dirname(file_name))
+    
+    # Check if preprocessed and add derivatives path if so
     proc = '+'.join(info_dict.get('processing', []))
+    if proc:
+        bids_root = join(bids_root, 'derivatives', 'preprocessed')
+    
+    # Build processing info
     split = info_dict.get('split')
     run = info_dict.get('run', '')
     desc = info_dict.get('description')
@@ -525,7 +559,7 @@ def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
     datatype = 'meg' # Default
     if not file_contains(basename(file_name), headpos_patterns + ['trans']):
         try:
-            info = mne.io.read_raw_fif(file_name, allow_maxshield=True, verbose='error')
+            info = mne.io.read_info(file_name, verbose='error')
             ch_types = set(info.get_channel_types())
             
             if 'mag' in ch_types:
@@ -541,11 +575,11 @@ def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
 
     try:
         bids_path = BIDSPath(
-            root=config.get('BIDS', ''),
+            root=bids_root,
             subject=subj_out,
             session=session_out,
             task=task,
-            acquisition=mod,
+            acquisition=acquisition,
             processing=None if proc == '' else proc,
             run=None if run == '' else run.zfill(2),
             datatype=datatype,
@@ -557,7 +591,7 @@ def bids_path_from_filename(file_name, date_session, mod, config, pmap=None):
         print(f"Error creating BIDSPath for {file_name}: {e}")
         return None
     
-    return bids_path
+    return bids_path, info_dict
 
 
 def generate_new_conversion_table(config: dict):
@@ -585,7 +619,7 @@ def generate_new_conversion_table(config: dict):
         try:
             pmap = pd.read_csv(participant_mapping, dtype=str)
         except Exception as e:
-            print('Participant file not found, skipping')
+            print('Participant mapping file not found, skipping')
     
     participants = glob('sub-*', root_dir=path_raw)
     
@@ -594,14 +628,14 @@ def generate_new_conversion_table(config: dict):
         participant, date_session, mod, file = job
         full_file_name = os.path.join(path_raw, participant, date_session, mod, file)
         
-        bids_path = bids_path_from_filename(full_file_name, date_session, mod, config, pmap)
+        bids_path, info_dict = bids_path_from_filename(full_file_name, date_session, config, pmap)
+        split = info_dict.get('split')
         
         if not bids_path:
             return None
         
         # Extract values from bids_path object
         task = bids_path.task
-        split = bids_path.split
         run = bids_path.run
         datatype = bids_path.datatype
         proc = bids_path.processing
@@ -610,6 +644,7 @@ def generate_new_conversion_table(config: dict):
         extension = bids_path.extension
         subj_out = bids_path.subject
         session_out = bids_path.session
+        bids_path.acquisition
         
         # Check for event file
         event_file = None
@@ -768,9 +803,17 @@ def update_conversion_table(config, conversion_file=None) -> pd.DataFrame:
     results = list(generate_new_conversion_table(config))
     new_conversion_table = pd.DataFrame(results)
     
-    # Check if bids_file exists:
+    # ignore split
+    new_conversion_table = new_conversion_table[new_conversion_table['split'].isna() | 
+                                                (new_conversion_table['split'] == '')]
+    
+    # Double check if bids_file exists:
     for _, row in existing_conversion_table.iterrows():
-        if not exists(row['bids_path'] + '/' + row['bids_name']):
+        bids_files = (glob(row['bids_name'] + '*',
+                 root_dir=row['bids_path']) + 
+            glob(row['bids_name'].rsplit('_', 1)[0] + '_split*' + row['bids_name'].rsplit('_', 1)[1], 
+                 root_dir=row['bids_path']))
+        if not bids_files:
             row['status'] = 'run'
     
     # Extract files not in existing conversion table
@@ -793,6 +836,233 @@ def update_conversion_table(config, conversion_file=None) -> pd.DataFrame:
         
         return updated_table, conversion_file
 
+def bidsify(config: dict):
+    """
+    Main function to convert raw MEG/EEG data to BIDS format.
+    
+    Comprehensive conversion process that:
+    1. Loads/updates conversion table
+    2. Creates BIDS directory structure
+    3. Processes each file according to conversion table
+    4. Handles MEG, EEG, head position, and transformation files
+    5. Associates event files with task data
+    6. Manages calibration and crosstalk files
+    7. Logs all conversion activities
+    
+    Conversion Features:
+    - Supports both TRIUX (SQUID) and OPM MEG systems
+    - Handles split files automatically
+    - Zero-pads subject and session IDs
+    - Associates event files with tasks
+    - Copies head position and transformation files
+    - Manages channel parameter files for OPM data
+    - Robust error handling with fallback options
+    
+    Args:
+        config (dict): Complete configuration with paths and parameters
+        conversion_file (str, optional): Specific conversion table to use
+        overwrite (bool): Whether to overwrite existing BIDS files
+    
+    Returns:
+        None
+        
+    Side Effects:
+        - Creates complete BIDS directory structure
+        - Converts all eligible raw files to BIDS format
+        - Writes calibration and crosstalk files
+        - Updates conversion table with completion status
+        - Logs all conversion activities
+        
+    Raises:
+        SystemExit: If task validation fails (unknown tasks found)
+    """
+    
+    # TODO: parallelize the conversion
+    ts = datetime.now().strftime('%Y%m%d')
+    path_project = join(config.get('Root', ''), config.get('Name', ''))
+    local_path = config.get('Raw', '')
+    path_BIDS = config.get('BIDS', '')
+    calibration = config.get('Calibration', '')
+    crosstalk = config.get('Crosstalk', '')
+    overwrite = config.get('overwrite', False)
+    logfile = config.get('Logfile', '')
+    participant_mapping = join(path_project, config.get('Participants_mapping_file', ''))
+    logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
+
+    configure_logging(logpath, logfile)
+    
+    # Pipeline tracking removed - using simple JSON logging
+    
+    # Ensure log directory exists and initialize BIDS report if needed
+    log_path = join(path_project, 'logs')
+    os.makedirs(log_path, exist_ok=True)
+
+    df, conversion_file = update_conversion_table(config)
+    df = df.where(pd.notnull(df) & (df != ''), None)
+    
+    pmap = None
+    if participant_mapping:
+        try:
+            pmap = pd.read_csv(participant_mapping, dtype=str)
+        except Exception as e:
+            print('Participant file not found, skipping')
+            
+    is_natmeg_id =  all(df['participant_from'].str.replace('sub-', '').astype(int) == df['participant_to'].astype(int))
+    
+    # Start by creating the BIDS directory structure
+    unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
+    for _, row in unique_participants_sessions.iterrows():
+        if is_natmeg_id:
+            subject_padded = str(row['participant_to']).zfill(4)
+        else:
+            subject_padded = str(row['participant_to']).zfill(3)
+        session_padded = str(row['session_to']).zfill(2)
+        bids_path = BIDSPath(
+            subject=subject_padded,
+            session=session_padded,
+            datatype=row['datatype'],
+            root=path_BIDS
+        ).mkdir()
+        try:
+            if row['datatype'] == 'meg':
+                if not bids_path.meg_calibration_fpath:
+                    write_meg_calibration(calibration, bids_path)
+                if not bids_path.meg_crosstalk_fpath:
+                    write_meg_crosstalk(crosstalk, bids_path)
+        except Exception as e:
+            log('BIDS', f"Error writing calibration/crosstalk files: {e}", level='error', logfile=logfile, logpath=logpath)
+    
+    # ignore split files as they are processed automatically
+    if 'split' in df.columns:
+        df = df[df['split'].isna() | (df['split'] == '')]
+
+    # Flag deviants and exist if found
+    deviants = df[df['status'] == 'check']
+    if len(deviants) > 0:
+        log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
+        # Still create BIDS report even when deviants found
+        df.to_csv(conversion_file, sep='\t', index=False)
+        update_bids_report(df, config)
+        return
+
+    n_files_to_process = len(df[df['status'] == 'run'])
+    
+    # Create progress bar for files to process
+    pbar = tqdm(total=n_files_to_process, desc=f"{n_files_to_process} files to process", unit=" file(s)")
+    
+    for i, d in df.iterrows():
+        # Skip files not ready for conversion
+        if d['status'] in ['processed', 'skip'] and not overwrite:
+            #print(f"{d['bids_name']} already converted")
+            continue
+        
+        print(f"Processing file {i+1}/{len(df)}: {d['raw_name']}")
+        # Update progress bar for each file being processed
+        pbar.update(1)
+        
+        # Initialize processing status
+        processing_successful = False
+        bids_path = None
+
+        raw_file = f"{d['raw_path']}/{d['raw_name']}"
+
+        bids_path, raw_info = bids_path_from_filename(raw_file,
+                                            d['session_from'],
+                                            config,
+                                            pmap)
+
+        event_id = d['event_id']
+        events = None
+        run = None
+        if d['run']:
+            run = d['run'].zfill(2)
+
+        if event_id:
+            with open(f"{path_BIDS}/../{event_id}", 'r') as f:
+                event_id = json.load(f)
+            events = mne.find_events(raw)
+
+        # Create BIDS path
+        bids_path.update(
+            subject=subject_padded,
+            session=d['session_to'].zfill(2),
+            task=d['task'],
+            acquisition=d['acquisition'],
+            processing=d['processing'],
+            description=d['description'],
+            run=run
+        )
+        
+        if bids_path.description and 'trans' in bids_path.description:
+            trans = mne.read_trans(raw_file, verbose='error')
+            mne.write_trans(bids_path, trans, overwrite=True)
+                
+        elif bids_path.suffix and 'headshape' in bids_path.suffix:
+            headpos = mne.chpi.read_head_pos(raw_file)
+            mne.chpi.write_head_pos(bids_path, headpos)
+
+        elif bids_path.datatype in ['meg', 'eeg']:
+        # Write the BIDS file
+            try:
+                raw = mne.io.read_raw_fif(raw_file, allow_maxshield=True, verbose='error') 
+                write_raw_bids(
+                    raw=raw,
+                    bids_path=bids_path,
+                    empty_room=None,
+                    event_id=event_id,
+                    events=events,
+                    overwrite=True,
+                    verbose='error'
+                )
+                
+                # Operation tracked via JSON logging in update_bids_report()
+                        
+            except Exception as e:
+                print(f"Error writing BIDS file: {e}")
+                # If write_raw_bids fails, try to save the raw file directly
+                # Fall back on raw.save if write_raw_bids fails
+                fname = bids_path.copy().update(suffix=datatype, extension = '.fif').fpath
+                try:
+                    raw.save(fname, overwrite=True, verbose='error')
+                except Exception as e:
+                    print(f"Error saving raw file: {e}")
+                    log('BIDS',
+                        f'{fname} not bidsified',
+                        level='error',
+                        logfile=logfile,
+                        logpath=logpath
+                        )
+
+            # Copy EEG to MEG
+            if bids_path.datatype == 'eeg':
+                copy_eeg_to_meg(raw_file, bids_path)
+
+        # Add channel parameters 
+        elif bids_path.acquisition == 'hedscan' and not bids_path.processing:
+            
+            opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
+            
+            bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
+            add_channel_parameters(bids_tsv, opm_tsv)
+
+            bids_path_final = bids_path
+            processing_successful = True
+    
+        # Update the conversion table
+        df.at[i, 'time_stamp'] = ts
+        df.at[i, 'status'] = 'processed'
+        df.at[i, 'bids_path'] = dirname(bids_path)
+        df.at[i, 'bids_name'] = basename(bids_path)
+        df.to_csv(conversion_file, sep='\t', index=False)
+
+    # Close progress bar
+    pbar.close()
+    
+    # Update BIDS processing report in JSON format for pipeline tracking
+    update_bids_report(df, config)
+    log('BIDS', f'All files bidsified according to {conversion_file}', level='info', logfile=logfile, logpath=logpath)
+    
+ 
 def update_bids_report(conversion_table: pd.DataFrame, config: dict):
     """
     Update the BIDS results report with processed entries in JSON format, 
@@ -1093,234 +1363,7 @@ def update_bids_report(conversion_table: pd.DataFrame, config: dict):
     log('BIDS', f'BIDS report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
         logfile=logfile, logpath=logpath)
     
-    return len(new_entries)
-
-def bidsify(config: dict):
-    """
-    Main function to convert raw MEG/EEG data to BIDS format.
-    
-    Comprehensive conversion process that:
-    1. Loads/updates conversion table
-    2. Creates BIDS directory structure
-    3. Processes each file according to conversion table
-    4. Handles MEG, EEG, head position, and transformation files
-    5. Associates event files with task data
-    6. Manages calibration and crosstalk files
-    7. Logs all conversion activities
-    
-    Conversion Features:
-    - Supports both TRIUX (SQUID) and OPM MEG systems
-    - Handles split files automatically
-    - Zero-pads subject and session IDs
-    - Associates event files with tasks
-    - Copies head position and transformation files
-    - Manages channel parameter files for OPM data
-    - Robust error handling with fallback options
-    
-    Args:
-        config (dict): Complete configuration with paths and parameters
-        conversion_file (str, optional): Specific conversion table to use
-        overwrite (bool): Whether to overwrite existing BIDS files
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Creates complete BIDS directory structure
-        - Converts all eligible raw files to BIDS format
-        - Writes calibration and crosstalk files
-        - Updates conversion table with completion status
-        - Logs all conversion activities
-        
-    Raises:
-        SystemExit: If task validation fails (unknown tasks found)
-    """
-    
-    # TODO: parallelize the conversion
-    ts = datetime.now().strftime('%Y%m%d')
-    path_project = join(config.get('Root', ''), config.get('Name', ''))
-    local_path = config.get('Raw', '')
-    path_BIDS = config.get('BIDS', '')
-    calibration = config.get('Calibration', '')
-    crosstalk = config.get('Crosstalk', '')
-    overwrite = config.get('overwrite', False)
-    logfile = config.get('Logfile', '')
-    participant_mapping = join(path_project, config.get('Participants_mapping_file', ''))
-    logpath = join(config.get('Root', ''), config.get('Name', ''), 'logs')
-
-    configure_logging(logpath, logfile)
-    
-    # Pipeline tracking removed - using simple JSON logging
-    
-    # Ensure log directory exists and initialize BIDS report if needed
-    log_path = join(path_project, 'logs')
-    os.makedirs(log_path, exist_ok=True)
-
-    df, conversion_file = update_conversion_table(config)
-    df = df.where(pd.notnull(df) & (df != ''), None)
-    
-    pmap = None
-    if participant_mapping:
-        try:
-            pmap = pd.read_csv(participant_mapping, dtype=str)
-        except Exception as e:
-            print('Participant file not found, skipping')
-            
-    is_natmeg_id =  all(df['participant_from'].str.replace('sub-', '').astype(int) == df['participant_to'].astype(int))
-    
-    # Start by creating the BIDS directory structure
-    unique_participants_sessions = df[['participant_to', 'session_to', 'datatype']].drop_duplicates()
-    for _, row in unique_participants_sessions.iterrows():
-        if is_natmeg_id:
-            subject_padded = str(row['participant_to']).zfill(4)
-        else:
-            subject_padded = str(row['participant_to']).zfill(3)
-        session_padded = str(row['session_to']).zfill(2)
-        bids_path = BIDSPath(
-            subject=subject_padded,
-            session=session_padded,
-            datatype=row['datatype'],
-            root=path_BIDS
-        ).mkdir()
-        try:
-            if row['datatype'] == 'meg':
-                if not bids_path.meg_calibration_fpath:
-                    write_meg_calibration(calibration, bids_path)
-                if not bids_path.meg_crosstalk_fpath:
-                    write_meg_crosstalk(crosstalk, bids_path)
-        except Exception as e:
-            log('BIDS', f"Error writing calibration/crosstalk files: {e}", level='error', logfile=logfile, logpath=logpath)
-    
-    # ignore split files as they are processed automatically
-    if 'split' in df.columns:
-        df = df[df['split'].isna() | (df['split'] == '')]
-
-    # Flag deviants and exist if found
-    deviants = df[df['status'] == 'check']
-    if len(deviants) > 0:
-        log('BIDS', 'Deviants found, please check the conversion table and run again', level='warning', logfile=logfile, logpath=logpath)
-        # Still create BIDS report even when deviants found
-        df.to_csv(conversion_file, sep='\t', index=False)
-        update_bids_report(df, config)
-        return
-
-    n_files_to_process = len(df[df['status'] == 'run'])
-    
-    # Create progress bar for files to process
-    pbar = tqdm(total=n_files_to_process, desc=f"{n_files_to_process} files to process", unit=" file(s)")
-    
-    for i, d in df.iterrows():
-        
-        # Skip files not ready for conversion
-        if d['status'] in ['processed', 'skip'] and not overwrite:
-            #print(f"{d['bids_name']} already converted")
-            continue
-        
-        # Update progress bar for each file being processed
-        pbar.update(1)
-        
-        # Initialize processing status
-        processing_successful = False
-        bids_path = None
-
-        raw_file = f"{d['raw_path']}/{d['raw_name']}"
-
-        bids_path = bids_path_from_filename(raw_file,
-                                            d['session_from'],
-                                            d['acquisition'],
-                                            config,
-                                            pmap)
-
-        event_id = d['event_id']
-        events = None
-
-        if event_id:
-            with open(f"{path_BIDS}/../{event_id}", 'r') as f:
-                event_id = json.load(f)
-            events = mne.find_events(raw)
-
-        # Create BIDS path
-        bids_path.update(
-            subject=subject_padded,
-            session=d['session_to'].zfill(2),
-            task=d['task'],
-            acquisition=d['acquisition'],
-            processing=d['processing'],
-            description=d['description'],
-            run=d['run']
-        )
-        
-        if bids_path.description and 'trans' in bids_path.description:
-            trans = mne.read_trans(raw_file, verbose='error')
-            mne.write_trans(bids_path, trans, overwrite=True)
-                
-        elif bids_path.suffix and 'headshape' in bids_path.suffix:
-            headpos = mne.chpi.read_head_pos(raw_file)
-            mne.chpi.write_head_pos(bids_path, headpos, verbose='error')
-
-        elif bids_path.datatype in ['meg', 'eeg']:
-        # Write the BIDS file
-            try:
-                raw = mne.io.read_raw_fif(raw_file, allow_maxshield=True, verbose='error') 
-                write_raw_bids(
-                    raw=raw,
-                    bids_path=bids_path,
-                    empty_room=None,
-                    event_id=event_id,
-                    events=events,
-                    overwrite=True,
-                    verbose='error'
-                )
-                
-                # Operation tracked via JSON logging in update_bids_report()
-                        
-            except Exception as e:
-                print(f"Error writing BIDS file: {e}")
-                # If write_raw_bids fails, try to save the raw file directly
-                # Fall back on raw.save if write_raw_bids fails
-                fname = bids_path.copy().update(suffix=datatype, extension = '.fif').fpath
-                try:
-                    raw.save(fname, overwrite=True)
-                except Exception as e:
-                    print(f"Error saving raw file: {e}")
-                    log('BIDS',
-                        f'{fname} not bidsified',
-                        level='error',
-                        logfile=logfile,
-                        logpath=logpath
-                        )
-
-            # Copy EEG to MEG
-            if bids_path.datatype == 'eeg':
-                print(raw_file, bids_path)
-                copy_eeg_to_meg(raw_file, bids_path)
-
-        # Add channel parameters 
-        elif bids_path.acquisition == 'hedscan' and not bids_path.processing:
-            
-            opm_tsv = f"{d['raw_path']}/{d['raw_name']}".replace('raw.fif', 'channels.tsv')
-            
-            bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
-            add_channel_parameters(bids_tsv, opm_tsv)
-
-            bids_path_final = bids_path
-            processing_successful = True
-    
-        # Update the conversion table
-        df.at[i, 'time_stamp'] = ts
-        df.at[i, 'status'] = 'processed'
-        df.at[i, 'bids_path'] = dirname(bids_path)
-        df.at[i, 'bids_name'] = basename(bids_path)
-        df.to_csv(conversion_file, sep='\t', index=False)
-
-    # Close progress bar
-    pbar.close()
-    
-    # Update BIDS processing report in JSON format for pipeline tracking
-    update_bids_report(df, config)
-    log('BIDS', f'All files bidsified according to {conversion_file}', level='info', logfile=logfile, logpath=logpath)
-    
-    
+    return len(new_entries)   
 
 def args_parser():
     """
@@ -1459,6 +1502,7 @@ def main(config:str=None):
         config = get_parameters(config)
     
     create_dataset_description(config)
+    create_proc_description(config)
     bidsify(config)
     update_sidecars(config)
     # print_dir_tree(config['BIDS'])
