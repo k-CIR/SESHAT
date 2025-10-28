@@ -13,7 +13,6 @@ import re
 from os.path import basename, join, isdir, exists
 import os
 from glob import glob
-import pandas as pd
 from os.path import exists, dirname
 import os
 import logging
@@ -24,15 +23,24 @@ import json
 import yaml
 
 # tkinter file dialog imports
-
-import tkinter as tk
 from tkinter import filedialog
-import sys
 
+
+# Predefined patterns for filename parsing
+
+default_output_path = '/neuro/data/local'
+noise_patterns = ['empty', 'noise', 'Empty']
+proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
+headpos_patterns = ['headpos', 'headshape']
+opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
+                           'HPIpre', 'HPIpost']
+
+###############################################################################
+# Directory management and configuration handling
+###############################################################################
 
 def askdirectory(**kwargs):
     """tkinter filedialog.askdirectory wrapper"""
-    # Create hidden root window
     
     directory = filedialog.askdirectory(
         title=kwargs.get('title', 'Select Directory'),
@@ -40,23 +48,6 @@ def askdirectory(**kwargs):
     )
 
     return directory
-
-
-default_output_path = '/neuro/data/local'
-noise_patterns = ['empty', 'noise', 'Empty']
-proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
-headpos_patterns = ['trans', 'headpos']
-opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
-                           'HPIpre', 'HPIpost']
-
-###############################################################################
-# Centralized logging setup (colored console + structured file log)
-###############################################################################
-
-_LOGGER_NAME = 'NatMEG'
-_CONFIGURED: bool = False
-_FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
-_CONSOLE_HANDLER: Optional[logging.Handler] = None
 
 def project_paths(config: str, init=False):
     """Create a directory structure for a new project."""
@@ -107,6 +98,64 @@ def project_paths(config: str, init=False):
     
     return paths
 
+def askForConfig():
+    """
+    Open GUI file dialog for configuration file selection.
+    
+    Presents user with file browser dialog filtered for YAML and JSON
+    configuration files. Provides fallback when no config file is specified
+    via command line or programmatic interface.
+    
+    Supported Formats:
+    - YAML files: .yml, .yaml extensions
+    - JSON files: .json extension
+    
+    Args:
+        None
+    
+    Returns:
+        str: Full path to selected configuration file
+        
+    Side Effects:
+        - Opens tkinter file dialog window
+        - Prints selected file path to console
+        - Exits program with code 1 if no file selected
+        
+    Raises:
+        SystemExit: If user cancels dialog without selecting file
+        
+    Initial Directory:
+        Defaults to '/neuro/data/local' for convenient navigation
+    """
+    # Create hidden root window
+    # if not exists(default_output_path):
+    #     default_output_path = '.'
+    
+    config_file = filedialog.askopenfilename(
+        title="Select Configuration File",
+        initialdir=default_output_path,
+        filetypes=[
+            ("YAML files", "*.yml *.yaml"),
+            ("JSON files", "*.json"),
+            ("All files", "*.*")
+        ]
+    )
+
+    if not config_file:
+        print('No configuration file selected. Exiting opening dialog')
+        sys.exit(1)
+    
+    print(f'{config_file} selected')
+    return config_file
+
+###############################################################################
+# Centralized logging setup (colored console + structured file log)
+###############################################################################
+
+_LOGGER_NAME = 'NatMEG'
+_CONFIGURED: bool = False
+_FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
+_CONSOLE_HANDLER: Optional[logging.Handler] = None
 class _ColoredFormatter(logging.Formatter):
     COLORS = {
         logging.DEBUG: '\033[90m',
@@ -342,6 +391,7 @@ def extract_info_from_filename(file_name: str):
             - processing (list): Processing steps applied (e.g., ['tsss', 'mc'])
             - description (list): File type descriptors (e.g., ['trans', 'headpos'])
             - datatypes (list): Data modalities (e.g., ['meg', 'opm'])
+            - suffix (str): Special suffix (e.g., 'headshape') or None
             - extension (str): File extension (e.g., '.fif')
     
     Special Handling:
@@ -379,28 +429,41 @@ def extract_info_from_filename(file_name: str):
         Function handles edge cases and various naming inconsistencies
         commonly found in MEG datasets across different acquisition systems
     """
+    suffix = ''
+    desc = ''
+    proc = ['']
+    split = ''
+    datatypes = ['']
+    extension = ''
     
     # Extract participant, task, processing, datatypes and extension
     participant = re.search(r'(NatMEG_|sub-)(\d+)', file_name).group(2).zfill(4)
-    extension = '.' + re.search(r'\.(.*)', file_name).group(1)
+    extension = '.' + re.search(r'\.(.*)', basename(file_name)).group(1)
     datatypes = list(set([r.lower() for r in re.findall(r'(meg|raw|opm|eeg|behav)', basename(file_name), re.IGNORECASE)] +
                          ['opm' if 'kaptah' in file_name else '']))
+    suffix = 'meg' if any(item in datatypes for item in ['raw', 'meg']) else ''
     datatypes = [d for d in datatypes if d != '']
-
+    
     proc = re.findall('|'.join(proc_patterns), basename(file_name))
-    desc = re.findall('|'.join(headpos_patterns), basename(file_name))
+    
+    if file_contains(basename(file_name), ['trans']):
+        desc = 'trans'
+        suffix = 'meg'
+    
+    if file_contains(file_name, headpos_patterns):
+        suffix = 'headshape'
 
     split = re.search(r'(\-\d+\.fif)', basename(file_name))
     split = split.group(1).strip('.fif') if split else ''
     
-    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + desc)
+    exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc']+ datatypes + [participant] + [extension]  + [suffix] + headpos_patterns + proc + [split] + ['\\+'] + ['\\-'] + [desc])
     
     if file_contains(file_name, opm_exceptions_patterns):
         datatypes.append('opm')
     
     if 'opm' in datatypes or 'kaptah' in file_name:    
 
-        exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc-']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + ['file']+ desc + [r'\d{8}_', r'\d{6}_'])
+        exclude_from_task = '|'.join(['NatMEG_'] + ['sub-'] + ['proc-']+ datatypes + [participant] + [extension] + proc + [split] + ['\\+'] + ['\\-'] + ['file']+ [desc] + [r'\d{8}_', r'\d{6}_'])
         if not file_contains(file_name, opm_exceptions_patterns):
             exclude_from_task += '|hpi|ds'
 
@@ -430,61 +493,8 @@ def extract_info_from_filename(file_name: str):
         'processing': proc,
         'description': desc,
         'datatypes': datatypes,
+        'suffix': suffix,
         'extension': extension
     }
     
     return info_dict
-
-###############################################################################
-# Configuration Management
-###############################################################################
-
-def askForConfig():
-    """
-    Open GUI file dialog for configuration file selection.
-    
-    Presents user with file browser dialog filtered for YAML and JSON
-    configuration files. Provides fallback when no config file is specified
-    via command line or programmatic interface.
-    
-    Supported Formats:
-    - YAML files: .yml, .yaml extensions
-    - JSON files: .json extension
-    
-    Args:
-        None
-    
-    Returns:
-        str: Full path to selected configuration file
-        
-    Side Effects:
-        - Opens tkinter file dialog window
-        - Prints selected file path to console
-        - Exits program with code 1 if no file selected
-        
-    Raises:
-        SystemExit: If user cancels dialog without selecting file
-        
-    Initial Directory:
-        Defaults to '/neuro/data/local' for convenient navigation
-    """
-    # Create hidden root window
-    # if not exists(default_output_path):
-    #     default_output_path = '.'
-    
-    config_file = filedialog.askopenfilename(
-        title="Select Configuration File",
-        initialdir=default_output_path,
-        filetypes=[
-            ("YAML files", "*.yml *.yaml"),
-            ("JSON files", "*.json"),
-            ("All files", "*.*")
-        ]
-    )
-
-    if not config_file:
-        print('No configuration file selected. Exiting opening dialog')
-        sys.exit(1)
-    
-    print(f'{config_file} selected')
-    return config_file

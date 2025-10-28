@@ -461,7 +461,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     proc = 'proc-hpi+'
     if new_sfreq:
         proc += f'ds'
-    proc += f'_meg'
+    proc += f'_raw'
     
     hpi_fit_parameters = {
         'hedscan_files': [],
@@ -797,7 +797,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
         None
         
     Side Effects:
-        - Saves transformed file with '_proc-hpi+ds_meg.fif' suffix
+        - Saves transformed file with '_proc-hpi+ds_raw.fif' suffix
         - Updates MNE info object with head coordinate system
         - Logs transformation quality metrics
         - Optionally displays 3D plot of sensor/coil positions
@@ -838,7 +838,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
     proc = 'proc-hpi'
     if new_sfreq and not (int(new_sfreq) == int(sfreq)):
         proc += f'+ds'
-    proc += f'_meg'
+    proc += f'_raw'
         
     savename = f'{savename}_{proc}.fif'
     
@@ -943,7 +943,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
                     'digpos': digpts
                 }
 
-                plot_3d(plot_params, f'{path}/{savename.replace("_meg.fif", "_3d_plot.png")}')
+                plot_3d(plot_params, f'{path}/{savename.replace("_raw.fif", "_3d_plot.png")}')
         except Exception as e:
             log("HPI", f"Error occurred while processing {savename}: {e}", 'error', logfile=logfile, logpath=log_path)
 
