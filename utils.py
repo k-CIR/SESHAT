@@ -13,8 +13,6 @@ import re
 from os.path import basename, join, isdir, exists
 import os
 from glob import glob
-from os.path import exists, dirname
-import os
 import logging
 from logging import handlers
 from typing import Optional, Dict, Tuple
