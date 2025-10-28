@@ -496,3 +496,35 @@ def extract_info_from_filename(file_name: str):
     }
     
     return info_dict
+
+
+ ###############################################################################
+ # Other useful utilities
+###############################################################################
+def delete_files(root, pattern, test=True, recursive=True):
+    files = sorted(glob(f'**/{pattern}', root_dir=root, recursive=recursive))
+    if not test:
+        print("##### DELETING #####")
+        for file in files:
+            print(f'{root}/{file}')
+            os.remove(f'{root}/{file}')
+        print("##### Files deleted #####")
+    else:
+        print("##### TESTING #####")
+        for file in files:
+            print(f'{root}/{file}')
+        print("##### TEST: No files deleted #####")
+
+def copy_files(src, dst, pattern, test=True, recursive=True):
+    files = glob(f'**/{pattern}', root_dir=src, recursive=recursive)
+    if not test:
+        for file in files:
+            print("##### COPYING #####")
+            print(f'{src}/{file}', f'{dst}/{file}')
+            copy2(f'{src}/{file}', dst)
+            print("##### Files copied #####")
+    else:
+        for file in files:
+            print("##### TESTING #####")
+            print(f'{src}/{file}', f'{dst}/{file}')
+            print("##### TEST: No files copied #####")
