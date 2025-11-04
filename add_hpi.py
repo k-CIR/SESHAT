@@ -446,7 +446,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     hpinames=config.get('hpinames')
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif', 'hpi']
     overwrite = config.get('overwrite', False)
-    logfile = config.get('logfile', 'adding_hpi.log')
+    logfile = config.get('logfile', 'pipeline_log.log')
     
     log_path = opmMEGdir.replace('raw', 'logs')
     if not os.path.exists(log_path):
@@ -457,11 +457,17 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
     hedscan_files = [f for f in all_files if not file_contains(f, hpinames + noise_patterns + proc_patterns + exclude_patterns)]
-    
-    proc = 'proc-hpi+'
-    if new_sfreq:
-        proc += f'ds'
-    proc += f'_raw'
+
+    new_hedscan_files = []
+    for file in hedscan_files:
+        sfreq = mne.io.read_raw_fif(file, preload=False, verbose='error').info['sfreq']
+
+        proc = 'proc-hpi'
+        if new_sfreq and not (int(new_sfreq) == int(sfreq)):
+            proc += f'+ds'
+        proc += f'_raw'
+        if not os.path.exists(file.replace('raw.fif', proc + '.fif')):
+            new_hedscan_files.append(file)
     
     hpi_fit_parameters = {
         'hedscan_files': [],
@@ -478,7 +484,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     }
 
     if not overwrite:
-        hedscan_files = [f for f in hedscan_files if not os.path.exists(f.replace('raw.fif', proc + '.fif'))]
+        hedscan_files = new_hedscan_files
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         # Ensure polhemus_file is a list for compatibility
