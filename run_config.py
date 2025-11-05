@@ -9,6 +9,7 @@ import threading
 import queue
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
+from utils import apply_ansi_colors_to_tk
 
 default_path = '/neuro/data/local'
 
@@ -529,6 +530,20 @@ class ConfigMainWindow:
                                    state='disabled')
         self.abort_btn.pack(side='left', padx=(10, 0), anchor='w')
         
+        # Progress bar section
+        progress_frame = ttk.Frame(run_frame)
+        progress_frame.pack(fill='x', padx=5, pady=(5, 0))
+        
+        self.progress_label = ttk.Label(progress_frame, text="Ready", font=('TkDefaultFont', 9))
+        self.progress_label.pack(anchor='w', pady=(0, 2))
+        
+        self.progress_bar = ttk.Progressbar(
+            progress_frame,
+            mode='determinate',
+            length=300
+        )
+        self.progress_bar.pack(fill='x', pady=(0, 5))
+        
         # Terminal output
         terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
         terminal_frame.pack(fill='both', expand=True, padx=5, pady=5)
@@ -546,9 +561,13 @@ class ConfigMainWindow:
         )
         self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # Add initial text
+        # Add initial text with color test
         self.terminal_output.configure(state='normal')
-        self.terminal_output.insert('end', "Terminal output will appear here...\n")
+        test_text = "Terminal output will appear here...\n"
+        test_text += "\033[94mINFO: This is blue text\033[0m\n"
+        test_text += "\033[93mWARNING: This is yellow text\033[0m\n"
+        test_text += "\033[91mERROR: This is red text\033[0m\n"
+        apply_ansi_colors_to_tk(self.terminal_output, test_text)
         self.terminal_output.configure(state='disabled')
     
     def update_config_value(self, key, value):
@@ -856,6 +875,12 @@ class ConfigMainWindow:
         self.terminal_output.insert('end', "Executing pipeline...\n")
         self.terminal_output.configure(state='disabled')
         
+        # Reset progress bar
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode='determinate')
+        self.progress_bar['value'] = 0
+        self.progress_label['text'] = "Starting..."
+        
         # Enable abort button, disable execute button
         self.execute_btn.configure(state='disabled')
         self.abort_btn.configure(state='normal')
@@ -879,9 +904,14 @@ class ConfigMainWindow:
         # Start process in a separate thread
         def run_pipeline():
             try:
+                # Force color output by setting environment variable
+                env = os.environ.copy()
+                env['FORCE_COLOR'] = '1'
+                env['PYTHONUNBUFFERED'] = '1'
+                
                 self.terminal_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
                                                         universal_newlines=True, bufsize=1, 
-                                                        encoding='utf-8', errors='replace')
+                                                        encoding='utf-8', errors='replace', env=env)
                 
                 for line in iter(self.terminal_process.stdout.readline, ''):
                     if line:
@@ -960,11 +990,23 @@ class ConfigMainWindow:
         for unicode_char, replacement in unicode_replacements.items():
             text = text.replace(unicode_char, replacement)
         
-        # Remove any remaining non-printable characters except newlines and tabs
+        # Remove non-printable characters EXCEPT newlines, tabs, and ANSI escape sequences
         import re
-        text = re.sub(r'[^\x20-\x7E\n\t\r]', '?', text)
+        # Preserve ANSI color codes (\033[...m) by matching and keeping them
+        # Pattern: Match anything that's NOT (printable OR \n OR \t OR \r OR part of ANSI sequence)
+        # First, protect ANSI sequences by temporarily replacing them
+        ansi_pattern = re.compile(r'(\033\[[0-9;]*m)')
+        ansi_codes = ansi_pattern.findall(text)
+        text_with_placeholders = ansi_pattern.sub('\x00ANSI\x00', text)
         
-        return text
+        # Now remove other non-printable characters
+        text_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\x00]', '?', text_with_placeholders)
+        
+        # Restore ANSI codes
+        for code in ansi_codes:
+            text_cleaned = text_cleaned.replace('\x00ANSI\x00', code, 1)
+        
+        return text_cleaned
     
     def reset_buttons(self):
         """Reset button states after pipeline execution"""
@@ -972,12 +1014,60 @@ class ConfigMainWindow:
         self.abort_btn.configure(state='disabled')
     
     def append_output(self, text):
-        """Append text to terminal output (thread-safe)"""
+        """Append text to terminal output with ANSI color support (thread-safe)"""
         self.terminal_output.configure(state='normal')
-        self.terminal_output.insert('end', text)
+        # Apply ANSI colors to the text instead of plain insert
+        apply_ansi_colors_to_tk(self.terminal_output, text)
         self.terminal_output.see('end')
         self.terminal_output.configure(state='disabled')
+        
+        # Parse progress information from output
+        self.update_progress_from_text(text)
+        
         self.root.update_idletasks()
+    
+    def update_progress_from_text(self, text):
+        """Extract progress information from terminal output and update progress bar"""
+        import re
+        
+        # Look for patterns like "Processing file 5/30" or "15/30" or "50%"
+        # Pattern 1: "X/Y" format
+        match = re.search(r'(\d+)/(\d+)', text)
+        if match:
+            current = int(match.group(1))
+            total = int(match.group(2))
+            if total > 0:
+                percentage = (current / total) * 100
+                self.progress_bar['value'] = percentage
+                self.progress_bar['maximum'] = 100
+                self.progress_label['text'] = f"Progress: {current}/{total} ({percentage:.1f}%)"
+                return
+        
+        # Pattern 2: Percentage format "45%"
+        match = re.search(r'(\d+)%', text)
+        if match:
+            percentage = int(match.group(1))
+            self.progress_bar['value'] = percentage
+            self.progress_bar['maximum'] = 100
+            self.progress_label['text'] = f"Progress: {percentage}%"
+            return
+        
+        # Pattern 3: tqdm-style output with elapsed/remaining time
+        match = re.search(r'(\d+)it \[[\d:]+<[\d:]+', text)
+        if match:
+            # Indeterminate progress
+            if self.progress_bar['mode'] != 'indeterminate':
+                self.progress_bar.configure(mode='indeterminate')
+                self.progress_bar.start(10)
+            return
+        
+        # Check for completion messages
+        if 'finished' in text.lower() or 'completed' in text.lower() or 'done' in text.lower():
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode='determinate')
+            self.progress_bar['value'] = 100
+            self.progress_label['text'] = "Complete!"
+    
     
     def show(self):
         """Show the window"""

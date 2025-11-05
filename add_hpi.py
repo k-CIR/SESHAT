@@ -839,7 +839,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
-    sfreq = mne.io.read_info(datfile).get('sfreq', None)
+    sfreq = mne.io.read_info(datfile, verbose='error').get('sfreq', None)
 
     proc = 'proc-hpi'
     if new_sfreq and not (int(new_sfreq) == int(sfreq)):
@@ -851,7 +851,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
     if overwrite or not os.path.exists(f'{path}/{savename}'):
         """Process a single data file"""
         try:
-            raw = mne.io.read_raw_fif(datfile)
+            raw = mne.io.read_raw_fif(datfile, verbose='error')
 
             #resample if new sampling freq different from old one
             if new_sfreq != raw.info['sfreq']: 

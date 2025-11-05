@@ -12,9 +12,9 @@ from shutil import copy2, copytree
 from typing import Union
 from datetime import datetime
 import filecmp
-import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+import sys
 
 calibration = '/neuro/databases/sss/sss_cal.dat'
 crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
@@ -420,7 +420,12 @@ def parallel_copy_files(paths, max_workers=4):
     existing_file_count = len([file for file in files if file[0]])
     failed_file_count = 0
     
-    progress_bar = tqdm(total=len(files_to_process), desc="Processing files", unit=f' file(s)')
+    pbar = tqdm(total=len(files_to_process), 
+                       desc="Copy files", 
+                       unit=f' file(s)',
+                       disable=not sys.stdout.isatty(),
+                       ncols=80,
+                       bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
     # Use ThreadPoolExecutor for I/O bound operations like file copying
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -442,13 +447,13 @@ def parallel_copy_files(paths, max_workers=4):
                 
                 # Update progress bar
                 status = "✓" if match else "✗"
-                progress_bar.set_postfix({
+                pbar.set_postfix({
                     'New files': new_file_count,
                     'Existing files': existing_file_count,
                     'Failed': failed_file_count,
                     'Latest': f"{status} {basename(source)}"
                 })
-                progress_bar.update(1)
+                pbar.update(1)
                     
             except Exception as exc:
                 failed_file_count += 1
@@ -458,16 +463,16 @@ def parallel_copy_files(paths, max_workers=4):
                 log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
                 
                 # Update progress bar for exceptions
-                progress_bar.set_postfix({
+                pbar.set_postfix({
                     'New files': new_file_count,
                     'Existing files': existing_file_count,
                     'Failed': failed_file_count,
                     'Latest': f"✗ {basename(source)} (ERROR)"
                 })
-                progress_bar.update(1)
+                pbar.update(1)
        
         # Close progress bar
-        progress_bar.close()
+        pbar.close()
     # Log summary
     log('Copy', f'Parallel copy completed. Files to process: {len(files_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         'info',

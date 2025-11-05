@@ -340,7 +340,7 @@ def update_sidecars(config: dict):
                     
                 if trans_file:
                     path = f"{headpos_file[0].root}/{headpos_file[0].basename}"
-                    trans = mne.read_trans(path)
+                    trans = mne.read_trans(path, verbose='error')
 
             if acq == 'triux' and suffix == 'meg':
                 if info['gantry_angle'] > 0:
@@ -948,20 +948,25 @@ def bidsify(config: dict):
     n_files_to_process = len(df[df['status'] == 'run'])
     
     # Create progress bar for files to process
-    pbar = tqdm(total=n_files_to_process, desc=f"{n_files_to_process} files to process", unit=" file(s)")
-    
+
+    pbar = tqdm(total=n_files_to_process, 
+                desc=f"Bidsify files", 
+                unit=" file(s)",
+                disable=not sys.stdout.isatty(),
+                ncols=80,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+    pcount = 0
     for i, d in df.iterrows():
         # Skip files not ready for conversion
         if d['status'] in ['processed', 'skip'] and not overwrite:
             #print(f"{d['bids_name']} already converted")
             continue
-        
-        print(f"Processing file {i+1}/{len(df)}: {d['raw_name']}")
+        pcount += 1
+        # if d[d['status'] == 'run']:
+        print(f"Processing file {pcount}/{n_files_to_process}: {d['raw_name']}")
         # Update progress bar for each file being processed
         pbar.update(1)
         
-        # Initialize processing status
-        processing_successful = False
         bids_path = None
 
         raw_file = f"{d['raw_path']}/{d['raw_name']}"
@@ -1044,11 +1049,8 @@ def bidsify(config: dict):
             
             bids_tsv = bids_path.copy().update(suffix='channels', extension='.tsv')
             add_channel_parameters(bids_tsv, opm_tsv)
-
-            bids_path_final = bids_path
-            processing_successful = True
     
-        # Update the conversion table
+        # Update the conversion table        
         df.at[i, 'time_stamp'] = ts
         df.at[i, 'status'] = 'processed'
         df.at[i, 'bids_path'] = dirname(bids_path)

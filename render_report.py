@@ -9,9 +9,9 @@ from jinja2 import Environment, FileSystemLoader, TemplateNotFound
 from typing import Union
 import yaml
 import subprocess
-from utils import askForConfig
+from utils import askForConfig, log
 
-def nested_dir_tree(root_path, rel_path="", max_entries: int | None = None):
+def nested_dir_tree(root_path, rel_path="", logpath=None,max_entries: int | None = None):
     """Return nested directory tree for local or SSH (user@host:/path) roots.
 
     Automatically detects remote SSH paths of the form user@host:/absolute/path
@@ -30,7 +30,8 @@ def nested_dir_tree(root_path, rel_path="", max_entries: int | None = None):
         try:
             proc = subprocess.run(find_cmd, capture_output=True, text=True, timeout=60)
             if proc.returncode != 0:
-                print(f"[WARN] SSH find failed ({proc.returncode}): {proc.stderr.strip()[:200]}")
+                log('Report', f"SSH find failed ({proc.returncode}): {proc.stderr.strip()[:200]}",
+                    level='warning', logpath=logpath)
                 return {}
             lines = proc.stdout.strip().splitlines()
             if max_entries:
@@ -63,7 +64,7 @@ def nested_dir_tree(root_path, rel_path="", max_entries: int | None = None):
                         _ = _.setdefault(part, {})
             return tree
         except Exception as e:
-            print(f"[WARN] Remote listing failed: {e}")
+            log('Report', f"Remote listing failed: {e}", level='warning', logpath=logpath)
             return {}
 
     # Local path handling
@@ -81,9 +82,9 @@ def nested_dir_tree(root_path, rel_path="", max_entries: int | None = None):
                     'size': stat_info.st_size,
                 })
     except FileNotFoundError:
-        print(f"[WARN] Path not found: {root_path}")
+        log('Report', f"Path not found: {root_path}", level='warning', logpath=logpath)
     except PermissionError:
-        print(f"[WARN] Permission denied: {root_path}")
+        log('Report', f"Permission denied: {root_path}", level='warning', logpath=logpath)
     return tree
 
 def create_hierarchical_list(tree, current_path="", level=0):
@@ -458,14 +459,17 @@ def main(config: str=None):
     project = config['Project'].get("Name", "")
     root = config['Project'].get("Root", "")
     local_root = join(root, project)
+    logpath = os.path.join(project, 'logs', config['Project'].get('Logfile', ''))
+    
     # Optional remote mirror path (user@host:/abs/path). Adjust if project stored differently remotely.
     remote_root = f'natmeg@compute.kcir.se:/data/vault/natmeg/{project}' if project else None
 
-    dir_tree = nested_dir_tree(local_root)
+    dir_tree = nested_dir_tree(local_root, logpath=logpath)
     if remote_root:
-        remote_tree = nested_dir_tree(remote_root)
+        remote_tree = nested_dir_tree(remote_root, logpath=logpath)
         if not remote_tree:
-            print(f"[INFO] Remote path unreachable or empty: {remote_root}")
+            log('Report', f"Remote path unreachable or empty: {remote_root}", level='warning',
+                  logpath=logpath)
 
     dict_to_table_report(dir_tree, title=project, output_file=join(local_root, 'report.html'), remote_tree=remote_tree if 'remote_tree' in locals() else None)
 

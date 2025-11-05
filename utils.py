@@ -148,6 +148,93 @@ def askForConfig():
 
 ###############################################################################
 # Centralized logging setup (colored console + structured file log)
+ANSI_COLOR_MAP = {
+    '30': 'black',
+    '31': 'red',
+    '32': 'green',
+    '33': '#CCCC00',    # yellow
+    '34': 'blue',
+    '35': 'magenta',
+    '36': 'cyan',
+    '37': 'white',
+    '90': '#808080',    # gray
+    '91': '#FF5555',    # bright red (ERROR)
+    '92': '#55FF55',    # bright green
+    '93': '#FFFF55',    # bright yellow (WARNING)
+    '94': '#5555FF',    # bright blue (INFO)
+    '95': '#FF55FF',    # bright magenta (CRITICAL)
+    '96': '#55FFFF',    # bright cyan
+    '97': '#FFFFFF',    # bright white
+    '0': 'white',       # reset to default (white on black terminal)
+}
+
+def apply_ansi_colors_to_tk(text_widget, ansi_text):
+    """
+    Parse ANSI color codes from text and apply them to a Tkinter Text widget.
+    
+    This function strips ANSI escape codes and applies the corresponding colors
+    using Tkinter text tags, making terminal-colored output visible in GUI.
+    
+    Args:
+        text_widget: Tkinter Text widget to insert colored text into
+        ansi_text (str): Text containing ANSI color codes (e.g., from logger output)
+    
+    Example:
+        >>> import tkinter as tk
+        >>> root = tk.Tk()
+        >>> text = tk.Text(root)
+        >>> text.pack()
+        >>> colored_output = "\\033[31mError:\\033[0m Something went wrong"
+        >>> apply_ansi_colors_to_tk(text, colored_output)
+    
+    Note:
+        Works with the ANSI codes used by _ColoredFormatter in the logging system.
+        The text widget should be in 'normal' state for insertion.
+    """
+    # Regex to find ANSI color codes: \033[<code>m
+    ansi_regex = re.compile(r'\033\[(\d+)m')
+    
+    matches = list(ansi_regex.finditer(ansi_text))
+    
+    # If no ANSI codes found, just insert the text as-is with white color
+    if not matches:
+        text_widget.insert('end', ansi_text)
+        return
+    
+    pos = 0
+    current_color = 'white'
+    
+    for match in matches:
+        start, end = match.span()
+        color_code = match.group(1)
+        
+        # Insert text before this color code with current color
+        if start > pos:
+            chunk = ansi_text[pos:start]
+            # Use color value as tag name for reusability
+            tag_name = f'fg_{current_color.replace("#", "")}'
+            
+            # Configure tag if not already configured
+            if tag_name not in text_widget.tag_names():
+                text_widget.tag_config(tag_name, foreground=current_color)
+            
+            text_widget.insert('end', chunk, tag_name)
+        
+        # Update current color based on the code
+        current_color = ANSI_COLOR_MAP.get(color_code, current_color)
+        pos = end
+    
+    # Insert any remaining text after the last color code
+    if pos < len(ansi_text):
+        chunk = ansi_text[pos:]
+        tag_name = f'fg_{current_color.replace("#", "")}'
+        
+        # Configure tag if not already configured
+        if tag_name not in text_widget.tag_names():
+            text_widget.tag_config(tag_name, foreground=current_color)
+        
+        text_widget.insert('end', chunk, tag_name)
+
 ###############################################################################
 
 _LOGGER_NAME = 'NatMEG'
@@ -165,10 +252,15 @@ class _ColoredFormatter(logging.Formatter):
     RESET = '\033[0m'
 
     def format(self, record: logging.LogRecord) -> str:
-        color = self.COLORS.get(record.levelno, '')
-        msg = super().format(record)
-        # Keep color codes for Tk terminal to render
-        return f"{color}{msg}{self.RESET}"
+        # Always use colors (for TTY or when FORCE_COLOR is set)
+        use_color = sys.stdout.isatty() or os.environ.get('FORCE_COLOR', '0') == '1'
+        
+        if use_color:
+            color = self.COLORS.get(record.levelno, '')
+            msg = super().format(record)
+            return f"{color}{msg}{self.RESET}"
+        else:
+            return super().format(record)
 
 
 def configure_logging(log_dir: str = '.',
