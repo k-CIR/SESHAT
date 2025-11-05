@@ -41,7 +41,7 @@ from scipy.spatial import Delaunay, cKDTree
 import concurrent.futures
 from functools import partial
 from datetime import datetime
-
+from tqdm import tqdm
 #from mne.io.pick import pick_types #use for older version of mne
 from mne._fiff.pick import pick_types
 from mne import Report
@@ -1049,18 +1049,25 @@ def main(config: Union[str, dict]=None):
         os.makedirs(log_path)
     logfile = config.get('logfile', 'adding_hpi.log')
     configure_logging(log_dir=log_path, log_file=logfile)
-
+    
     subjects = sorted([subject for subject in glob('sub-*',
                                                 root_dir = f'{opmMEGdir}')
                     if os.path.isdir(f'{opmMEGdir}/{subject}')])
-
+    subjects_to_process = len(subjects)
+    count = 0
+    pbar = tqdm(total=subjects_to_process, 
+                desc=f"Bidsify files", 
+                unit=" file(s)",
+                disable=not sys.stdout.isatty(),
+                ncols=80,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+    
     for subject in subjects:
         sessions = sorted([
             session for session in glob('*', root_dir = f'{opmMEGdir}/{subject}')
             if os.path.isdir(f'{opmMEGdir}/{subject}/{session}') and re.match(r'^\d{6}$', session)
         ])
         for session in sessions:
-            print(subject, session)
             hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite)
 
             hedscan_files = hpi_fit_parameters.get('hedscan_files', [])
@@ -1073,11 +1080,13 @@ def main(config: Union[str, dict]=None):
                         plotResult=plotResult,
                         log_path=log_path
                 )
+                    pbar.update(1)
+                    print(f'{count}/{len(hedscan_files)} files to process')
                 except Exception as e:
                     log("HPI", f"Error occurred while processing: {e}", 'error', logfile=logfile, logpath=log_path)
+                
 
-    # Use ThreadPoolExecutor or ProcessPoolExecutor
-
+                # Use ThreadPoolExecutor or ProcessPoolExecutor
                 with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:
                     # Submit all tasks and get future objects
                     futures = [executor.submit(process_func, datfile) for datfile in hedscan_files]
@@ -1088,6 +1097,11 @@ def main(config: Union[str, dict]=None):
                             future.result()  # This will raise an exception if the task failed
                         except Exception as exc:
                             log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
+        count += 1
+        print(f'Completed {count}/{subjects_to_process} subjects')
+        pbar.update(1)
+    pbar.close()
+
     log("HPI", "Registration completed successfully.", 'info',logfile=logfile, logpath=log_path)
     return True
 

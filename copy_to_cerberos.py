@@ -438,13 +438,13 @@ def parallel_copy_files(paths, max_workers=4):
         # Process completed tasks
         for future in as_completed(future_to_file):
             file_info = future_to_file[future]
+            
             try:
                 match, source, destination, message, existing_file, new_file, failed_file = future.result()
                 results.append((match, source, destination, message))
                 
                 failed_file_count += failed_file
                 new_file_count += new_file
-                
                 # Update progress bar
                 status = "✓" if match else "✗"
                 pbar.set_postfix({
@@ -470,7 +470,8 @@ def parallel_copy_files(paths, max_workers=4):
                     'Latest': f"✗ {basename(source)} (ERROR)"
                 })
                 pbar.update(1)
-       
+            
+            print(f'{new_file_count}/{len(files_to_process)}')
         # Close progress bar
         pbar.close()
     # Log summary

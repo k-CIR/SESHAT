@@ -561,13 +561,9 @@ class ConfigMainWindow:
         )
         self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # Add initial text with color test
+        # Add initial text
         self.terminal_output.configure(state='normal')
-        test_text = "Terminal output will appear here...\n"
-        test_text += "\033[94mINFO: This is blue text\033[0m\n"
-        test_text += "\033[93mWARNING: This is yellow text\033[0m\n"
-        test_text += "\033[91mERROR: This is red text\033[0m\n"
-        apply_ansi_colors_to_tk(self.terminal_output, test_text)
+        self.terminal_output.insert('end', "Terminal output will appear here...\n")
         self.terminal_output.configure(state='disabled')
     
     def update_config_value(self, key, value):
@@ -789,6 +785,17 @@ class ConfigMainWindow:
         if not self.config_file:
             self.save_as_config()
             return
+        
+        # Check if file exists and warn user about overwriting
+        if os.path.exists(self.config_file):
+            response = messagebox.askyesno(
+                "Overwrite File?",
+                f"The file '{os.path.basename(self.config_file)}' already exists.\n\n"
+                f"Do you want to overwrite it?",
+                icon='warning'
+            )
+            if not response:
+                return
             
         try:
             if self.config_file.endswith('.yml') or self.config_file.endswith('.yaml'):
@@ -946,7 +953,7 @@ class ConfigMainWindow:
                         self.terminal_process.kill()
                         self.append_output("*** Process forcefully terminated ***\n")
                 
-                self.root.after(3000, force_kill)  # Force kill after 3 seconds
+                self.root.after(1000, force_kill)  # Force kill after 1 second
                 
             except Exception as e:
                 self.append_output(f"Error aborting process: {e}\n")
