@@ -13,9 +13,9 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #f5f5f5;
+            background: #f8f8f8;
             padding: 20px;
-            color: #333;
+            color: #000000;
         }
         
         .container {
@@ -23,18 +23,20 @@
             margin: 0 auto;
             background: white;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             padding: 30px;
+            border-top: 4px solid #860052;
         }
         
         h1 {
-            color: #2c3e50;
+            color: #860052;
             margin-bottom: 10px;
             font-size: 28px;
+            font-weight: 700;
         }
         
         .subtitle {
-            color: #7f8c8d;
+            color: #555555;
             margin-bottom: 25px;
             font-size: 14px;
         }
@@ -78,7 +80,7 @@
         
         .search-box input:focus {
             outline: none;
-            border-color: #3498db;
+            border-color: #860052;
         }
         
         .stats {
@@ -89,18 +91,20 @@
         }
         
         .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: linear-gradient(135deg, #98C9A3 0%, #7ab88a 100%);
+            color: #000000;
             padding: 15px 25px;
             border-radius: 8px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            border-left: 4px solid #860052;
         }
         
         .stat-card .label {
             font-size: 12px;
-            opacity: 0.9;
+            opacity: 0.8;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            font-weight: 600;
         }
         
         .stat-card .value {
@@ -138,12 +142,12 @@
         }
         
         .filter-status label {
-            color: #e74c3c;
+            color: #860052;
             font-size: 13px;
         }
         
         .filter-status select {
-            border: 2px solid #e74c3c;
+            border: 2px solid #860052;
             font-weight: 600;
         }
         
@@ -161,12 +165,12 @@
         
         .filter-group select:focus {
             outline: none;
-            border-color: #3498db;
+            border-color: #860052;
         }
         
         .clear-filters {
             padding: 6px 12px;
-            background: #e74c3c;
+            background: #860052;
             color: white;
             border: none;
             border-radius: 6px;
@@ -178,7 +182,7 @@
         }
         
         .clear-filters:hover {
-            background: #c0392b;
+            background: #660040;
         }
         
         .table-container {
@@ -194,7 +198,7 @@
         }
         
         thead {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #860052 0%, #660040 100%);
             color: white;
             position: sticky;
             top: 0;
@@ -211,13 +215,16 @@
             position: relative;
         }
         
-        th[data-column="status"],
-        th[data-column="task"] {
+        th[data-column="status"] {
             min-width: 90px;
         }
+        th[data-column="task"] {
+            min-width: 60px;
+            max-width: 100px;
+        }
         th[data-column="description"] {
-            min-width: 80px;
-            max-width: 160px;
+            min-width: 60px;
+            max-width: 100px;
         }
 
         th[data-column="bids_name"] {
@@ -256,13 +263,32 @@
             border-bottom: 1px solid #f0f0f0;
         }
         
-        td.col-status,
-        td.col-task {
+        td.col-status {
             min-width: 60px;
         }
+        td.col-task {
+            min-width: 60px;
+            max-width: 100px;
+            word-wrap: break-word;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        td.col-task input {
+            width: 100%;
+            max-width: 100px;
+            box-sizing: border-box;
+        }
         td.col-description {
-            min-width: 80px;
-            max-width: 160px;
+            min-width: 60px;
+            max-width: 100px;
+            word-wrap: break-word;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        td.col-description input {
+            width: 100%;
+            max-width: 100px;
+            box-sizing: border-box;
         }
 
         td.col-bids_name {
@@ -312,23 +338,27 @@
         }
         
         .status-processed, .status-success {
-            background: #d4edda;
-            color: #155724;
+            background: #98C9A3;
+            color: #000000;
+            font-weight: 600;
         }
         
         .status-run {
-            background: #fff3cd;
-            color: #856404;
+            background: #ffd966;
+            color: #000000;
+            font-weight: 600;
         }
         
         .status-check {
-            background: #ffcccb;
-            color: #a94442;
+            background: #ffb3b3;
+            color: #860052;
+            font-weight: 600;
         }
         
         .status-skip {
-            background: #d1ecf1;
-            color: #0c5460;
+            background: #e0e0e0;
+            color: #000000;
+            font-weight: 600;
         }
         
         .file-path {
@@ -367,8 +397,8 @@
         
         .save-button {
             padding: 10px 20px;
-            background: #27ae60;
-            color: white;
+            background: #98C9A3;
+            color: #000000;
             border: none;
             border-radius: 6px;
             cursor: pointer;
@@ -376,20 +406,22 @@
             font-weight: 600;
             margin-left: 10px;
             transition: background 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         .save-button:hover {
-            background: #229954;
+            background: #7ab88a;
         }
         
         .save-button:disabled {
-            background: #95a5a6;
+            background: #d0d0d0;
+            color: #808080;
             cursor: not-allowed;
         }
         
         .reset-button {
             padding: 10px 20px;
-            background: #e74c3c;
+            background: #860052;
             color: white;
             border: none;
             border-radius: 6px;
@@ -398,14 +430,16 @@
             font-weight: 600;
             margin-left: 10px;
             transition: background 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         .reset-button:hover {
-            background: #c0392b;
+            background: #660040;
         }
         
         .reset-button:disabled {
-            background: #95a5a6;
+            background: #d0d0d0;
+            color: #808080;
             cursor: not-allowed;
         }
         
@@ -427,7 +461,7 @@
         
         .bulk-status-bar select {
             padding: 6px 8px;
-            border: 2px solid #3498db;
+            border: 2px solid #860052;
             border-radius: 6px;
             font-size: 13px;
             background: white;
@@ -437,13 +471,13 @@
         
         .bulk-status-bar select:focus {
             outline: none;
-            border-color: #2980b9;
+            border-color: #660040;
         }
         
         .bulk-status-bar button {
             padding: 6px 12px;
-            background: #3498db;
-            color: white;
+            background: #98C9A3;
+            color: #000000;
             border: none;
             border-radius: 6px;
             cursor: pointer;
@@ -453,7 +487,7 @@
         }
         
         .bulk-status-bar button:hover {
-            background: #2980b9;
+            background: #7ab88a;
         }
         
         .duplicate-row {
@@ -466,10 +500,12 @@
 </head>
 <body>
     <div class="container">
-        <h1>🧠 BIDS Conversion Viewer</h1>
-        <p class="subtitle">Interactive viewer for BIDS conversion results and conversion table</p>
+        <h1>🧠 NatMEG BIDS Editor</h1>
+        <p class="subtitle">Interactive BIDS editor for MEG-data</p>
         
         <div class="controls">
+            <input type="file" id="fileInput" accept=".tsv" style="display:none" onchange="handleFileSelect(event)">
+            <button class="save-button" onclick="document.getElementById('fileInput').click()" style="background:#3498db;">📂 Open TSV File</button>
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="🔍 Search in all columns...">
             </div>
@@ -513,91 +549,76 @@
         let columns = [];
         let filterValues = {};
         let modifiedRows = new Set();
+        let manualStatusChanges = new Set();
         let originalData = [];
+        let currentFilePath = '';
         const editableColumns = ['task', 'run', 'description'];
         const statusOptions = ['processed', 'run', 'skip', 'check'];
         const hiddenColumns = ['split', 'raw_path', 'bids_path', 'event_id', 'participant_to', 'session_to'];
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
-            loadData();
-            
             // Event listeners
             document.getElementById('searchInput').addEventListener('input', filterData);
+            
+            // Show message to open file
+            document.getElementById('loading').innerHTML = '📂 Please select a TSV file to begin';
         });
         
-        async function loadData() {
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
             const loading = document.getElementById('loading');
             const table = document.getElementById('dataTable');
             const errorDiv = document.getElementById('errorMessage');
             
             loading.style.display = 'block';
+            loading.innerHTML = 'Loading data...';
             table.style.display = 'none';
             errorDiv.innerHTML = '';
             
             try {
-                await loadTsvData();
+                // Read file content
+                const text = await file.text();
                 
+                // Store the file name as path (we'll use this for saving)
+                currentFilePath = file.name;
+                
+                // Parse TSV
+                const lines = text.trim().split('\n');
+                const headers = lines[0].split('\t');
+                columns = headers;
+                
+                allData = lines.slice(1).map(line => {
+                    const values = line.split('\t');
+                    const obj = {};
+                    headers.forEach((header, index) => {
+                        obj[header] = values[index] || '';
+                    });
+                    return obj;
+                });
+                
+                // Add unique index to each row
+                allData.forEach((row, index) => {
+                    row._originalIndex = index;
+                });
+                
+                // Store a deep copy of original data
+                originalData = JSON.parse(JSON.stringify(allData));
+                
+                filterData();
                 renderTable();
                 loading.style.display = 'none';
                 table.style.display = 'table';
             } catch (error) {
                 loading.style.display = 'none';
-                errorDiv.innerHTML = `<div class="error">❌ Error loading data: ${error.message}<br>Please ensure the file exists and is accessible.</div>`;
-                console.error('Error loading data:', error);
+                errorDiv.innerHTML = `<div class="error">❌ Error loading file: ${error.message}</div>`;
+                console.error('Error loading file:', error);
             }
         }
         
-        async function loadJsonData() {
-            // Use absolute path from workspace root
-            const path = './neuro/data/local/OPM-benchmarking/logs/bids_results.json';
-            
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Could not load bids_results.json from ${path}. Status: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            
-            allData = data;
-            columns = data.length > 0 ? Object.keys(data[0]) : [];
-            filterData();
-        }
-        
-        async function loadTsvData() {
-            // Use absolute path from workspace root
-            const path = './neuro/data/local/OPM-benchmarking/BIDS/conversion_logs/bids_conversion.tsv';
-            
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Could not load bids_conversion.tsv from ${path}. Status: ${response.status}`);
-            }
-            
-            const text = await response.text();
-            
-            const lines = text.trim().split('\n');
-            const headers = lines[0].split('\t');
-            columns = headers;
-            
-            allData = lines.slice(1).map(line => {
-                const values = line.split('\t');
-                const obj = {};
-                headers.forEach((header, index) => {
-                    obj[header] = values[index] || '';
-                });
-                return obj;
-            });
-            
-            // Add unique index to each row
-            allData.forEach((row, index) => {
-                row._originalIndex = index;
-            });
-            
-            // Store a deep copy of original data
-            originalData = JSON.parse(JSON.stringify(allData));
-            
-            filterData();
-        }
+
         
         function filterData() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
@@ -871,6 +892,7 @@
                     allData[idx].status = newStatus;
                     updateBidsName(allData[idx]);
                     modifiedRows.add(idx);
+                    manualStatusChanges.add(idx);
                 }
             });
             document.getElementById('saveButton').disabled = false;
@@ -884,6 +906,11 @@
             if (originalIndex >= 0 && originalIndex < allData.length) {
                 const row = allData[originalIndex];
                 row[column] = newValue;
+                
+                // Track manual status changes
+                if (column === 'status') {
+                    manualStatusChanges.add(originalIndex);
+                }
                 
                 // Auto-update bids_name when task, run, or split changes
                 if (['task', 'run', 'split'].includes(column)) {
@@ -960,6 +987,7 @@
                 // Restore original data (preserving _originalIndex)
                 allData = JSON.parse(JSON.stringify(originalData));
                 modifiedRows.clear();
+                manualStatusChanges.clear();
                 
                 // Disable buttons
                 document.getElementById('saveButton').disabled = true;
@@ -970,7 +998,16 @@
             }
         }
         
-        function saveChanges() {
+        async function saveChanges() {
+            // Change status to "run" for modified rows, except those with manual status changes
+            let autoChangedCount = 0;
+            modifiedRows.forEach(originalIndex => {
+                if (allData[originalIndex] && !manualStatusChanges.has(originalIndex)) {
+                    allData[originalIndex].status = 'run';
+                    autoChangedCount++;
+                }
+            });
+            
             // Convert data back to TSV format (exclude _originalIndex)
             const tsvLines = [
                 columns.join('\t'),
@@ -980,12 +1017,12 @@
             ];
             const tsvContent = tsvLines.join('\n');
             
-            // Create download
+            // Download the file with the same name
             const blob = new Blob([tsvContent], { type: 'text/tab-separated-values' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'bids_conversion_modified.tsv';
+            a.download = currentFilePath;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -993,13 +1030,19 @@
             
             // Clear modified state
             modifiedRows.clear();
+            manualStatusChanges.clear();
             document.getElementById('saveButton').disabled = true;
             document.getElementById('resetButton').disabled = true;
             
             // Update original data to current state
             originalData = JSON.parse(JSON.stringify(allData));
             
-            alert('✅ Changes saved to bids_conversion_modified.tsv\n\nPlease review the file and replace the original if correct.');
+            let message = '✅ File downloaded: ' + currentFilePath;
+            if (autoChangedCount > 0) {
+                message += '\n\n' + autoChangedCount + ' modified row(s) set to status: run';
+            }
+            message += '\n\nPlease replace the original file with the downloaded version.';
+            alert(message);
             
             filterData();
         }
