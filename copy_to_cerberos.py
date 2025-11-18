@@ -188,7 +188,7 @@ def copy_data(source, destination):
        match = True
        source = get_split_file_parts(source)
        destination = get_split_file_parts(destination)
-       message = "File already up to date"
+       message = "Copied"
        level = 'info'
        existing_file = 1
 
@@ -216,12 +216,12 @@ def copy_data(source, destination):
                 try:
                     copy_file_or_dir(source, destination)
                     match = True
-                    message = f'MNE failed, copied'
+                    message = f'Fail (MNE failed)'
                     level = 'warning'
                     new_file = 1
                 except Exception as e2:
                     match = False
-                    message = f'Failed to copy: {str(e2)}'
+                    message = f'Fail {str(e2)}'
                     level = 'error'
                     failed_file = 1
         else:
