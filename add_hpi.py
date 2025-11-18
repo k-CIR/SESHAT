@@ -514,231 +514,242 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
         raw = None
         for hpifile in hpi_files:
+                # DEBUG
             try:
                 raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
+
+                    # try:
+                    #     raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
+                    #     break  # Stop after successfully reading the first file
+                    # except Exception as e:
+                    #     log("HPI", f"Error reading {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
+
+                if raw is None:
+                    log("HPI", "Could not read any HPI file.", 'error', logfile=logfile, logpath=log_path)
+                    #return hpi_fit_parameters
+                #remove bad channels
+                for bad_chan in raw.info["bads"]:
+                    raw.drop_channels(bad_chan)
+
+                #remove zero channels
+                bads=TC_findzerochans(raw.info)
+
+                for bad_chan in bads:
+                    raw.drop_channels(bad_chan)
+                if len(bads) > 0:
+                    log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'warning',logfile=logfile, logpath=log_path)
+
+                hpi_names,hpi_indices=TC_get_hpiout_names(raw)
+
+                hpi_freqs=np.zeros(len(hpi_indices))
+                for i in range(len(hpi_indices)):
+                    hpi_freqs[i]=hpifreq
+
+                #resample
+                if new_sfreq:
+                    raw.resample(new_sfreq)
+
+                #assuming file with polhemus locations of fiducials and HPIs
+                dig_found = False
+                for polfile in polfile_list:
+                    try:
+                        pol_info = mne.io.read_info(polfile, verbose='error')
+                        if not pol_info['dig']:
+                            continue
+                        log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+                        dig_found = True
+                        if dig_found:
+                            break
+                    except Exception as e:
+                        log("HPI", f"Error reading {polfile}: {e}", 'error', logfile=logfile, logpath=log_path)
+                        pol_info = None
+                        continue
+
+                digpts=np.array([],dtype=float)
+                lpa=pol_info['dig'][0]['r']
+                rpa=pol_info['dig'][2]['r']
+                nasion=pol_info['dig'][1]['r']
+
+                hpi=np.array([],dtype=float)
+                for j in pol_info['dig']:
+                    if j['kind']==2:    # FIFFV_POINT_HPI = 2
+                        hpi=np.append(hpi,j['r']) # to account for the gap between sensor surface and cell centre
+                n=int(hpi.shape[0]/3)
+                hpi=hpi.reshape((n,3))
+                hpi_orig = hpi
+
+                dev_head_t = Transform("meg", "head", trans=None)
+                dev_head_t['trans']=get_ras_to_neuromag_trans(nasion, lpa, rpa) #should remain identity with the above geometry
+                raw.info.update(dev_head_t=dev_head_t)
+
+                info=raw.info
+
+                digpts=np.array([],dtype=float)
+                for j in pol_info['dig']:
+                    digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
+                n=int(digpts.shape[0]/3)
+                digpts=digpts.reshape((n,3))
+
+                with raw.info._unlock():
+                    raw.info['dig'], ctf_head_t=_call_make_dig_points(nasion, lpa, rpa, hpi[0:len(hpi_indices)], digpts, convert=True)
+
+                sampling_freq = raw.info["sfreq"]
+
+                start_sample =  0
+                stop_sample = len(raw)
+
+                print(f'start_sample={start_sample}, stop_sample={stop_sample}')
+
+                hpi_locs = []
+
+                dist_limit = 0.005
+
+                raw_orig = raw.copy()
+                slope = np.zeros((len(hpi_indices),len(pick_types(raw.info, meg='mag'))),dtype=float)
+                # check if 
+
+                for index in range(len(hpi_indices)):
+                    raw=raw_orig.copy()
+                    channel_index=hpi_indices[index]
+                    chan_name=raw.info['ch_names'][channel_index]
+
+                    do_plot=False
+
+                    raw_selection = raw[channel_index, start_sample:stop_sample]
+                    x = raw_selection[1]
+                    y = raw_selection[0].T
+                    b = y.ravel()
+                    dist=round(raw.info['sfreq']/int(hpifreq))-2
+                    peaks, _ = find_peaks(b, distance=dist,height=0.0001)
+                    if peaks.size == 0:
+                        log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
+                        continue
+                    else:
+                        print(f'''*********HPI channel we want to localize {chan_name}**********
+                        channel_index = {channel_index}
+                        hpi_indices[index] = {hpi_indices[index]}
+                        ''')
+
+                    if do_plot:
+                        plt.plot(b)
+                        plt.plot(peaks, b[peaks], "x")
+                        plt.show()
+
+                        
+                    window=(peaks[-1]-peaks[0])/raw.info['sfreq']
+
+                    #we use this window to extract the portion of data out for the magnetic dipole fit
+
+                    minT=peaks[0]/raw.info['sfreq']
+                    maxT=peaks[-1]/raw.info['sfreq']
+
+                    tmin=(maxT-minT)/2.-1+minT
+                    tmax=(maxT-minT)/2.+1+minT #we extract 2 seconds worth of data
+
+                    msg = f'''{chan_name}
+                        - first point = {peaks[0]} and last point = {peaks[-1]}
+                        - time window = {window} s
+                        - min time = {minT}, max time = {maxT}
+                        - tmin window = {tmin}, t max window = {tmax}
+                    '''
+                    
+                    print(msg)
+
+                    raw.crop(tmin=tmin,tmax=tmax, verbose='error')
+
+
+                    if do_plot:
+
+                        spectrum = raw.compute_psd(picks=hpi_indices[index],window='hann',proj=False, )
+                        fig=spectrum.plot(picks='misc', amplitude=True,dB=False,)
+
+                        psd_ylim = [1.,10000.]
+                        psd_xlim = [0.,100.]
+
+                        fig.suptitle('%s projs off hann' % (hpi_names[index]))
+                        fig.axes[0].set_xlim(psd_xlim)
+                        fig.subplots_adjust(0.1, 0.1, 0.95, 0.85)
+                        plt.show()
+
+                        raw_selection2 = raw[channel_index, 0:len(raw)]
+                        print(f'cropped time window length = {len(raw)}')
+                        x1 = raw_selection2[1]
+                        y1 = raw_selection2[0].T
+
+                        plt.plot(x1,y1)
+                        # plt.show()
+
+
+                    print('************* add hpi struct to info ***********')
+
+                    hpi_sub = dict()
+
+                    hpi_sub["hpi_coils"] = []
+
+                    for _ in range(len(hpi_indices)):
+                        hpi_sub["hpi_coils"].append({})
+
+                    hpi_coils=[]
+                    for _ in range(len(hpi_indices)):
+                        hpi_coils.append({})
+
+                    drive_channels = hpi_names
+                    key_base = "Head Localization"
+                    default_freqs = hpi_freqs
+
+                    for i in range(len(hpi_indices)):
+                        # build coil structure
+                        hpi_coils[i]["number"] = i + 1
+                        hpi_coils[i]["drive_chan"] = drive_channels[i]
+                        print(hpi_coils[i]["drive_chan"])
+                        hpi_coils[i]["coil_freq"] = default_freqs[i]
+
+                        hpi_sub["hpi_coils"][i]["event_bits"] = [256]
+
+                    with raw.info._unlock():
+                        raw.info["hpi_subsystem"] = hpi_sub
+                        raw.info["hpi_meas"] = [{"hpi_coils": hpi_coils}]
+
+                    #****************************************************
+                    print('************* localize hpi *******************')
+                    n_hpis = 0
+
+                    info=raw.info
+
+                    for d in info["hpi_subsystem"]["hpi_coils"]:
+                        if d["event_bits"] == [256]:
+                            n_hpis += 1
+                    if n_hpis < 3:
+                        warn(
+                            f"{n_hpis:d} HPIs active. At least 3 needed to perform"
+                            "head localization\n *NO* head localization performed"
+                        )
+                    else:
+                        # Localized HPIs using 2000 milliseconds of data.
+                        with info._unlock():
+                            info["hpi_results"] = [
+                                dict(
+                                    dig_points=[
+                                        dict(
+                                            r=np.zeros(3),
+                                            coord_frame=FIFF.FIFFV_COORD_DEVICE,
+                                            ident=ii + 1,
+                                        )
+                                        for ii in range(n_hpis)
+                                    ],
+                                    coord_trans=Transform("meg", "head"),
+                                )
+                            ]
+                        raw.info["line_freq"]=None
+                        print(raw.pick_types(meg='mag').get_data())
+                        print(raw.ch_names)
+                        coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2)
+                        slope[index,:] = coil_amplitudes['slopes'][0][index]
+                #********
+                print(hpifile)
                 break  # Stop after successfully reading the first file
             except Exception as e:
-                log("HPI", f"Error reading {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
-        if raw is None:
-            log("HPI", "Could not read any HPI file.", 'error', logfile=logfile, logpath=log_path)
-            return hpi_fit_parameters
-        #remove bad channels
-        for bad_chan in raw.info["bads"]:
-            raw.drop_channels(bad_chan)
-
-        #remove zero channels
-        bads=TC_findzerochans(raw.info)
-        for bad_chan in bads:
-            raw.drop_channels(bad_chan)
-        if len(bads) > 0:
-            log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'warning',logfile=logfile, logpath=log_path)
-
-        hpi_names,hpi_indices=TC_get_hpiout_names(raw)
-
-        hpi_freqs=np.zeros(len(hpi_indices))
-        for i in range(len(hpi_indices)):
-            hpi_freqs[i]=hpifreq
-
-        #resample
-        if new_sfreq:
-            raw.resample(new_sfreq)
-
-        #assuming file with polhemus locations of fiducials and HPIs
-        dig_found = False
-        for polfile in polfile_list:
-            try:
-                pol_info = mne.io.read_info(polfile, verbose='error')
-                if not pol_info['dig']:
-                    continue
-                log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
-                dig_found = True
-                if dig_found:
-                    break
-            except Exception as e:
-                log("HPI", f"Error reading {polfile}: {e}", 'error', logfile=logfile, logpath=log_path)
-                pol_info = None
-                continue
-
-        digpts=np.array([],dtype=float)
-        lpa=pol_info['dig'][0]['r']
-        rpa=pol_info['dig'][2]['r']
-        nasion=pol_info['dig'][1]['r']
-
-        hpi=np.array([],dtype=float)
-        for j in pol_info['dig']:
-            if j['kind']==2:    # FIFFV_POINT_HPI = 2
-                hpi=np.append(hpi,j['r']) # to account for the gap between sensor surface and cell centre
-        n=int(hpi.shape[0]/3)
-        hpi=hpi.reshape((n,3))
-        hpi_orig = hpi
-
-        dev_head_t = Transform("meg", "head", trans=None)
-        dev_head_t['trans']=get_ras_to_neuromag_trans(nasion, lpa, rpa) #should remain identity with the above geometry
-        raw.info.update(dev_head_t=dev_head_t)
-
-        info=raw.info
-
-        digpts=np.array([],dtype=float)
-        for j in pol_info['dig']:
-            digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
-        n=int(digpts.shape[0]/3)
-        digpts=digpts.reshape((n,3))
-
-        with raw.info._unlock():
-            raw.info['dig'], ctf_head_t=_call_make_dig_points(nasion, lpa, rpa, hpi[0:len(hpi_indices)], digpts, convert=True)
-
-        sampling_freq = raw.info["sfreq"]
-
-        start_sample =  0
-        stop_sample = len(raw)
-
-        print(f'start_sample={start_sample}, stop_sample={stop_sample}')
-
-        hpi_locs = []
-
-        dist_limit = 0.005
-
-        raw_orig = raw.copy()
-        slope = np.zeros((len(hpi_indices),len(pick_types(raw.info, meg='mag'))),dtype=float)
-        # check if 
-
-        for index in range(len(hpi_indices)):
-            raw=raw_orig.copy()
-            channel_index=hpi_indices[index]
-            chan_name=raw.info['ch_names'][channel_index]
-
-            do_plot=False
-
-            raw_selection = raw[channel_index, start_sample:stop_sample]
-            x = raw_selection[1]
-            y = raw_selection[0].T
-            b = y.ravel()
-            dist=round(raw.info['sfreq']/int(hpifreq))-2
-            peaks, _ = find_peaks(b, distance=dist,height=0.0001)
-            if peaks.size == 0:
-                log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
-                continue
-            else:
-                print(f'''*********HPI channel we want to localize {chan_name}**********
-                channel_index = {channel_index}
-                hpi_indices[index] = {hpi_indices[index]}
-                ''')
-
-            if do_plot:
-                plt.plot(b)
-                plt.plot(peaks, b[peaks], "x")
-                plt.show()
-
-                
-            window=(peaks[-1]-peaks[0])/raw.info['sfreq']
-
-            #we use this window to extract the portion of data out for the magnetic dipole fit
-
-            minT=peaks[0]/raw.info['sfreq']
-            maxT=peaks[-1]/raw.info['sfreq']
-
-            tmin=(maxT-minT)/2.-1+minT
-            tmax=(maxT-minT)/2.+1+minT #we extract 2 seconds worth of data
-
-            msg = f'''{chan_name}
-                - first point = {peaks[0]} and last point = {peaks[-1]}
-                - time window = {window} s
-                - min time = {minT}, max time = {maxT}
-                - tmin window = {tmin}, t max window = {tmax}
-            '''
-            
-            print(msg)
-
-            raw.crop(tmin=tmin,tmax=tmax, verbose='error')
-
-
-            if do_plot:
-
-                spectrum = raw.compute_psd(picks=hpi_indices[index],window='hann',proj=False, )
-                fig=spectrum.plot(picks='misc', amplitude=True,dB=False,)
-
-                psd_ylim = [1.,10000.]
-                psd_xlim = [0.,100.]
-
-                fig.suptitle('%s projs off hann' % (hpi_names[index]))
-                fig.axes[0].set_xlim(psd_xlim)
-                fig.subplots_adjust(0.1, 0.1, 0.95, 0.85)
-                plt.show()
-
-                raw_selection2 = raw[channel_index, 0:len(raw)]
-                print(f'cropped time window length = {len(raw)}')
-                x1 = raw_selection2[1]
-                y1 = raw_selection2[0].T
-
-                plt.plot(x1,y1)
-                # plt.show()
-
-
-            print('************* add hpi struct to info ***********')
-
-            hpi_sub = dict()
-
-            hpi_sub["hpi_coils"] = []
-
-            for _ in range(len(hpi_indices)):
-                hpi_sub["hpi_coils"].append({})
-
-            hpi_coils=[]
-            for _ in range(len(hpi_indices)):
-                hpi_coils.append({})
-
-            drive_channels = hpi_names
-            key_base = "Head Localization"
-            default_freqs = hpi_freqs
-
-            for i in range(len(hpi_indices)):
-                # build coil structure
-                hpi_coils[i]["number"] = i + 1
-                hpi_coils[i]["drive_chan"] = drive_channels[i]
-                print(hpi_coils[i]["drive_chan"])
-                hpi_coils[i]["coil_freq"] = default_freqs[i]
-
-                hpi_sub["hpi_coils"][i]["event_bits"] = [256]
-
-            with raw.info._unlock():
-                raw.info["hpi_subsystem"] = hpi_sub
-                raw.info["hpi_meas"] = [{"hpi_coils": hpi_coils}]
-
-            #****************************************************
-            print('************* localize hpi *******************')
-            n_hpis = 0
-
-            info=raw.info
-
-            for d in info["hpi_subsystem"]["hpi_coils"]:
-                if d["event_bits"] == [256]:
-                    n_hpis += 1
-            if n_hpis < 3:
-                warn(
-                    f"{n_hpis:d} HPIs active. At least 3 needed to perform"
-                    "head localization\n *NO* head localization performed"
-                )
-            else:
-                # Localized HPIs using 2000 milliseconds of data.
-                with info._unlock():
-                    info["hpi_results"] = [
-                        dict(
-                            dig_points=[
-                                dict(
-                                    r=np.zeros(3),
-                                    coord_frame=FIFF.FIFFV_COORD_DEVICE,
-                                    ident=ii + 1,
-                                )
-                                for ii in range(n_hpis)
-                            ],
-                            coord_trans=Transform("meg", "head"),
-                        )
-                    ]
-                raw.info["line_freq"]=None
-                coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2)
-                slope[index,:] = coil_amplitudes['slopes'][0][index]
-        #********
-
+                log("HPI", f"Error occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
 
         try:
             assert len(coil_amplitudes["times"]) == 1
