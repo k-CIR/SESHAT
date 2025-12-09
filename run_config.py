@@ -21,7 +21,7 @@ def create_default_config():
             'Copy to Cerberos': True,
             'Add HPI coregistration': True,
             'Run Maxfilter': True,
-            'Run BIDS conversion': True,
+            'Run BIDS conversion': False,
             'Sync to CIR': True
         },
         'Project': {
@@ -37,8 +37,8 @@ def create_default_config():
             'Root': default_path,
             'Raw': f'{default_path}/<project>/raw',
             'BIDS': f'{default_path}/<project>/BIDS',
-            'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
-            'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
+            'Calibration': f'{default_path}/<project>/triux_files/sss/sss_cal.dat',
+            'Crosstalk': f'{default_path}/<project>/triux_files/ctc/ct_sparse.fif',
             'Logfile': 'pipeline_log.log'
         },
         'OPM': {
@@ -173,7 +173,7 @@ class ConfigMainWindow:
         self.create_project_tab()
         self.create_opm_tab()
         self.create_maxfilter_tab()
-        self.create_bids_tab()
+        # self.create_bids_tab()
         self.create_run_tab()
         
         # Button frame
@@ -512,6 +512,9 @@ class ConfigMainWindow:
         run_settings_frame.pack(fill='x', padx=5, pady=5)
         
         for key, value in self.config_data['RUN'].items():
+            # Skip BIDS conversion - don't show in GUI
+            if key == 'Run BIDS conversion':
+                continue
             self.create_run_form_widget(run_settings_frame, key, value)
         
         # Execute and control buttons
