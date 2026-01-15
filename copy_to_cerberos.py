@@ -471,7 +471,7 @@ def parallel_copy_files(paths, max_workers=4):
                 })
                 pbar.update(1)
             
-            print(f'{new_file_count}/{len(files_to_process)}')
+            #print(f'{new_file_count}/{len(files_to_process)}')
         # Close progress bar
         pbar.close()
     # Log summary
