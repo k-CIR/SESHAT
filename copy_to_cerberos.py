@@ -1,4 +1,5 @@
 from glob import glob
+from importlib.resources import files
 from mne.io import read_raw, read_info
 from mne._fiff.write import _get_split_size
 import re
@@ -169,6 +170,77 @@ def copy_squid_databases(calibration_path=None, crosstalk_path=None):
     else:
         print(f'Crosstalk file {crosstalk} does not exist.')
 
+def estimate_job_duration(jobs_to_process):
+    """
+    Estimate the duration of a job based on its size and the network speed.
+    """
+    # Estimate processing time based on total transfer size
+    def _dir_size(path):
+        total = 0
+        for root, _, files in os.walk(path):
+            for f in files:
+                fp = join(root, f)
+                try:
+                    total += getsize(fp)
+                except (OSError, FileNotFoundError):
+                    continue
+        return total
+
+    total_size = 0
+    for job in jobs_to_process:
+        src = job[1]
+        # handle lists of sources
+        if isinstance(src, (list, tuple)):
+            for s in src:
+                if isdir(s):
+                    total_size += _dir_size(s)
+                elif exists(s):
+                    try:
+                        total_size += getsize(s)
+                    except (OSError, FileNotFoundError):
+                        continue
+        else:
+            if isdir(src):
+                total_size += _dir_size(src)
+            elif exists(src):
+                try:
+                    total_size += getsize(src)
+                except (OSError, FileNotFoundError):
+                    continue
+
+    # Estimate network speed (bytes/sec). Can be overridden via paths['network_speed_bps']
+    network_speed_bps = 10 * 1024 * 1024  # default 10 MB/s
+    estimated_time = total_size / network_speed_bps if network_speed_bps > 0 else None
+
+    str_estimates = {}
+
+    if estimated_time is None:
+        str_estimates['time'] = "unknown"
+    else:
+        total_seconds = int(round(estimated_time))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        str_estimates['time'] = f"{hours}h {minutes}m {seconds}s"
+    if total_size is None:
+        str_estimates['size'] = "unknown"
+    else:
+        # Print human-readable total size, using GB when appropriate
+
+        if total_size >= 1024 ** 3:
+            str_estimates['size'] = f"{total_size / (1024 ** 3):.2f} GB"
+        elif total_size >= 1024 ** 2:
+            str_estimates['size'] = f"{total_size / (1024 ** 2):.2f} MB"
+        elif total_size >= 1024:
+            str_estimates['size'] = f"{total_size / 1024:.2f} KB"
+        else:
+            str_estimates['size'] = f"{total_size} bytes"
+
+    print(f"""
+        Estimated total transfer time: {str_estimates['time']}
+        Estimated total size to transfer: {str_estimates['size']}
+    """)
+    return estimated_time, total_size, str_estimates
+
 def copy_data(source, destination):
     """
     Copy file from source to destination with intelligent handling of .fif files.
@@ -248,8 +320,9 @@ def make_process_list(paths, check_existing=False):
     
     sinuhe = paths.get('sinuhe', '')
     kaptah = paths.get('kaptah', '')
-    
-    files = []
+    stimulus = paths.get('stimulus', '')
+
+    jobs = []
     
     if sinuhe:
         natmeg_subjects  = [s for s in glob(f'NatMEG_*', root_dir=sinuhe) if isdir(f'{sinuhe}/{s}')]
@@ -259,7 +332,7 @@ def make_process_list(paths, check_existing=False):
         for item in other_files_and_dirs:
             source = f'{sinuhe}/{item}'
             destination = f'{docspath}/{item}'
-            files.append(check_match(source, destination))
+            jobs.append(check_match(source, destination))
 
             # copy_file(source, destination, logfile=logfile, log_path=log_path)
         
@@ -275,7 +348,7 @@ def make_process_list(paths, check_existing=False):
             for item in items:
                 source = f'{sinuhe_subject_dir}/{item}'
                 destination = f'{local_subject_docs_dir}_{item}'
-                files.append(check_match(source, destination))
+                jobs.append(check_match(source, destination))
 
                 # copy_file(source, destination, logfile=logfile, log_path=log_path)
                 
@@ -284,7 +357,7 @@ def make_process_list(paths, check_existing=False):
                 for item in items:
                     source = f'{sinuhe_subject_dir}/{session}/meg/{item}'
                     destination = f'{local_dir}/sub-{subject}/{session}/triux/{item}'
-                    files.append(check_match(source, destination))
+                    jobs.append(check_match(source, destination))
                     # copy_file(source, destination, logfile=logfile, log_path=log_path)
     elif not isdir(sinuhe):
             log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
@@ -305,8 +378,8 @@ def make_process_list(paths, check_existing=False):
         for item in other_files_and_dirs:
             source = f'{kaptah}/{item}'
             destination = f'{docspath}/{item}'
-            files.append(check_match(source, destination))
-        
+            jobs.append(check_match(source, destination))
+
         for subject in subjects:
 
             all_files = glob(f'*', root_dir=f'{kaptah}/sub-{subject}')
@@ -326,7 +399,7 @@ def make_process_list(paths, check_existing=False):
             for item in items:
                 source = f'{kaptah_subject_dir}/{item}'
                 destination = f'{docspath}/sub-{subject}_{item}'
-                files.append(check_match(source, destination))
+                jobs.append(check_match(source, destination))
 
             for session in sessions:
                 
@@ -358,9 +431,9 @@ def make_process_list(paths, check_existing=False):
                     dst_item = file_mapping.get(item, item)
                     
                     destination = f'{local_dir}/sub-{subject}/{session}/hedscan/{dst_item}'
-                    
-                    files.append(check_match(source, destination))
-    
+
+                    jobs.append(check_match(source, destination))
+
     elif not isdir(kaptah):
             log('Copy', f"{kaptah} is not a directory", 'error', logfile)
     
@@ -369,7 +442,13 @@ def make_process_list(paths, check_existing=False):
     else: 
         log('Copy', 'No Hedscan directory defined', 'warning', logfile)
 
-    return files
+    if stimulus:
+        for item in glob(f'*', root_dir=stimulus):
+            source = f'{stimulus}/{item}'
+            destination = f'{docspath}/{item}'
+            jobs.append(check_match(source, destination))
+
+    return jobs
 
 def process_file_worker(file_info, logfile):
     """
@@ -394,7 +473,8 @@ def process_file_worker(file_info, logfile):
 
     return match, source, destination, msg, existing_file, new_file, failed_file
 
-def parallel_copy_files(paths, max_workers=4):
+
+def copy_files(paths):
     """
     Copy files in parallel using ThreadPoolExecutor.
     
@@ -405,77 +485,67 @@ def parallel_copy_files(paths, max_workers=4):
     Returns:
         List of results from file processing
     """
-    files = make_process_list(paths)
-    files_to_process = [file for file in files if not file[0]]
-    
+    jobs = make_process_list(paths)
+    jobs_to_process = [job for job in jobs if not job[0]]
+
+    estimated_durations, total_size, str_estimates = estimate_job_duration(jobs_to_process)
+
     # Extract log configuration from config
-    
-    
     local_dir = paths.get('raw', '')
     project_root = paths.get('project_root', '')
     logfile = paths.get('log_file', '')
 
     results = []
     new_file_count = 0
-    existing_file_count = len([file for file in files if file[0]])
+    existing_file_count = len([file for file in jobs if file[0]])
     failed_file_count = 0
-    
-    pbar = tqdm(total=len(files_to_process), 
-                       desc="Copy files", 
-                       unit=f' file(s)',
+
+    pbar = tqdm(total=len(jobs_to_process),
+                desc="Copy files",
+                unit=f' file(s)',
                        disable=not sys.stdout.isatty(),
                        ncols=80,
                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
-    # Use ThreadPoolExecutor for I/O bound operations like file copying
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_file = {
-            executor.submit(process_file_worker, file_info, logfile): file_info 
-            for file_info in files
-        }
-        
-        # Process completed tasks
-        for future in as_completed(future_to_file):
-            file_info = future_to_file[future]
+    for job in jobs_to_process:
+        print(job)
+        try:
+            match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, logfile)
+            results.append((match, source, destination, message))
+
+            failed_file_count += failed_file
+            new_file_count += new_file
+            # Update progress bar
+            status = "✓" if match else "✗"
+            pbar.set_postfix({
+                'New files': new_file_count,
+                'Existing files': existing_file_count,
+                'Failed': failed_file_count,
+                'Latest': f"{status} {basename(source)}"
+            })
+            pbar.update(1)
+         
+        except Exception as exc:
+            failed_file_count += 1
+            match, source, destination = job
+            error_msg = f'Exception occurred: {exc}'
+            results.append((False, source, destination, error_msg))
+            log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
             
-            try:
-                match, source, destination, message, existing_file, new_file, failed_file = future.result()
-                results.append((match, source, destination, message))
-                
-                failed_file_count += failed_file
-                new_file_count += new_file
-                # Update progress bar
-                status = "✓" if match else "✗"
-                pbar.set_postfix({
-                    'New files': new_file_count,
-                    'Existing files': existing_file_count,
-                    'Failed': failed_file_count,
-                    'Latest': f"{status} {basename(source)}"
-                })
-                pbar.update(1)
-                    
-            except Exception as exc:
-                failed_file_count += 1
-                match, source, destination = file_info
-                error_msg = f'Exception occurred: {exc}'
-                results.append((False, source, destination, error_msg))
-                log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
-                
-                # Update progress bar for exceptions
-                pbar.set_postfix({
-                    'New files': new_file_count,
-                    'Existing files': existing_file_count,
-                    'Failed': failed_file_count,
-                    'Latest': f"✗ {basename(source)} (ERROR)"
-                })
-                pbar.update(1)
+            # Update progress bar for exceptions
+            pbar.set_postfix({
+                'New files': new_file_count,
+                'Existing files': existing_file_count,
+                'Failed': failed_file_count,
+                'Latest': f"✗ {basename(source)} (ERROR)"
+            })
+            pbar.update(1)
             
-            #print(f'{new_file_count}/{len(files_to_process)}')
+            print(f'{new_file_count}/{len(jobs_to_process)}')
         # Close progress bar
         pbar.close()
     # Log summary
-    log('Copy', f'Parallel copy completed. Files to process: {len(files_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
+    log('Copy', f'Parallel copy completed. Files to process: {len(jobs_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         'info',
         logfile)
 
@@ -619,10 +689,10 @@ def main(config: str=None):
 
     paths = project_paths(config, init=True)
     # If config is already a dict, use it as-is
-    copy_squid_databases(paths['Calibration'], paths['Crosstalk'])
-    
+    copy_squid_databases(paths['calibration'], paths['crosstalk'])
+
     # Perform parallel file copying
-    results = parallel_copy_files(paths, max_workers=8)
+    results = copy_files(paths)
     update_copy_report(results, paths)
     return True
 

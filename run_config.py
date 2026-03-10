@@ -20,7 +20,7 @@ def create_default_config():
         'RUN': {
             'Copy to Cerberos': True,
             'Add HPI coregistration': True,
-            'Run Maxfilter': True,
+            'Run Maxfilter': False,
             'Run BIDS conversion': False,
             'Sync to CIR': True
         },
@@ -34,7 +34,7 @@ def create_default_config():
             'Tasks': [''],
             'Sinuhe raw': '/neuro/data/sinuhe/<project_path_on_sinuhe>',
             'Kaptah raw': '/neuro/data/kaptah/<project_path_on_kaptah>',
-            'Stimuli': '/neuro/data/stimuli/<project_path_on_stimuli>',
+            'Stimuli': '/neuro/data/stimulus/<project_path_on_stimulus>',
             'Root': default_path,
             'Raw': f'{default_path}/<project>/raw',
             'BIDS': f'{default_path}/<project>/BIDS',
@@ -335,7 +335,7 @@ class ConfigMainWindow:
             'Tasks': 'Comma-separated list of experimental tasks',
             'Sinuhe raw': 'Path to project raw data directory on Sinuhe (squid acquisition)',
             'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)',
-            'Stimuli': 'Path to project stimuli/presentation data on Stimulus PC (eg. 26099_visual_wm)',
+            'Stimuli': 'Path to project stimulus/presentation data on Stimulus PC (eg. 26099_visual_wm)',
         }
         
         for key in standard_keys:
@@ -474,7 +474,8 @@ class ConfigMainWindow:
         
         for key, value in self.config_data['RUN'].items():
             # Skip BIDS conversion - don't show in GUI
-            if key == 'Run BIDS conversion':
+            skip_keys = ['Run BIDS conversion', 'Run Maxfilter']
+            if key in skip_keys:
                 continue
             self.create_run_form_widget(run_settings_frame, key, value)
         
