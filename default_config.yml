@@ -15,7 +15,6 @@ Project:
   - ''
   Sinuhe raw: /neuro/data/sinuhe/<project_path_on_sinuhe> 
   Kaptah raw: /neuro/data/kaptah/<project_path_on_kaptah>
-  Stimuli: /neuro/data/stimuli/<project_path_on_stimuli>
   Root: /neuro/data/local/
   Raw: /neuro/data/local/<project>/raw
   BIDS: /neuro/data/local/<project>/BIDS

@@ -34,7 +34,6 @@ def create_default_config():
             'Tasks': [''],
             'Sinuhe raw': '/neuro/data/sinuhe/<project_path_on_sinuhe>',
             'Kaptah raw': '/neuro/data/kaptah/<project_path_on_kaptah>',
-            'Stimuli': '/neuro/data/stimuli/<project_path_on_stimuli>',
             'Root': default_path,
             'Raw': f'{default_path}/<project>/raw',
             'BIDS': f'{default_path}/<project>/BIDS',
@@ -50,11 +49,7 @@ def create_default_config():
             'overwrite': False,
             'plot': False,
         },
-        # Legacy MaxFilter configuration retained for backward compatibility.
-        # This block is not shown in the GUI by default. If you rely on
-        # MaxFilter settings programmatically, they are available under
-        # the 'Legacy_MaxFilter' key.
-        'Legacy_MaxFilter': {
+        'MaxFilter': {
             'standard_settings': {
                 'trans_conditions': [''],
                 'trans_option': 'continous',
@@ -177,16 +172,13 @@ class ConfigMainWindow:
         # Create tabs
         self.create_project_tab()
         self.create_opm_tab()
-        # MaxFilter tab removed from GUI for simplified interface. MaxFilter
-        # configuration keys remain in the config data for backward
-        # compatibility.
-        # self.create_maxfilter_tab()
+        self.create_maxfilter_tab()
         # self.create_bids_tab()
         self.create_run_tab()
         
         # Button frame
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill='x', padx=(4, 4), pady=(10, 0))
+        button_frame.pack(fill='x', padx= (4, 4), pady=(10, 0))
         
         # Buttons (reordered: Open, Save As, Save, Cancel)
         ttk.Button(button_frame, text="Cancel", command=self.root.quit).pack(side='right', padx=(5, 0))
@@ -325,17 +317,16 @@ class ConfigMainWindow:
         standard_frame = ttk.Frame(project_notebook)
         project_notebook.add(standard_frame, text="Standard Settings")
         standard_scrollable = self.create_scrollable_frame(standard_frame)
-
-
-        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw', 'Stimuli']
+        
+        
+        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw']
         standard_help = {
             'Name': 'Name of project',
             'CIR-ID': 'CIR ID of the project, used for data management',
             'Description': 'Brief description of the project',
             'Tasks': 'Comma-separated list of experimental tasks',
             'Sinuhe raw': 'Path to project raw data directory on Sinuhe (squid acquisition)',
-            'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)',
-            'Stimuli': 'Path to project stimuli/presentation data on Stimulus PC (eg. 26099_visual_wm)',
+            'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)'
         }
         
         for key in standard_keys:
@@ -362,7 +353,6 @@ class ConfigMainWindow:
             'BIDS': 'BIDS-path relative to project directory',
             'Calibration': 'Path to SSS calibration file relative to project directory',
             'Crosstalk': 'Path to SSS crosstalk file relative to project directory',
-            
             'Logfile': 'Name of the log file'
         }
         
@@ -391,9 +381,58 @@ class ConfigMainWindow:
             help_text = opm_help.get(key)
             self.create_form_widget(opm_scrollable, key, value, help_text)
     
-    # Note: MaxFilter GUI tab intentionally removed. MaxFilter configuration
-    # remains part of the configuration data for backward compatibility and
-    # can be edited directly in the YAML/JSON config file.
+    def create_maxfilter_tab(self):
+        """Create the MaxFilter configuration tab"""
+        maxfilter_frame = ttk.Frame(self.notebook)
+        self.notebook.add(maxfilter_frame, text="MaxFilter")
+        
+        # Create sub-notebook
+        maxfilter_notebook = ttk.Notebook(maxfilter_frame)
+        maxfilter_notebook.pack(fill='both', expand=True, padx=2, pady=2)
+        
+        # Standard settings
+        standard_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(standard_frame, text="Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        
+        standard_help = {
+            'trans_conditions': 'Comma-separated list of tasks which should be transformed to average head',
+            'trans_option': 'Option for transformation, either "continous" for average or "initial" for initial head position',
+            'merge_runs': 'Use multiple runs to calculate average head position',
+            'empty_room_files': 'Comma-separated list of empty room files to use for MaxFilter processing',
+            'sss_files': 'Tasks which should only be sss filtered',
+            'autobad': 'Automatically detect and exclude bad channels',
+            'badlimit': 'Bad channel threshold for processing',
+            'bad_channels': 'Comma-separated list of bad channels to exclude from processing',
+            'tsss_default': 'Use default TSSS settings',
+            'correlation': 'Correlation threshold for TSSS',
+            'movecomp_default': 'Use default movecomp settings',
+            'subjects_to_skip': 'Comma-separated list of subject IDs to skip during MaxFilter processing'
+        }
+        
+        for key, value in self.config_data['MaxFilter']['standard_settings'].items():
+            help_text = standard_help.get(key)
+            self.create_form_widget(standard_scrollable, key, value, help_text)
+        
+        # Advanced settings
+        advanced_frame = ttk.Frame(maxfilter_notebook)
+        maxfilter_notebook.add(advanced_frame, text="Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        
+        advanced_help = {
+            'force': 'Force MaxFilter to run even if bad channels are detected',
+            'downsample': 'Downsample data',
+            'downsample_factor': 'Factor to downsample data by',
+            'apply_linefreq': 'Apply line frequency filtering',
+            'linefreq_Hz': 'Line frequency in Hz to apply filtering',
+            'maxfilter_version': 'Path to MaxFilter executable',
+            'MaxFilter_commands': 'Additional MaxFilter commands to run (see MaxFilter manual)',
+            'debug': 'Enable debug mode for MaxFilter'
+        }
+        
+        for key, value in self.config_data['MaxFilter']['advanced_settings'].items():
+            help_text = advanced_help.get(key)
+            self.create_form_widget(advanced_scrollable, key, value, help_text)
     
     def create_bids_tab(self):
         """Create the BIDS configuration tab"""
