@@ -421,7 +421,7 @@ def make_process_list(paths, check_existing=False):
                             new_name = suffix
                         else:
                             pre, post = suffix.rsplit('_', 1)
-                            new_name = f"{pre}_dup{name_counts[suffix]}_{post}"
+                            new_name = f"{pre}_run-{name_counts[suffix]}_{post}"
                         
                         file_mapping[item] = new_name
                 
@@ -469,7 +469,10 @@ def process_file_worker(file_info, logfile):
     except Exception as e:
         msg = f"Error processing file: {str(e)}"
         match = False
-        failed_file = 1
+    # Ensure variables are always defined even on exception
+    failed_file = 1
+    existing_file = 0
+    new_file = 0
 
     return match, source, destination, msg, existing_file, new_file, failed_file
 
@@ -508,7 +511,6 @@ def copy_files(paths):
                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
     for job in jobs_to_process:
-        print(job)
         try:
             match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, logfile)
             results.append((match, source, destination, message))
@@ -523,8 +525,9 @@ def copy_files(paths):
                 'Failed': failed_file_count,
                 'Latest': f"{status} {basename(source)}"
             })
+            print(f'{source} -> {destination}')
             pbar.update(1)
-         
+
         except Exception as exc:
             failed_file_count += 1
             match, source, destination = job
@@ -532,7 +535,7 @@ def copy_files(paths):
             results.append((False, source, destination, error_msg))
             log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
             
-            # Update progress bar for exceptions
+            # Update progress bar for exceptions and continue
             pbar.set_postfix({
                 'New files': new_file_count,
                 'Existing files': existing_file_count,
@@ -540,10 +543,9 @@ def copy_files(paths):
                 'Latest': f"✗ {basename(source)} (ERROR)"
             })
             pbar.update(1)
-            
-            print(f'{new_file_count}/{len(jobs_to_process)}')
-        # Close progress bar
-        pbar.close()
+
+    # Close progress bar
+    pbar.close()
     # Log summary
     log('Copy', f'Parallel copy completed. Files to process: {len(jobs_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         'info',
@@ -691,7 +693,7 @@ def main(config: str=None):
     # If config is already a dict, use it as-is
     copy_squid_databases(paths['calibration'], paths['crosstalk'])
 
-    # Perform parallel file copying
+    # Perform file copying
     results = copy_files(paths)
     update_copy_report(results, paths)
     return True
