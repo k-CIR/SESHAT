@@ -27,8 +27,7 @@ Pipeline overview showing the main components and data flow.
 - **GUI Configuration Interface**: User-friendly GUI for setting up project parameters and pipeline options 
 - **Data Synchronization**: Automated copying of raw data from SQUID/OPM computers to central processing computer (`copy_to_cerberos.py`)
 - **HPI Coregistration**: Automated head position indicator (HPI) coregistration for OPM-MEG data using Polhemus digitization (`add_hpi.py`)
-- **Batch MaxFilter Processing**: Integration with Elekta MaxFilter for Signal Space Separation (SSS) and temporal extension (tSSS) (`maxfilter.py`)
-- **BIDS Conversion**: Converts NatMEG data to BIDS format with customizable task and run mapping (`bidsify.py`)
+- **Batch MaxFilter Processing**: Integration with Elekta MaxFilter for Signal Space Separation (SSS) and temporal extension (tSSS) (`maxfilter.py`) (Command line only)
 - **Server Synchronization**: Sync processed data to CIR server with advanced filtering options (`sync_to_cir.py`)
 - **HTML Reporting**: Generate interactive HTML reports summarizing processing steps and data status (`report.py`)
 - **Logging and Error Handling**: Comprehensive logging for tracking processing steps and troubleshooting
