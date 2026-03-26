@@ -19,9 +19,7 @@ def create_default_config():
     config = {
         'RUN': {
             'Copy to Cerberos': True,
-            'Add HPI coregistration': True,
-            'Run Maxfilter': False,
-            'Run BIDS conversion': False,
+            'OPM preprocessing': True,
             'Sync to CIR': True
         },
         'Project': {
@@ -43,6 +41,7 @@ def create_default_config():
             'Logfile': 'pipeline_log.log'
         },
         'OPM': {
+            'rename_analog_channels': True,
             'polhemus': [''],
             'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
             'frequency': 33,
@@ -99,7 +98,51 @@ def create_default_config():
         }
     }
     return config
+def rename_legacy_keys(config: dict) -> dict:
+    """Rename legacy keys in the configuration dictionary (supports nested mappings).
+    Preserve insertion order when renaming keys.
+    """
+    legacy_keys = {
+        'RUN': {
+            'Add HPI coregistration': 'OPM preprocessing'
+        }
+    }
 
+    def replace_key_preserve_order(d: dict, old: str, new: str) -> dict:
+        """Return a new dict where 'old' key is replaced by 'new' at the same position.
+        If 'new' already exists in the original dict, keep the existing 'new' and drop 'old'.
+        """
+        new_dict = {}
+        for k, v in d.items():
+            if k == old:
+                if new not in d:
+                    new_dict[new] = v
+                # else: skip old (prefer keeping existing new)
+            else:
+                new_dict[k] = v
+        return new_dict
+
+    def apply_mapping(cfg_node: dict, mapping_node: dict) -> dict:
+        # Work on a copy to avoid mutating input unexpectedly
+        node = dict(cfg_node)
+        for map_key, map_val in mapping_node.items():
+            # If mapping value is a string -> rename key at this level
+            if isinstance(map_val, str):
+                if map_key in node:
+                    node = replace_key_preserve_order(node, map_key, map_val)
+            # If mapping value is a dict -> dive into that sub-dictionary
+            elif isinstance(map_val, dict):
+                # If the expected intermediate key exists and is a dict, apply mappings inside it
+                if map_key in node and isinstance(node[map_key], dict):
+                    node[map_key] = apply_mapping(node[map_key], map_val)
+                else:
+                    # Otherwise, recurse into all child dicts to find nested occurrences.
+                    for child_key, child_val in list(node.items()):
+                        if isinstance(child_val, dict):
+                            node[child_key] = apply_mapping(child_val, {map_key: map_val})
+        return node
+
+    return apply_mapping(config, legacy_keys)
 
 def create_config_file(output_file: str = 'default_config.yml'):
     """Create a default configuration file and save it to disk"""
@@ -173,7 +216,7 @@ class ConfigMainWindow:
         # Create tabs
         self.create_project_tab()
         self.create_opm_tab()
-        self.create_maxfilter_tab()
+        # self.create_maxfilter_tab()
         # self.create_bids_tab()
         self.create_run_tab()
         
@@ -371,6 +414,7 @@ class ConfigMainWindow:
         opm_scrollable = self.create_scrollable_frame(opm_frame)
         
         opm_help = {
+            'rename_analog_channels': 'Rename analog channels using a mapping file',
             'polhemus': 'Name(s) of fif-file(s) with Polhemus coregistration data (will use any task file if empty)',
             'hpi_names': 'Comma-separated list of names of HPI recording',
             'frequency': 'Frequency of the HPI in Hz',
@@ -780,6 +824,9 @@ class ConfigMainWindow:
                     if isinstance(config['Project']['Tasks'], str):
                         config['Project']['Tasks'] = config['Project']['Tasks'].split(',')
                 
+                # Rename legacy keys
+                config = rename_legacy_keys(config)
+                
             return config if config else create_default_config()
             
         except Exception as e:
@@ -1053,7 +1100,14 @@ class ConfigMainWindow:
                 percentage = (current / total) * 100
                 self.progress_bar['value'] = percentage
                 self.progress_bar['maximum'] = 100
-                self.progress_label['text'] = f"Progress: {current}/{total} ({percentage:.1f}%)"
+                # Show both counts and human-readable MB values
+                try:
+                    current_mb = current / (1024.0 * 1024.0)
+                    total_mb = total / (1024.0 * 1024.0)
+                    self.progress_label['text'] = (f"{current_mb:.1f} MB / {total_mb:.1f} MB"
+                                                   f"({percentage:.1f}%)")
+                except Exception:
+                    self.progress_label['text'] = f"Progress: {current}/{total} ({percentage:.1f}%)"
                 return
         
         # Pattern 2: Percentage format "45%"

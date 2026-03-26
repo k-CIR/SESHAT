@@ -66,6 +66,8 @@ from mne.chpi import (
 from mne.io.constants import FIFF
 from mne.utils import _check_fname, logger, verbose, warn
 from mne.transforms import apply_trans
+from opm_utility_scripts.generate_analog_channel_mapping import generate_mapping
+from opm_utility_scripts.rename_analog_channels import rename_channels
 
 from utils import (
     log, configure_logging,
@@ -78,6 +80,27 @@ from utils import (
 ###############################################################################
 # Utility Functions
 ###############################################################################
+global VERBOSE
+
+def configure_verbosity(verbose: bool):
+    """
+    Configure verbosity for the script.
+
+    Args:
+        verbose (bool): If True, enable detailed print statements. Otherwise, suppress them.
+    """
+    global VERBOSE
+    VERBOSE = verbose
+
+def verbose_print(message: str):
+    """
+    Log a message if verbosity is enabled.
+
+    Args:
+        message (str): The message to log.
+    """
+    if VERBOSE:
+        print(message)
 
 def write_bw_marker_file(dsName, events, chanName, fs):
     """
@@ -380,6 +403,7 @@ def get_parameters(config:str):
     
     hpi_config = {
         'tasks': config.get('Project', {}).get('Tasks', []),
+        'rename_analog_channels': config.get('OPM', {}).get('rename_analog_channels', False),
         'polhemus_file': config.get('OPM', {}).get('polhemus', ''),
         'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
         'hpinames': config.get('OPM', {}).get('hpi_names', ''),
@@ -494,7 +518,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         
         polfile_list = [
             file for pattern in polhemus_patterns + [f for f in config['tasks'] if f not in polhemus_patterns]
-            for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern}*.fif")
+            for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern.replace('.fif', '')}*.fif")
         ]
         polfile_list = [f for f in polfile_list if not file_contains(f, exclude_patterns + noise_patterns)]
 
@@ -510,12 +534,12 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             return hpi_fit_parameters
         else:
             hpifile = hpi_files[0]
-            log("HPI", f"Using: {hpifile}", 'info',logfile=logfile, logpath=log_path)
+            verbose_print(f"HPI: Using {hpifile}")
 
         raw = None
         for hpifile in hpi_files:
             
-            print(f'Processing HPI file: {hpifile}')
+            verbose_print(f'Processing HPI file: {hpifile}')
             try:
                 raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
 
@@ -538,7 +562,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 for bad_chan in bads:
                     raw.drop_channels(bad_chan)
                 if len(bads) > 0:
-                    log("HPI", f'found the following channels with locations at 0,0,0 {bads}', 'warning',logfile=logfile, logpath=log_path)
+                    verbose_print(f"HPI: found the following channels with locations at 0,0,0 {bads}")
 
                 hpi_names,hpi_indices=TC_get_hpiout_names(raw)
 
@@ -548,7 +572,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
                 #resample
                 if new_sfreq:
-                    raw.resample(new_sfreq)
+                    raw.resample(new_sfreq, verbose='error')
 
                 #assuming file with polhemus locations of fiducials and HPIs
                 dig_found = False
@@ -557,7 +581,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         pol_info = mne.io.read_info(polfile, verbose='error')
                         if not pol_info['dig']:
                             continue
-                        log("HPI", f"Using: {polfile}", 'info',logfile=logfile, logpath=log_path)
+                        verbose_print(f"Using: {polfile}")
                         dig_found = True
                         if dig_found:
                             break
@@ -599,7 +623,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 start_sample =  0
                 stop_sample = len(raw)
 
-                print(f'start_sample={start_sample}, stop_sample={stop_sample}')
+                verbose_print(f'start_sample={start_sample}, stop_sample={stop_sample}')
 
                 hpi_locs = []
 
@@ -626,7 +650,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
                         continue
                     else:
-                        print(f'''*********HPI channel we want to localize {chan_name}**********
+                        verbose_print(f'''*********HPI channel we want to localize {chan_name}**********
                         channel_index = {channel_index}
                         hpi_indices[index] = {hpi_indices[index]}
                         ''')
@@ -654,7 +678,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         - tmin window = {tmin}, t max window = {tmax}
                     '''
                     
-                    print(msg)
+                    verbose_print(msg)
 
                     raw.crop(tmin=tmin,tmax=tmax, verbose='error')
 
@@ -673,7 +697,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         plt.show()
 
                         raw_selection2 = raw[channel_index, 0:len(raw)]
-                        print(f'cropped time window length = {len(raw)}')
+                        verbose_print(f'cropped time window length = {len(raw)}')
                         x1 = raw_selection2[1]
                         y1 = raw_selection2[0].T
 
@@ -681,7 +705,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         # plt.show()
 
 
-                    print('************* add hpi struct to info ***********')
+                    verbose_print('************* add hpi struct to info ***********')
 
                     hpi_sub = dict()
 
@@ -702,7 +726,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         # build coil structure
                         hpi_coils[i]["number"] = i + 1
                         hpi_coils[i]["drive_chan"] = drive_channels[i]
-                        print(hpi_coils[i]["drive_chan"])
+                        verbose_print(hpi_coils[i]["drive_chan"])
                         hpi_coils[i]["coil_freq"] = default_freqs[i]
 
                         hpi_sub["hpi_coils"][i]["event_bits"] = [256]
@@ -712,7 +736,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         raw.info["hpi_meas"] = [{"hpi_coils": hpi_coils}]
 
                     #****************************************************
-                    print('************* localize hpi *******************')
+                    verbose_print('************* localize hpi *******************')
                     n_hpis = 0
 
                     info=raw.info
@@ -742,12 +766,12 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                                 )
                             ]
                         raw.info["line_freq"]=None
-                        #print(raw.pick(meg='mag').get_data())
-                        #print(raw.ch_names)
-                        coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2)
+                        #verbose_print(raw.pick(meg='mag').get_data())
+                        #verbose_print(raw.ch_names)
+                        coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2, verbose='error')
                         slope[index,:] = coil_amplitudes['slopes'][0][index]
                 #********
-                #print(hpifile)
+                #verbose_print(hpifile)
                 break  # Stop after successfully reading the first file
             except Exception as e:
                 log("HPI", f"Error occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
@@ -755,11 +779,11 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         try:
             assert len(coil_amplitudes["times"]) == 1
             coil_amplitudes['slopes'][0]= slope
-            coil_locs = compute_chpi_locs(raw.info, coil_amplitudes)
+            coil_locs = compute_chpi_locs(raw.info, coil_amplitudes, verbose='error')
             hpi_dev = np.array(coil_locs['rrs'][0])
             hpi_gofs = np.array(coil_locs['gofs'][0])
 
-            print('**** Apply trans to recording file ***********************************')
+            verbose_print('**** Apply trans to recording file ***********************************')
             hpi_fit_parameters['hedscan_files'] = hedscan_files
             hpi_fit_parameters['hpi_dev'] = hpi_dev
             hpi_fit_parameters['hpi_gofs'] = hpi_gofs
@@ -780,7 +804,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
  
     return hpi_fit_parameters
 
-def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path):
+def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path, rename_analog):
     """
     Apply HPI-derived coordinate transformation to individual MEG file.
     
@@ -884,7 +908,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
             tree = cKDTree(hpi_orig)
             distances, indices = tree.query(hpi_dev[include_hpis])
 
-            print(f'''
+            verbose_print(f'''
                   hpi_orig: 
                     {hpi_dev[include_hpis]}
                   hpi_dev: 
@@ -909,14 +933,21 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path)
             with raw.info._unlock():
                 raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
 
-            raw.save(f'{path}/{savename}',overwrite=True)
+            if rename_analog:
+                mapping = generate_mapping()
+                print('Renaming analog channels using mapping')
+                verbose_print(f'{mapping}')
+                raw = rename_channels(raw, mapping, f'{path}/{savename}')
+                
+            else:
+                raw.save(f'{path}/{savename}',overwrite=True)
 
             msg_coils = ''
             for index, value in enumerate(hpi_gofs):
                     status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
                     msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
             
-            print(f'''---------------------------------------------
+            verbose_print(f'''---------------------------------------------
             hpi_orig: 
                 {hpi_orig}
             hpi_dev: 
@@ -982,6 +1013,8 @@ def args_parser():
     parser = argparse.ArgumentParser(description='Add HPI to OPM-MEG recordings.')
     parser.add_argument('-c', '--config', type=str, default='config.yml',
                         help='Path to the configuration file (default: config.yml)')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Enable verbose output')
     return parser.parse_args()
 
 def main(config: Union[str, dict]=None):
@@ -1055,6 +1088,7 @@ def main(config: Union[str, dict]=None):
     opmMEGdir = config.get('opmMEG')
     overwrite = config.get('overwrite', False)
     plotResult = config.get('plot', False)
+    rename_analog = config.get('rename_analog_channels', False)
 
     log_path = opmMEGdir.replace('raw', 'logs')
     if not os.path.exists(log_path):
@@ -1068,7 +1102,7 @@ def main(config: Union[str, dict]=None):
     subjects_to_process = len(subjects)
     count = 0
     pbar = tqdm(total=subjects_to_process, 
-                desc=f"Bidsify files", 
+                desc=f"Processing files", 
                 unit=" file(s)",
                 disable=not sys.stdout.isatty(),
                 ncols=80,
@@ -1090,7 +1124,8 @@ def main(config: Union[str, dict]=None):
                         process_single_file,
                         hpi_fit_parameters=hpi_fit_parameters,
                         plotResult=plotResult,
-                        log_path=log_path
+                        log_path=log_path,
+                        rename_analog=rename_analog
                 )
                     pbar.update(1)
                     print(f'{count}/{len(hedscan_files)} files to process')
@@ -1114,11 +1149,16 @@ def main(config: Union[str, dict]=None):
         pbar.update(1)
     pbar.close()
 
-    log("HPI", "Registration completed successfully.", 'info',logfile=logfile, logpath=log_path)
+    log("HPI", "OPM preprocessing completed successfully.", 'info',logfile=logfile, logpath=log_path)
     return True
+
+# Ensure VERBOSE is defined globally at the top of the script
+VERBOSE = False
 
 # Use concurrent.futures instead of multiprocessing
 if __name__ == '__main__':
-    main()
-    
-    
+    args = args_parser()
+    configure_verbosity(args.verbose)
+    main(config=args.config)
+
+

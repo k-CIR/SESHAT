@@ -1,8 +1,6 @@
 RUN:
   Copy to Cerberos: true
-  Add HPI coregistration: true
-  Run Maxfilter: true
-  Run BIDS conversion: true
+  OPM preprocessing: true
   Sync to CIR: true
 Project:
   Name: ''
@@ -23,6 +21,7 @@ Project:
   Crosstalk: /neuro/data/local/<project>/databases/ctc/ct_sparse.fif
   Logfile: pipeline_log.log
 OPM:
+  rename_analog_channels: true
   polhemus:
   - ''
   hpi_names:

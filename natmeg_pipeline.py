@@ -33,7 +33,7 @@ Examples:
   
   # Run individual pipeline components
   natmeg copy --config config.yml         # Data synchronization only
-  natmeg hpi --config config.yml          # HPI coregistration only
+  natmeg opm-preprocess --config config.yml          # OPM preprocessing only
   natmeg maxfilter --config config.yml    # MaxFilter processing only
   natmeg bidsify --config config.yml      # BIDS conversion only
   
@@ -74,10 +74,10 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
     # Individual components
     copy_parser = subparsers.add_parser('copy', help='Data synchronization only')
     copy_parser.add_argument('--config', required=True, help='Configuration file')
-    
-    hpi_parser = subparsers.add_parser('hpi', help='HPI coregistration only')
-    hpi_parser.add_argument('--config', required=True, help='Configuration file')
-    
+
+    opm_parser = subparsers.add_parser('opm-preprocess', help='OPM preprocessing only')
+    opm_parser.add_argument('--config', required=True, help='Configuration file')
+
     maxfilter_parser = subparsers.add_parser('maxfilter', help='MaxFilter processing only')
     maxfilter_parser.add_argument('--config', required=True, help='Configuration file')
     maxfilter_parser.add_argument('--dry-run', action='store_true', help='Show MaxFilter commands without executing them')
@@ -151,20 +151,20 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 copy_success = copy_to_cerberos.main(args.config)
                 pipeline_success.append(copy_success)
                 
-            if config['RUN'].get('Add HPI coregistration', False):
-                import add_hpi
-                hpi_success = add_hpi.main(args.config)
-                pipeline_success.append(hpi_success)
+            if config['RUN'].get('OPM preprocessing', False):
+                import opm_preprocess
+                opm_preprocess_success = opm_preprocess.main(args.config)
+                pipeline_success.append(opm_preprocess_success)
 
-            if config['RUN'].get('Run Maxfilter', False):
-                import maxfilter
-                maxfilter_success = maxfilter.main(args.config, dry_run=dry_run)
-                pipeline_success.append(maxfilter_success)
+            # if config['RUN'].get('Run Maxfilter', False):
+            #     import maxfilter
+            #     maxfilter_success = maxfilter.main(args.config, dry_run=dry_run)
+            #     pipeline_success.append(maxfilter_success)
 
-            if config['RUN'].get('Run BIDS conversion', False):
-                import bidsify
-                bids_success = bidsify.main(args.config)
-                pipeline_success.append(bids_success)
+            # if config['RUN'].get('Run BIDS conversion', False):
+            #     import bidsify
+            #     bids_success = bidsify.main(args.config)
+            #     pipeline_success.append(bids_success)
             
             if config['RUN'].get('Sync to CIR', False):
                 import sync_to_cir
@@ -182,14 +182,14 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 )
                 pipeline_success.append(success)
             
-            # Generate project report unless disabled
-            if not getattr(args, 'no_report', False):
-                try:
-                    import render_report
-                    render_report.main(args.config)
-                    log("Pipeline", "Report generated (report.html)", 'info', f'{logpath}/{logfile}')
-                except Exception as e:
-                    log("Pipeline", f"Report generation failed: {e}", 'warning', f'{logpath}/{logfile}')
+                # Generate project report unless disabled
+                if not getattr(args, 'no_report', False):
+                    try:
+                        import render_report
+                        render_report.main(args.config)
+                        log("Pipeline", "Report generated (report.html)", 'info', f'{logpath}/{logfile}')
+                    except Exception as e:
+                        log("Pipeline", f"Report generation failed: {e}", 'warning', f'{logpath}/{logfile}')
 
             if all(pipeline_success):
                 log("Pipeline", "Completed successfully!", 'info', f'{logpath}/{logfile}')
@@ -199,10 +199,10 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
         elif args.command == 'copy':
             import copy_to_cerberos
             copy_to_cerberos.main(args.config)
-        
-        elif args.command == 'hpi':
-            import add_hpi
-            add_hpi.main(args.config)
+
+        elif args.command == 'opm-preprocess':
+            import opm_preprocess
+            opm_preprocess.main(args.config)
         
         elif args.command == 'maxfilter':
             import maxfilter
@@ -281,16 +281,17 @@ For more information, visit: https://github.com/natmeg/natmeg-utils
                 try:
                     with open(args.config, 'r') as f:
                         proj_cfg = yaml.safe_load(f)
-                    bids_path = proj_cfg.get('project', {}).get('BIDS')
-                    squid_path = proj_cfg.get('project', {}).get('squidMEG')
-                    opm_path = proj_cfg.get('project', {}).get('opmMEG')
-                    # Prefer parent of BIDS if available, else squidMEG dir, else opmMEG dir
-                    if bids_path:
-                        local_path = os.path.dirname(bids_path.rstrip('/')) or '.'
-                    elif squid_path:
-                        local_path = os.path.dirname(squid_path.rstrip('/')) or '.'
-                    elif opm_path:
-                        local_path = os.path.dirname(opm_path.rstrip('/')) or '.'
+
+                    project_name = proj_cfg.get('Project', {}).get('Name', None)
+                    root_name = proj_cfg.get('Project', {}).get('Root', None)
+
+                    if not project_name or not root_name:
+                        print("Project name and root directory must be specified.")
+                        return
+
+                    local_path = os.path.join(root_name, project_name)
+                    if os.path.exists(local_path):
+                        print(f"Inferred local directory from project config: {local_path}")
                     else:
                         print('Could not infer directory from project config; specify --directory')
                         return

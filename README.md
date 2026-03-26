@@ -16,20 +16,14 @@ This pipeline provides end-to-end processing for:
 - **OPM MEG** data from Kaptah/OPM systems  
 - **EEG** data collected through TRIUX
 
-
-![NatMEG Pipeline Overview]({{ picture_path }}/NatMEG-pipeline.drawio.png){ width="600" }
-/// caption
-Pipeline overview showing the main components and data flow.
-///
-
 ## Key Features
 
 - **GUI Configuration Interface**: User-friendly GUI for setting up project parameters and pipeline options 
 - **Data Synchronization**: Automated copying of raw data from SQUID/OPM computers to central processing computer (`copy_to_cerberos.py`)
-- **HPI Coregistration**: Automated head position indicator (HPI) coregistration for OPM-MEG data using Polhemus digitization (`add_hpi.py`)
+- **OPM preprocessing**: Adding head position indicator (HPI) and headshape coregistration from Polhemus digitization to OPM-MEG data and renames analog channels (`opm_preprocess.py`)
 - **Batch MaxFilter Processing**: Integration with Elekta MaxFilter for Signal Space Separation (SSS) and temporal extension (tSSS) (`maxfilter.py`) (Command line only)
 - **Server Synchronization**: Sync processed data to CIR server with advanced filtering options (`sync_to_cir.py`)
-- **HTML Reporting**: Generate interactive HTML reports summarizing processing steps and data status (`report.py`)
+- **HTML Reporting**: Generate HTML report giving an overview of the server sync (`report.py`)
 - **Logging and Error Handling**: Comprehensive logging for tracking processing steps and troubleshooting
 - **Other utilities**: Additional scripts for specific tasks as needed
 
@@ -40,9 +34,7 @@ The steps to include in `natmeg run --config <config_file.yml>`, toggle between 
 ```yml
 RUN:
   Copy to Cerberos: true
-  Add HPI coregistration: true
-  Run Maxfilter: true
-  Run BIDS conversion: true
+  OPM preprocessing: true
   Sync to CIR: true
 ```
 ### Project
@@ -63,6 +55,7 @@ Project:
   - ''
   Sinuhe raw: /neuro/data/sinuhe/<project_path_on_sinuhe> 
   Kaptah raw: /neuro/data/kaptah/<project_path_on_kaptah>
+  Stimuli: /neuro/data/stimulus/<project_path_on_stimuli>
   Root: /neuro/data/local/
   Raw: /neuro/data/local/<project>/raw
   BIDS: /neuro/data/local/<project>/BIDS
@@ -73,6 +66,7 @@ Project:
 ### OPM
 ```yml
 OPM:
+  rename_analog_channels: true
   polhemus:
   - ''
   hpi_names:
@@ -85,7 +79,7 @@ OPM:
   overwrite: false
   plot: false
 ```
-### MaxFilter
+### MaxFilter (CLI only)
 Default settings. 
 
 - Add all files for which you want continous head positioning estimation in `trans_conditions`
@@ -122,7 +116,7 @@ MaxFilter:
     MaxFilter_commands: ''
     debug: false
 ```
-### BIDS
+### BIDS (legacy)
 BIDS conversion settings. Make sure to set the correct paths for your files and project information. Example `participant_mapping_example.csv`.
 
 - The `bids_conversion.tsv` is generated if not already existing and controls the conversion. Edit task names and runs, and set status to `ok`. BIDS conversion will not be done if there are any file has status `check`.
@@ -257,22 +251,22 @@ natmeg gui # Loads a default configuration file if none specified
 natmeg create-config --output my_config.yml  # Generate default config
 
 # Run complete pipeline with options
-natmeg run --config config.yml               # Complete pipeline
-natmeg run --config config.yml --dry-run     # Preview without execution
-natmeg run --config config.yml --no-report   # Skip final HTML report
-natmeg run --config config.yml --delete      # Delete remote files not in source
+natmeg run --config config.yml                  # Complete pipeline
+natmeg run --config config.yml --dry-run        # Preview without execution
+natmeg run --config config.yml --no-report      # Skip final HTML report
+natmeg run --config config.yml --delete         # Delete remote files not in source
 
 # Run individual components
-natmeg copy --config config.yml              # Data synchronization only
-natmeg hpi --config config.yml               # HPI coregistration only  
-natmeg maxfilter --config config.yml         # MaxFilter processing only
+natmeg copy --config config.yml                 # Data synchronization only
+natmeg opm-preprocess --config config.yml       # HPI coregistration and analog channel rename
+natmeg maxfilter --config config.yml            # MaxFilter processing only
 natmeg maxfilter --config config.yml --dry-run  # Show commands without execution
-natmeg bidsify --config config.yml           # BIDS conversion only
+natmeg bidsify --config config.yml              # BIDS conversion only
 
 # Server synchronization with advanced options
-natmeg sync --create-config                  # Generate example server config
-natmeg sync --server-config servers.yml --test      # Test server connection
-natmeg sync --directory /data/project        # Sync directory (default 'cir' server)  
+natmeg sync --create-config                     # Generate example server config
+natmeg sync --server-config servers.yml --test  # Test server connection
+natmeg sync --directory /data/project           # Sync directory (default 'cir' server)  
 natmeg sync --config project_config.yml --dry-run   # Preview sync from project config
 natmeg sync --directory /data/project --delete      # Delete remote files not in source
 natmeg sync --directory /data/project --exclude "*.tmp" --include "*.fif"  # Pattern filtering

@@ -20,6 +20,7 @@ from mne_bids import print_dir_tree
 from utils import log, askdirectory
 
 sync_config = '/home/natmeg/.config/sync_config.yml'
+general_log_file = '/home/natmeg/.log/sync_to_server.log'
 
 class ServerSync:
     """Handle syncing data to remote servers with rsync"""
@@ -73,27 +74,39 @@ class ServerSync:
     def build_rsync_command(self, local_path: str, server_config: Dict, 
                           exclude_patterns: List[str] = None,
                           include_patterns: List[str] = None,
-                          dry_run: bool = False,
-                          delete: bool = False) -> List[str]:
+                          dry_run: bool = False) -> List[str]:
         """Build rsync command with options"""
         
         cmd = ['rsync']
 
+        # Source and destination
+        local_path = local_path.rstrip('/')  # Remove trailing slash
+        remote_root = server_config['remote_path'].rstrip('/')
+        
+        # Always avoid duplicating the local basename on the remote path
+        remote_dest = f"{server_config['user']}@{server_config['host']}:{remote_root}"
+
         cmd.extend(self.config.get('default_rsync_options', []))
         
         global_excludes = self.config.get('sync_defaults', {}).get('global_excludes', [])
+
+        # Add includes (processed before excludes)
+        global_includes = self.config.get('sync_defaults', {}).get('global_includes', [])
+        
+        log_commands = self.config.get('log_commands', {})
+        
+        custom_opts = server_config.get('rsync_options', [])
+        
+        ssh_opts = server_config.get('ssh_options', [])
         
         if global_excludes:
             for pattern in global_excludes:
                 cmd.extend(['--exclude', pattern])
         
-        # Add custom excludes
+        # Add custom excludes and includes
         if exclude_patterns:
             for pattern in exclude_patterns:
                 cmd.extend(['--exclude', pattern])
-                
-        # Add includes (processed before excludes)
-        global_includes = self.config.get('sync_defaults', {}).get('global_includes', [])
         
         if global_includes:
             for pattern in global_includes:
@@ -102,36 +115,31 @@ class ServerSync:
         if include_patterns:
             for pattern in include_patterns:
                 cmd.extend(['--include', pattern])
-        
-        # Add delete option (removes files on destination not in source)
-        if delete:
-            cmd.append('--delete')
-            # Also add itemize-changes to track what files are transferred
-            if '--itemize-changes' not in cmd:
-                cmd.append('--itemize-changes')
-            
+
+        # Also add itemize-changes to track what files are transferred
+        if '--itemize-changes' not in cmd:
+            cmd.append('--itemize-changes')
+
         # Add dry-run option
         if dry_run:
             cmd.append('--dry-run')
             
         # Custom rsync options from config
-        custom_opts = server_config.get('rsync_options', [])
         if custom_opts:
             cmd.extend(custom_opts)
             
         # SSH options
-        ssh_opts = server_config.get('ssh_options', [])
         if ssh_opts:
             ssh_cmd = ['ssh'] + ssh_opts
             cmd.extend(['-e', ' '.join(shlex.quote(arg) for arg in ssh_cmd)])
-            
-        # Source and destination
-        local_path = local_path.rstrip('/')  # Remove trailing slash
-        remote_root = server_config['remote_path'].rstrip('/')
-        # Always avoid duplicating the local basename on the remote path
-        remote_dest = f"{server_config['user']}@{server_config['host']}:{remote_root}"
 
+        if '--stats' not in cmd:
+            cmd.append('--stats')
         cmd.extend([local_path, remote_dest])
+
+        # Log 
+        if log_commands:
+            cmd.extend(['--log-file', log_commands.get('file', '')])
 
         return cmd
     
@@ -155,12 +163,10 @@ class ServerSync:
             server_config = self.validate_server_config(server_name)
             cmd = self.build_rsync_command(
                 local_path, server_config, exclude_patterns, 
-                include_patterns, dry_run, delete
-            )
-            
+                include_patterns, dry_run)
             # Log the command
             cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
-            log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path)
+            log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path, )
 
             if dry_run:
                 log("DRY RUN MODE - No files will be transferred", 'info',
@@ -455,8 +461,16 @@ Examples:
         except Exception as e:
             print(f"Error loading project configuration: {e}")
             return
+        
+        project_name = config.get('Name', None)
+        root_name = config.get('Root', None)
 
-        directory = dirname(config.get('squidMEG', None)) or dirname(config.get('squidMEG', None))
+        if not project_name or not root_name:
+            print("Project name and root directory must be specified.")
+            return
+
+        directory = dirname(os.path.join(root_name, project_name))
+
         local_path = directory
         success = syncer.sync_directory(
             local_path, server_name,

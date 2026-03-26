@@ -235,10 +235,10 @@ def estimate_job_duration(jobs_to_process):
         else:
             str_estimates['size'] = f"{total_size} bytes"
 
-    print(f"""
-        Estimated total transfer time: {str_estimates['time']}
-        Estimated total size to transfer: {str_estimates['size']}
-    """)
+    # print(f"""
+    #     Estimated total transfer time: {str_estimates['time']}
+    #     Estimated total size to transfer: {str_estimates['size']}
+    # """)
     return estimated_time, total_size, str_estimates
 
 def copy_data(source, destination):
@@ -479,11 +479,10 @@ def process_file_worker(file_info, logfile):
 
 def copy_files(paths):
     """
-    Copy files in parallel using ThreadPoolExecutor.
-    
+    Copy files to the Cerberos directory.
+
     Args:
         paths: directories
-        max_workers: Maximum number of worker threads
     
     Returns:
         List of results from file processing
@@ -492,6 +491,11 @@ def copy_files(paths):
     jobs_to_process = [job for job in jobs if not job[0]]
 
     estimated_durations, total_size, str_estimates = estimate_job_duration(jobs_to_process)
+
+    print(f"""
+        Estimated total transfer time: {str_estimates['time']}
+        Estimated total size to transfer: {str_estimates['size']}
+    """)
 
     # Extract log configuration from config
     local_dir = paths.get('raw', '')
@@ -502,6 +506,7 @@ def copy_files(paths):
     new_file_count = 0
     existing_file_count = len([file for file in jobs if file[0]])
     failed_file_count = 0
+    size_cumsum = 0
 
     pbar = tqdm(total=len(jobs_to_process),
                 desc="Copy files",
@@ -511,9 +516,14 @@ def copy_files(paths):
                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
     for job in jobs_to_process:
+        size_cumsum += estimate_job_duration([job])[1]
+        print(f'{size_cumsum}/{total_size}')
+
         try:
             match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, logfile)
             results.append((match, source, destination, message))
+
+            
 
             failed_file_count += failed_file
             new_file_count += new_file
@@ -525,7 +535,7 @@ def copy_files(paths):
                 'Failed': failed_file_count,
                 'Latest': f"{status} {basename(source)}"
             })
-            print(f'{source} -> {destination}')
+            
             pbar.update(1)
 
         except Exception as exc:
@@ -542,12 +552,13 @@ def copy_files(paths):
                 'Failed': failed_file_count,
                 'Latest': f"✗ {basename(source)} (ERROR)"
             })
+            
             pbar.update(1)
-
+        
     # Close progress bar
     pbar.close()
     # Log summary
-    log('Copy', f'Parallel copy completed. Files to process: {len(jobs_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
+    log('Copy', f'Copy completed. Files to process: {len(jobs_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         'info',
         logfile)
 
