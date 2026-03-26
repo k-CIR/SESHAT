@@ -363,7 +363,7 @@ class ConfigMainWindow:
         standard_scrollable = self.create_scrollable_frame(standard_frame)
         
         
-        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw']
+        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw', 'Stimuli']
         standard_help = {
             'Name': 'Name of project',
             'CIR-ID': 'CIR ID of the project, used for data management',
