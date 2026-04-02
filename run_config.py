@@ -209,8 +209,8 @@ class ConfigMainWindow:
     def _setup_branding_assets(self):
         """Load branding assets and set window icon when available."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        svg_logo_path = os.path.join(base_dir, 'assets', 'sheshat_col_white.svg')
-        png_fallback_path = os.path.join(base_dir, 'assets', 'sheshat_col_white_2.png')
+        svg_logo_path = os.path.join(base_dir, 'assets', 'seshat_col_white.svg')
+        png_fallback_path = os.path.join(base_dir, 'assets', 'seshat_col_white_2.png')
 
         for candidate in (svg_logo_path, png_fallback_path):
             if os.path.exists(candidate):
