@@ -174,6 +174,9 @@ class ConfigMainWindow:
         self.root = tk.Tk()
         self.root.title("NatMEG Config Editor")
         self.root.geometry("900x800")
+        self.logo_image = None
+
+        self._setup_branding_assets()
         
         self.config_file = config_file
         self.config_data = {}
@@ -202,12 +205,28 @@ class ConfigMainWindow:
         
         # Initialize paths after UI is created
         self.update_project_paths()
+
+    def _setup_branding_assets(self):
+        """Load branding assets and set window icon when available."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.logo_path = os.path.join(base_dir, 'assets', 'sheshat_col_white_2.png')
+
+        if os.path.exists(self.logo_path):
+            try:
+                self.logo_image = tk.PhotoImage(file=self.logo_path)
+                self.root.iconphoto(True, self.logo_image)
+            except tk.TclError:
+                self.logo_image = None
         
     def init_ui(self):
         """Initialize the user interface"""
         # Create main frame
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill='both', expand=True, padx=2, pady=5)
+
+        if self.logo_image is not None:
+            logo_label = ttk.Label(main_frame, image=self.logo_image)
+            logo_label.pack(anchor='center', pady=(2, 8))
         
         # Create notebook for tabs
         self.notebook = ttk.Notebook(main_frame)

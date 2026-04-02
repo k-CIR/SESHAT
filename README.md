@@ -1,10 +1,10 @@
 ---
-title: NatMEG Processing Pipeline
+title: SESHAT
 ---
 
-# NatMEG Processing Pipeline
+# SESHAT - Scripts for Extraction, Synchronisation, HPI + Analog alignment and Transfer
 
-Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including copying of data, MaxFilter processing, HPI coregistration, BIDS conversion, and data synchronization utilities.
+Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including extraction of data, MaxFilter processing (legacy), HPI coregistration, analog channel renaming, and data synchronization utilities.
 
 Read full documentation on how to use the pipeline [here](https://k-cir.github.io/cir-wiki/natmeg/preprocessing/pipeline/)
 
@@ -13,8 +13,9 @@ Read full documentation on how to use the pipeline [here](https://k-cir.github.i
 This pipeline provides end-to-end processing for:
 
 - **TRIUX/SQUID MEG** data from Elekta systems
-- **OPM MEG** data from Kaptah/OPM systems  
+- **OPM MEG** data from Kaptah/OPM systems
 - **EEG** data collected through TRIUX
+- **Experiment** data collected at the Stimulus PC
 
 ## Key Features
 
@@ -184,16 +185,16 @@ bash install.sh --venv
 
 The installer will:
 - Detect your operating system (macOS/Linux) and conda installation  
-- Create a `natmeg` executable in `~/.local/bin/`
+- Create a `seshat` executable in `~/.local/bin/`
 - Add `~/.local/bin` to your PATH if needed
 - Set up either Python venv or conda environment based on your choice
 - Provide clear troubleshooting instructions
 
 After installation, you can use the pipeline from anywhere:
 ```bash
-natmeg gui                     # Launch GUI
-natmeg run --config config.yml # Run pipeline
-natmeg --help                  # Show all options
+seshat gui                     # Launch GUI
+seshat run --config config.yml # Run pipeline
+seshat --help                  # Show all options
 ```
 
 ### Manual Installation
@@ -238,45 +239,45 @@ source ~/.zshrc
 
 > **Note**: Install the pipeline first using `bash install.sh` (see [Installation](#installation) section above)
 
-### Using the natmeg Command
+### Using the seshat Command
 
 After installation, you can use the `natmeg` command from anywhere:
 
 ```bash
 
 # Launch GUI configuration interface
-natmeg gui # Loads a default configuration file if none specified
+seshat gui # Loads a default configuration file if none specified
 
 # Create configuration file
-natmeg create-config --output my_config.yml  # Generate default config
+seshat create-config --output my_config.yml  # Generate default config
 
 # Run complete pipeline with options
-natmeg run --config config.yml                  # Complete pipeline
-natmeg run --config config.yml --dry-run        # Preview without execution
-natmeg run --config config.yml --no-report      # Skip final HTML report
-natmeg run --config config.yml --delete         # Delete remote files not in source
+seshat run --config config.yml                  # Complete pipeline
+seshat run --config config.yml --dry-run        # Preview without execution
+seshat run --config config.yml --no-report      # Skip final HTML report
+seshat run --config config.yml --delete         # Delete remote files not in source
 
 # Run individual components
-natmeg copy --config config.yml                 # Data synchronization only
-natmeg opm-preprocess --config config.yml       # HPI coregistration and analog channel rename
-natmeg maxfilter --config config.yml            # MaxFilter processing only
-natmeg maxfilter --config config.yml --dry-run  # Show commands without execution
-natmeg bidsify --config config.yml              # BIDS conversion only
+seshat copy --config config.yml                 # Data synchronization only
+seshat opm-preprocess --config config.yml       # HPI coregistration and analog channel rename
+seshat maxfilter --config config.yml            # MaxFilter processing only
+seshat maxfilter --config config.yml --dry-run  # Show commands without execution
+seshat bidsify --config config.yml              # BIDS conversion only
 
 # Server synchronization with advanced options
-natmeg sync --create-config                     # Generate example server config
-natmeg sync --server-config servers.yml --test  # Test server connection
-natmeg sync --directory /data/project           # Sync directory (default 'cir' server)  
-natmeg sync --config project_config.yml --dry-run   # Preview sync from project config
-natmeg sync --directory /data/project --delete      # Delete remote files not in source
-natmeg sync --directory /data/project --exclude "*.tmp" --include "*.fif"  # Pattern filtering
+seshat sync --create-config                     # Generate example server config
+seshat sync --server-config servers.yml --test  # Test server connection
+seshat sync --directory /data/project           # Sync directory (default 'cir' server)  
+seshat sync --config project_config.yml --dry-run   # Preview sync from project config
+seshat sync --directory /data/project --delete      # Delete remote files not in source
+seshat sync --directory /data/project --exclude "*.tmp" --include "*.fif"  # Pattern filtering
 
 # Generate project reports
-natmeg report --config config.yml            # Generate HTML dashboard
+seshat report --config config.yml            # Generate HTML dashboard
 
 # Show help for all commands
-natmeg --help
-natmeg run --help      # Detailed help for specific subcommand
+seshat --help
+seshat run --help      # Detailed help for specific subcommand
 ```
 
 ## Troubleshooting
@@ -366,18 +367,18 @@ pip install mne mne-bids pyyaml
 
 **Permission errors:**
 ```bash
-# Make natmeg executable
-chmod +x ~/.local/bin/natmeg
+# Make seshat executable
+chmod +x ~/.local/bin/seshat
 
 # Check file permissions
-ls -la ~/.local/bin/natmeg
+ls -la ~/.local/bin/seshat
 ```
 
 **Terminal crashes:**
-The natmeg script includes safety checks to prevent terminal crashes. If issues persist:
+The seshat script includes safety checks to prevent terminal crashes. If issues persist:
 ```bash
 # View the generated script
-cat ~/.local/bin/natmeg
+cat ~/.local/bin/seshat
 
 # Regenerate with latest safety checks
 cd ~/Sites/NatMEG-utils
@@ -403,6 +404,6 @@ Improvements are welcomed! The pipeline includes robust installation and executi
 bash install.sh
 
 # Verify functionality
-natmeg --help
-natmeg gui
+seshat --help
+seshat gui
 ```

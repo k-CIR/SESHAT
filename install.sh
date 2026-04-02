@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-platform NatMEG Pipeline installer using Python virtual environment or Conda
+# Cross-platform SESHAT Pipeline installer using Python virtual environment or Conda
 
 set -e
 
@@ -16,7 +16,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            echo "NatMEG Pipeline Installer"
+            echo "SESHAT Pipeline Installer"
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
@@ -37,9 +37,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$USE_CONDA" = true ]; then
-    echo "Installing NatMEG Pipeline with Conda environment (default)..."
+    echo "Installing SESHAT Pipeline with Conda environment (default)..."
 else
-    echo "Installing NatMEG Pipeline with Python virtual environment..."
+    echo "Installing SESHAT Pipeline with Python virtual environment..."
 fi
 
 # Detect operating system
@@ -174,7 +174,7 @@ if [ -d "$TARGET_DIR" ]; then
 fi
 
 # Copy relevant files to local
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt") 
+RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt" "sheshat_col.png") 
 SOURCE_DIR=$(pwd)
 
 # Create local bin directory
@@ -198,6 +198,14 @@ for file in "${RELEVANT_FILES[@]}"; do
     fi
 done
 
+if [ -d "$SOURCE_DIR/assets" ]; then
+    rm -rf "$TARGET_DIR/assets"
+    cp -R "$SOURCE_DIR/assets" "$TARGET_DIR/assets"
+    echo "✓ Copied assets folder"
+else
+    echo "⚠ Warning: assets folder does not exist in $SOURCE_DIR"
+fi
+
 # Create environment (conda or venv)
 if [ "$USE_CONDA" = true ]; then
     echo "Setting up Conda environment..."
@@ -210,12 +218,14 @@ if [ "$USE_CONDA" = true ]; then
         exit 1
     fi
     
-    CONDA_ENV_NAME="natmeg_utils"
+    CONDA_ENV_NAME="seshat_utils"
     
     # Remove existing conda environment if it exists
-    if conda env list | grep -q -E "(natmeg-utils|natmeg_utils)"; then
+    if conda env list | grep -q -E "(seshat-utils|seshat_utils|natmeg-utils|natmeg_utils)"; then
         echo "Removing existing conda environment..."
-        # Try both possible names
+        # Clean up both current and legacy environment names.
+        conda env remove -n "seshat-utils" -y 2>/dev/null || true
+        conda env remove -n "seshat_utils" -y 2>/dev/null || true
         conda env remove -n "natmeg-utils" -y 2>/dev/null || true
         conda env remove -n "natmeg_utils" -y 2>/dev/null || true
     fi
@@ -298,12 +308,12 @@ fi
 
 echo "Using shell config: $SHELL_CONFIG"
 
-# Create the natmeg executable
-echo "Creating natmeg executable..."
+# Create the seshat executable
+echo "Creating seshat executable..."
 
-cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << EOF
+cat > "$HOME/.local/bin/NatMEG-utils/seshat" << EOF
 #!/bin/bash
-# NatMEG Pipeline Executable - Auto-generated with $ENV_TYPE environment
+# SESHAT Pipeline Executable - Auto-generated with $ENV_TYPE environment
 
 # SAFETY CHECKS - Prevent terminal crashes at all costs
 set +e  # Don't exit on errors
@@ -311,7 +321,7 @@ set +u  # Don't exit on undefined variables
 set +o pipefail  # Don't exit on pipe failures
 
 # Multiple layers of error handling
-trap 'echo "Warning: Error in natmeg script, but terminal will remain open." >&2; exit 1' ERR
+trap 'echo "Warning: Error in seshat script, but terminal will remain open." >&2; exit 1' ERR
 trap 'echo "Warning: Script interrupted, but terminal will remain open." >&2; exit 130' INT
 trap 'echo "Warning: Script terminated, but terminal will remain open." >&2; exit 143' TERM
 
@@ -367,14 +377,14 @@ fi
 
 # Check if main script exists
 if [ ! -f "\$SCRIPT_PATH" ]; then
-    echo "Error: Could not find natmeg_pipeline.py at \$SCRIPT_PATH"
+    echo "Error: Could not find pipeline entrypoint at \$SCRIPT_PATH"
     echo "Please ensure the NatMEG-utils installation is complete"
     exit 1
 fi
 
 # Check if main script is readable
 if [ ! -r "\$SCRIPT_PATH" ]; then
-    echo "Error: Cannot read natmeg_pipeline.py at \$SCRIPT_PATH"
+    echo "Error: Cannot read pipeline entrypoint at \$SCRIPT_PATH"
     echo "Please check file permissions"
     exit 1
 fi
@@ -395,11 +405,21 @@ if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
         echo "  2. Check PyQt installation: conda list pyqt"
         echo "  3. Try venv installation: bash install.sh --venv"
     fi
-    echo "  4. Use command-line interface instead: natmeg run --config config.yml"
+    echo "  4. Use command-line interface instead: seshat run --config config.yml"
 fi
 EOF
 
 # Make it executable
+chmod +x "$HOME/.local/bin/NatMEG-utils/seshat"
+
+# Create backward-compatible natmeg alias executable
+cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << 'EOF'
+#!/bin/bash
+# Backward-compatible alias for legacy command name.
+exec "$HOME/.local/bin/NatMEG-utils/seshat" "$@"
+EOF
+
+# Make alias executable
 chmod +x "$HOME/.local/bin/NatMEG-utils/natmeg"
 
 # Add to PATH if not already there
@@ -409,6 +429,29 @@ if ! echo "$PATH" | grep -q "$HOME/.local/bin/NatMEG-utils"; then
     echo "Please run: source $SHELL_CONFIG"
 else
     echo "$HOME/.local/bin/NatMEG-utils is already in PATH"
+fi
+
+# Create Linux desktop launcher for GUI usage.
+if [ "$OS" = "Linux" ]; then
+    DESKTOP_DIR="$HOME/.local/share/applications"
+    DESKTOP_FILE="$DESKTOP_DIR/seshat.desktop"
+    mkdir -p "$DESKTOP_DIR"
+
+    cat > "$DESKTOP_FILE" << EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=SESHAT
+Comment=SESHAT Pipeline Config Editor
+Exec=$HOME/.local/bin/NatMEG-utils/seshat gui
+Icon=$HOME/.local/bin/NatMEG-utils/assets/seshat_col.png
+Terminal=false
+Categories=Science;Education;
+StartupNotify=true
+EOF
+
+    chmod +x "$DESKTOP_FILE"
+    echo "✓ Linux desktop app created at $DESKTOP_FILE"
 fi
 
 # Check environment
@@ -486,27 +529,28 @@ echo ""
 echo "Testing the installation..."
 
 # Test if the executable works
-if command -v natmeg &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
-    echo "✓ natmeg executable created successfully"
+if (command -v seshat &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/seshat" ]) && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
+    echo "✓ seshat executable created successfully"
+    echo "✓ natmeg alias created for backward compatibility"
     
     # Test basic execution only if environment exists
     if [ "$ENV_EXISTS" = true ] && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" ]; then
         echo "✓ Virtual environment and main Python file ready"
         INSTALL_SUCCESS=true
     else
-        echo "⚠ natmeg executable created but virtual environment needs setup"
+        echo "⚠ seshat executable created but virtual environment needs setup"
         INSTALL_SUCCESS=false   
     fi
 else
-    echo "✗ Failed to create natmeg executable"
+    echo "✗ Failed to create seshat executable"
     INSTALL_SUCCESS=false
 fi
 
 echo ""
 echo "Usage:"
-echo "  natmeg gui                      # Launch GUI"
-echo "  natmeg run --config config.yml   # Run pipeline"
-echo "  natmeg report --config config.yml # Generate HTML report only"
+echo "  seshat gui                      # Launch GUI"
+echo "  seshat run --config config.yml   # Run pipeline"
+echo "  seshat report --config config.yml # Generate HTML report only"
 echo ""
 
 # Conditional instructions based on installation status
@@ -514,10 +558,10 @@ if [ "$ENV_EXISTS" = false ]; then
     if [ "$USE_CONDA" = true ]; then
         echo "NEXT STEPS - Fix conda environment:"
         echo "  1. source $SHELL_CONFIG"
-        echo "  2. conda env remove -n natmeg_utils"
+        echo "  2. conda env remove -n seshat_utils"
         echo "  3. cd $TARGET_DIR"
         echo "  4. bash install.sh --conda  # Recreate conda environment"
-        echo "  5. Test with: natmeg --help"
+        echo "  5. Test with: seshat --help"
     else
         echo "NEXT STEPS - Fix virtual environment:"
         echo "  1. source $SHELL_CONFIG"
@@ -526,7 +570,7 @@ if [ "$ENV_EXISTS" = false ]; then
         echo "  4. $PYTHON -m venv .venv  # Recreate environment"
         echo "  5. source .venv/bin/activate"
         echo "  6. pip install -r requirements.txt"
-        echo "  7. Test with: natmeg --help"
+        echo "  7. Test with: seshat --help"
         echo ""
         echo "  Alternative (if default conda fails):"
         echo "  bash install.sh --venv  # Use venv instead of conda"
@@ -536,7 +580,7 @@ elif [ "$INSTALL_SUCCESS" = true ]; then
     if [ "$USE_CONDA" = true ]; then
         echo "Using conda environment: $CONDA_ENV_NAME"
     fi
-    echo "Test with: natmeg --help"
+    echo "Test with: seshat --help"
 else
     echo "TROUBLESHOOTING:"
     if [ "$USE_CONDA" = true ]; then
@@ -548,6 +592,6 @@ else
         echo "  - Try venv installation: bash install.sh --venv"
     fi
     echo "  - Check PATH: echo \$PATH"
-    echo "  - View executable: cat ~/.local/bin/NatMEG-utils/natmeg"
+    echo "  - View executable: cat ~/.local/bin/NatMEG-utils/seshat"
     echo "  - Re-run installer if needed"
 fi
