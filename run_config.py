@@ -172,7 +172,7 @@ class ConfigMainWindow:
     
     def __init__(self, config_file=None):
         self.root = tk.Tk()
-        self.root.title("NatMEG Config Editor")
+        self.root.title("SESHAT - Scripts for Extraction, Synchronisation, HPI + Analog alignment and Transfer")
         self.root.geometry("900x800")
         self.logo_image = None
 
