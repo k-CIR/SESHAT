@@ -173,37 +173,19 @@ if [ -d "$TARGET_DIR" ]; then
     echo "Proceeding with overwrite..."
 fi
 
-# Copy relevant files to local
-RELEVANT_FILES=("install.sh" "natmeg_pipeline.py" "utils.py" "copy_to_cerberos.py" "maxfilter.py" "add_hpi.py" "bidsify.py" "sync_to_cir.py" "render_report.py" "README.md" "run_config.py" "requirements.txt" "sheshat_col.png") 
+# Copy the entire NatMEG-utils folder to the target directory
 SOURCE_DIR=$(pwd)
 
 # Create local bin directory
 mkdir -p "$HOME/.local/bin"
 mkdir -p "$TARGET_DIR"
 
-echo "Copying project files..."
-for file in "${RELEVANT_FILES[@]}"; do
-    if [ -f "$SOURCE_DIR/$file" ]; then
-        if [ -f "$TARGET_DIR/$file" ]; then
-            # File exists, we already got permission above, so just copy
-            cp "$SOURCE_DIR/$file" "$TARGET_DIR"
-            echo "✓ Overwritten $file"
-        else
-            # New file, copy directly
-            cp "$SOURCE_DIR/$file" "$TARGET_DIR"
-            echo "✓ Copied $file"
-        fi
-    else
-        echo "⚠ Warning: $file does not exist in $SOURCE_DIR"
-    fi
-done
-
-if [ -d "$SOURCE_DIR/assets" ]; then
-    rm -rf "$TARGET_DIR/assets"
-    cp -R "$SOURCE_DIR/assets" "$TARGET_DIR/assets"
-    echo "✓ Copied assets folder"
+if [ -d "$SOURCE_DIR" ]; then
+    # Copy the entire folder
+    cp -r "$SOURCE_DIR/." "$TARGET_DIR"
+    echo "✓ Copied NatMEG-utils folder"
 else
-    echo "⚠ Warning: assets folder does not exist in $SOURCE_DIR"
+    echo "⚠ Warning: NatMEG-utils folder does not exist in $SOURCE_DIR"
 fi
 
 # Create environment (conda or venv)
