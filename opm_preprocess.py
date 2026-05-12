@@ -771,8 +771,9 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                         coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2, verbose='error')
                         slope[index,:] = coil_amplitudes['slopes'][0][index]
                     except Exception as e:
+                        log("HPI", f"Warning occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
                         continue
-                        log("HPI", f"Warning occurred while processing HPI file {hpifile}: {e}", 'warning', logfile=logfile, logpath=log_path)
+                        
             #********
             #verbose_print(hpifile)
             break  # Stop after successfully reading the first file

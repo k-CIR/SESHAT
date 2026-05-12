@@ -181,9 +181,38 @@ mkdir -p "$HOME/.local/bin"
 mkdir -p "$TARGET_DIR"
 
 if [ -d "$SOURCE_DIR" ]; then
-    # Copy the entire folder
-    cp -r "$SOURCE_DIR/." "$TARGET_DIR"
-    echo "✓ Copied NatMEG-utils folder"
+    # Clean up any existing .git directory in target
+    if [ -d "$TARGET_DIR/.git" ]; then
+        rm -rf "$TARGET_DIR/.git"
+    fi
+    
+    # Use rsync to copy, excluding .git and respecting .gitignore
+    if command -v rsync &> /dev/null; then
+        # Use rsync if available for better control over exclusions
+        rsync -av \
+            --exclude='.git' \
+            --exclude='.gitignore' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.DS_Store' \
+            --exclude='*.egg-info' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='conda_env' \
+            "$SOURCE_DIR/" "$TARGET_DIR/" 2>/dev/null || {
+            echo "⚠ Warning: rsync copy had some issues, attempting fallback copy method..."
+        }
+    else
+        # Fallback: use cp with --no-preserve if rsync is not available
+        cp -r --no-preserve=mode,ownership \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            "$SOURCE_DIR/." "$TARGET_DIR" 2>/dev/null || {
+            echo "⚠ Warning: Some files could not be copied (permission denied), continuing..."
+        }
+    fi
+    echo "✓ Copied NatMEG-utils folder (excluding .git and cache files)"
 else
     echo "⚠ Warning: NatMEG-utils folder does not exist in $SOURCE_DIR"
 fi
