@@ -360,7 +360,7 @@ def make_process_list(paths, check_existing=False):
                     jobs.append(check_match(source, destination))
                     # copy_file(source, destination, logfile=logfile, log_path=log_path)
     elif not isdir(sinuhe):
-            log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
+        log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
     
     elif not glob('*', root_dir=sinuhe):
         log('Copy', f"{sinuhe} is empty", 'warning', logfile)
