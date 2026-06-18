@@ -20,8 +20,8 @@ def create_default_config():
         'RUN': {
             'Copy to Cerberos': True,
             'Add HPI coregistration': True,
-            'Run Maxfilter': True,
-            'Run BIDS conversion': True,
+            'Run Maxfilter': False,
+            'Run BIDS conversion': False,
             'Sync to CIR': True
         },
         'Project': {
@@ -34,11 +34,12 @@ def create_default_config():
             'Tasks': [''],
             'Sinuhe raw': '/neuro/data/sinuhe/<project_path_on_sinuhe>',
             'Kaptah raw': '/neuro/data/kaptah/<project_path_on_kaptah>',
+            'Stimuli': '/neuro/data/stimulus/<project_path_on_stimulus>',
             'Root': default_path,
             'Raw': f'{default_path}/<project>/raw',
             'BIDS': f'{default_path}/<project>/BIDS',
-            'Calibration': f'{default_path}/<project>/databases/sss/sss_cal.dat',
-            'Crosstalk': f'{default_path}/<project>/databases/ctc/ct_sparse.fif',
+            'Calibration': f'{default_path}/<project>/triux_files/sss/sss_cal.dat',
+            'Crosstalk': f'{default_path}/<project>/triux_files/ctc/ct_sparse.fif',
             'Logfile': 'pipeline_log.log'
         },
         'OPM': {
@@ -173,7 +174,7 @@ class ConfigMainWindow:
         self.create_project_tab()
         self.create_opm_tab()
         self.create_maxfilter_tab()
-        self.create_bids_tab()
+        # self.create_bids_tab()
         self.create_run_tab()
         
         # Button frame
@@ -326,7 +327,8 @@ class ConfigMainWindow:
             'Description': 'Brief description of the project',
             'Tasks': 'Comma-separated list of experimental tasks',
             'Sinuhe raw': 'Path to project raw data directory on Sinuhe (squid acquisition)',
-            'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)'
+            'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)',
+            'Stimuli': 'Path to project stimulus/presentation data on Stimulus PC (eg. 26099_visual_wm)',
         }
         
         for key in standard_keys:
@@ -512,6 +514,10 @@ class ConfigMainWindow:
         run_settings_frame.pack(fill='x', padx=5, pady=5)
         
         for key, value in self.config_data['RUN'].items():
+            # Skip BIDS conversion - don't show in GUI
+            skip_keys = ['Run BIDS conversion', 'Run Maxfilter']
+            if key in skip_keys:
+                continue
             self.create_run_form_widget(run_settings_frame, key, value)
         
         # Execute and control buttons

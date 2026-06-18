@@ -514,7 +514,8 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
         raw = None
         for hpifile in hpi_files:
-                # DEBUG
+            
+            print(f'Processing HPI file: {hpifile}')
             try:
                 raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
 
@@ -741,12 +742,12 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                                 )
                             ]
                         raw.info["line_freq"]=None
-                        print(raw.pick_types(meg='mag').get_data())
-                        print(raw.ch_names)
+                        #print(raw.pick(meg='mag').get_data())
+                        #print(raw.ch_names)
                         coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2)
                         slope[index,:] = coil_amplitudes['slopes'][0][index]
                 #********
-                print(hpifile)
+                #print(hpifile)
                 break  # Stop after successfully reading the first file
             except Exception as e:
                 log("HPI", f"Error occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)

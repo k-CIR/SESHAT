@@ -6,7 +6,7 @@ title: NatMEG Processing Pipeline
 
 Comprehensive MEG/EEG preprocessing pipeline for NatMEG data including copying of data, MaxFilter processing, HPI coregistration, BIDS conversion, and data synchronization utilities.
 
-Read full documentation on how to use the pipeline [here](https://k-cir.github.io/cir-wiki/natmeg/preprocessing)
+Read full documentation on how to use the pipeline [here](https://k-cir.github.io/cir-wiki/natmeg/preprocessing/pipeline/)
 
 ## Overview
 

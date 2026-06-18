@@ -91,9 +91,10 @@ def project_paths(config: str, init=False):
     paths['bids'] = bids_root
     paths['sinuhe'] = config['Project'].get('Sinuhe raw', None)
     paths['kaptah'] = config['Project'].get('Kaptah raw', None)
-    paths['Calibration'] = config['Project'].get('Calibration', None)
-    paths['Crosstalk'] = config['Project'].get('Crosstalk', None)
-    
+    paths['stimulus'] = config['Project'].get('Stimuli', None)
+    paths['calibration'] = config['Project'].get('Calibration', None)
+    paths['crosstalk'] = config['Project'].get('Crosstalk', None)
+
     return paths
 
 def askForConfig():
