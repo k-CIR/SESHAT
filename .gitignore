@@ -18,6 +18,7 @@ node_modules/
 
 # Ignore environment variable files
 .env
+*egg-info
 
 # Ignore build directories
 dist/
