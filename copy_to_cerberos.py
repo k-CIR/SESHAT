@@ -469,10 +469,10 @@ def process_file_worker(file_info, logfile):
     except Exception as e:
         msg = f"Error processing file: {str(e)}"
         match = False
-    # Ensure variables are always defined even on exception
-    failed_file = 1
-    existing_file = 0
-    new_file = 0
+        # Ensure variables are always defined even on exception
+        failed_file = 1
+        existing_file = 0
+        new_file = 0
 
     return match, source, destination, msg, existing_file, new_file, failed_file
 

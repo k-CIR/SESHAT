@@ -903,8 +903,16 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
             #remove zero channels
             bads=TC_findzerochans(raw.info)
+
+            if len(bads) > 100:
+                log("HPI", f"Found {len(bads)} bad channels. Check recording.", 'error', logfile=logfile, logpath=log_path)
+                return
+
+            if len(bads) > 9 and len(bads) < 100:
+                log("HPI", f"Found {len(bads)} bad channels", 'warning', logfile=logfile, logpath=log_path)
             for bad_chan in bads:
                 raw.drop_channels(bad_chan)
+
 
             #only use good fits
             include_hpis = hpi_gofs>0.9
