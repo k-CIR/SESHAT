@@ -21,7 +21,7 @@ Dependencies:
 Usage:
     python add_hpi.py -c config.yml
 """
-import sys, getopt
+import sys
 import argparse
 import os
 import re
@@ -30,44 +30,23 @@ import json
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
-from copy import deepcopy
 from typing import Union
 import mne
 
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from scipy.spatial import Delaunay, cKDTree
 import concurrent.futures
 from functools import partial
-from datetime import datetime
 from tqdm import tqdm
-#from mne.io.pick import pick_types #use for older version of mne
 from mne._fiff.pick import pick_types
-from mne import Report
 
-from scipy.signal import find_peaks
 
-#from mne.io._digitization import _call_make_dig_points #use for older version of mne
-from mne._fiff._digitization import _call_make_dig_points, _make_dig_points
-
-from mne.transforms import (
-    get_ras_to_neuromag_trans,
-    Transform,
-    _quat_to_affine,
-    _fit_matched_points
-    )
-
-from mne.chpi import (
-            _fit_coil_order_dev_head_trans,
-            compute_chpi_amplitudes,
-            compute_chpi_locs,
-        )
-from mne.io.constants import FIFF
-from mne.utils import _check_fname, logger, verbose, warn
 from mne.transforms import apply_trans
-from opm_utility_scripts.generate_analog_channel_mapping import generate_mapping
-from opm_utility_scripts.rename_analog_channels import rename_channels
+from opm_utility_scripts.channels import find_zero_location_channels, get_hpi_output_channels
+from opm_utility_scripts.viz import plot_3d, plot_psd
+from opm_utility_scripts import load_datafile, load_polhemus, select_best_hpi_file
+from opm_utility_scripts.io import write_bw_marker_file
+from opm_utility_scripts.analog.mapping import generate_analog_channel_mapping
+from opm_utility_scripts.analog.rename import rename_channels
+from opm_utility_scripts.hpi._core import apply_transform
 
 from utils import (
     log, configure_logging,
@@ -102,269 +81,11 @@ def verbose_print(message: str):
     if VERBOSE:
         print(message)
 
-def write_bw_marker_file(dsName, events, chanName, fs):
-    """
-    Write a BrainVision Analyzer marker file (.mrk) for MEG data analysis.
-    
-    Creates a marker file that contains timing information for events in a dataset,
-    formatted according to BrainVision Analyzer specifications. The file includes
-    metadata about the dataset and a list of event timestamps converted from samples
-    to seconds using the provided sampling frequency.
-    
-    Parameters
-    ----------
-    dsName : str
-        Path to the dataset directory where the marker file will be created
-    events : array-like
-        Array of event data where each event contains timing information in samples
-    chanName : str
-        Name of the channel or marker class to be written in the file
-    fs : float
-        Sampling frequency in Hz, used to convert sample indices to time in seconds
-        
-    Returns
-    -------
-    None
-        Creates a 'MarkerFile.mrk' file in the specified dataset directory
-        
-    Notes
-    -----
-    - The marker file uses a fixed format with blue color and editable properties
-    - Time values are converted from samples to seconds using the sampling frequency
-    - The function assumes CLASSGROUPID of 3 and uses 1-based indexing for CLASSID
-    """
-    no_trigs = 1
-    filepath = os.path.join(dsName, 'MarkerFile.mrk')
+# write_bw_marker_file, find_zero_location_channels (TC_findzerochans),
+# get_hpi_output_channels (TC_get_hpiout_names), plot_psd (tc_plot_psd),
+# and plot_3d were previously defined here. They are now imported from
+# opm_utility_scripts above.
 
-    with open(filepath, 'w') as fid:
-        fid.write('PATH OF DATASET:\n')
-        fid.write(f'{dsName}\n\n\n')
-        fid.write('NUMBER OF MARKERS:\n')
-        fid.write(f'{no_trigs}\n\n\n')
-
-        for i in range(no_trigs):
-            fid.write('CLASSGROUPID:\n')
-            fid.write('3\n')
-            fid.write('NAME:\n')
-            fid.write(f'{chanName}\n')
-            fid.write('COMMENT:\n\n')
-            fid.write('COLOR:\n')
-            fid.write('blue\n')
-            fid.write('EDITABLE:\n')
-            fid.write('Yes\n')
-            fid.write('CLASSID:\n')
-            fid.write(f'{i + 1}\n')  # Matlab uses 1-based indexing, Python uses 0-based
-            fid.write('NUMBER OF SAMPLES:\n')
-            fid.write(f'{len(events)}\n')
-            fid.write('LIST OF SAMPLES:\n')
-            fid.write('TRIAL NUMBER\t\tTIME FROM SYNC POINT (in seconds)\n')
-
-            for t in range(len(events) - 1):
-                fid.write(f'                  %+g\t\t\t\t               %+0.6f\n' % (0, events[t][0]/fs))
-
-            fid.write(f'                  %+g\t\t\t\t               %+0.6f\n\n\n' % (0, events[t][-1]/fs))
-
-def TC_findzerochans(info, tolerance=0.02):
-    """
-    Identify MEG channels with zero or invalid locations.
-    
-    Finds magnetometer channels positioned at the origin (0,0,0) which
-    typically indicates faulty sensor positioning or missing location data.
-    
-    Args:
-        info (mne.Info): MNE info object containing channel information
-        tolerance (float): Distance tolerance in meters (default: 0.02m = 2cm)
-    
-    Returns:
-        numpy.ndarray: Array of channel names with zero/invalid locations
-        
-    Note:
-        Default tolerance of 2cm removes channels within sphere of origin
-    """
-
-    bads_fl=np.array([])
-    picks = pick_types(info, meg='mag')
-    lst = list(bads_fl)
-    for j in picks:
-        ch = info['chs'][j]
-        if np.isclose(sum(ch['loc'][0:3]),0.,atol=1e-3).all():
-            lst.append(ch['ch_name'])
-    bads_fl = np.asarray(lst)
-    return(bads_fl)
-
-def tc_plot_psd(raw):
-    """
-    Generate power spectral density plots for MEG data quality assessment.
-    
-    Creates dual PSD plots (with/without projections) using Hann windowing
-    for frequency domain analysis of raw MEG data.
-    
-    Args:
-        raw (mne.io.Raw): Raw MEG data object
-    
-    Returns:
-        tuple: (fig_proj_on, fig_proj_off) - matplotlib figure objects
-        
-    Side Effects:
-        - Displays PSD plots with logarithmic scaling
-        - Shows frequency range 0-500Hz, power range 1-10000
-    """
-
-    fname = os.path.basename(raw.filenames[0])
-    n_fft = 1024
-    psd_ylim = [1.,10000.]
-    psd_xlim = [0.,500.]
-
-    projs =0
-    fig = raw.plot_psd(fmin=0,n_fft=n_fft,show=False, proj=True, dB=False ,xscale='log',window='hann',n_jobs=-1)
-    fig3 = raw.plot_psd(fmin=0,n_fft=n_fft,show=False, proj=False, dB=False ,xscale='log',window='hann',n_jobs=-1)
-
-    fig.suptitle('%s %d projs on hann' % (fname, projs))
-    fig3.suptitle('%s projs off hann' %fname)
-    fig.axes[0].set_yscale('log')
-    fig3.axes[0].set_yscale('log')
-
-    fig.axes[0].set_ylim(psd_ylim)
-    fig.axes[0].set_xlim(psd_xlim)
-    fig3.axes[0].set_ylim(psd_ylim)
-    fig3.axes[0].set_xlim(psd_xlim)
-
-    fig.subplots_adjust(0.1, 0.1, 0.95, 0.85)
-    fig3.subplots_adjust(0.1, 0.1, 0.95, 0.85)
-
-    plt.show()
-
-    return(fig,fig3)
-
-def TC_get_hpiout_names(raw):
-    """
-    Extract HPI output channel names and indices from raw data.
-    
-    Identifies miscellaneous channels containing 'out' in their names,
-    which typically correspond to HPI coil output signals.
-    
-    Args:
-        raw (mne.io.Raw): Raw data containing HPI output channels
-    
-    Returns:
-        tuple: (hpi_names, hpi_indices)
-            - hpi_names (list): Channel names containing HPI outputs
-            - hpi_indices (numpy.ndarray): Corresponding channel indices
-    """
-    hpi_names=list()
-
-    hpi_raw = raw.compute_psd(picks="misc", verbose='error')
-
-    for name in hpi_raw.info['ch_names']:
-        if 'out' in name:
-            # plt.plot(hpi_raw.copy().pick([name]).get_data()[0], label=name)
-            # print(raw.copy().pick([name])._data.var())
-            if raw.copy().pick([name])._data.var() > 1e-25:
-
-                hpi_names+=[name]
-    # plt.legend()
-    # plt.show()
-
-    hpi_indices=np.zeros(len(hpi_names),dtype=np.int64)
-    i=0
-    j=0
-    for ch in raw.info['ch_names']:
-        for hpi in hpi_names:
-            if hpi in ch:
-                hpi_indices[j]=i
-                j=j+1
-        i=i+1
-
-
-    return(hpi_names,hpi_indices)
-
-
-def plot_3d(plot_params: dict, filename: str):
-    """
-    Create 3D visualization of sensor array, HPI coils, and digitization points.
-    
-    Generates interactive 3D plot showing:
-    - MEG sensor positions with triangulated mesh surface
-    - HPI coil locations in device coordinates (blue)
-    - HPI coil locations in head coordinates (green)
-    - Digitization points (black)
-    
-    Args:
-        senspos (array): Sensor positions (Nx3)
-        senslabel (array): Sensor labels
-        hpipos (array): HPI positions in device coordinates
-        hpilabel (array): HPI coil labels
-        hpipos2 (array): HPI positions in head coordinates
-        hpilabel2 (array): HPI coil labels (head coords)
-        digpos (array): Digitization point positions
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Displays interactive 3D matplotlib plot
-        - Uses Delaunay triangulation for sensor mesh
-    """
-    senspos = plot_params.get('senspos', None)
-    senslabel = plot_params.get('senslabel', None)
-    hpipos = plot_params.get('hpipos', None)
-    hpilabel = plot_params.get('hpilabel', None)
-    hpipos2 = plot_params.get('hpipos2', None)
-    hpilabel2 = plot_params.get('hpilabel2', None)
-    digpos = plot_params.get('digpos', None)
-    
-    # Convert lists to numpy arrays
-    senspos = np.array(senspos)
-    senslabel = np.array(senslabel)
-    hpipos = np.array(hpipos)
-    hpilabel = np.array(hpilabel)
-
-    # Convert senspos to polar coordinates (origin = center of mass)
-    center_of_mass = np.mean(senspos, axis=0)
-    senspos_centered = senspos - center_of_mass
-    r = np.linalg.norm(senspos_centered, axis=1)
-    theta = np.arccos(senspos_centered[:, 2] / r)  # polar angle
-    phi = np.arctan2(senspos_centered[:, 0], senspos_centered[:, 1])  # azimuth angle with zero on y-axis
-    x_proj = theta * np.cos(phi)
-    y_proj = theta * np.sin(phi)
-    polar_proj = np.vstack((x_proj, y_proj)).T
-
-    # Triangulated in 2D polar space
-    tri = Delaunay(polar_proj)
-
-    # Create a 3D plot
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Plot the mesh
-    ax.plot_trisurf(senspos[:, 0], senspos[:, 1], senspos[:, 2],
-                    triangles=tri.simplices, cmap='viridis', alpha=0.6,
-                    edgecolor='k', linewidth=0.2)
-
-    # Plot the sensor positions with labels
-    ax.scatter(senspos[:, 0], senspos[:, 1], senspos[:, 2], color='r', s=50)
-    for i in range(len(senslabel)):
-        ax.text(senspos[i, 0], senspos[i, 1], senspos[i, 2], senslabel[i], color='black', fontsize=9)
-
-    # Plot the hpi positions with labels
-    ax.scatter(hpipos[:, 0], hpipos[:, 1], hpipos[:, 2], color='b', s=100)
-    for i in range(len(hpilabel)):
-        ax.text(hpipos[i, 0], hpipos[i, 1], hpipos[i, 2], hpilabel[i], color='blue')
-
-    # Plot the hpi positions with labels
-    ax.scatter(hpipos2[:, 0], hpipos2[:, 1], hpipos2[:, 2], color='g', s=100)
-    for i in range(len(hpilabel)):
-        ax.text(hpipos2[i, 0], hpipos2[i, 1], hpipos2[i, 2], hpilabel2[i], color='green')
-
-    # Plot the hpi positions with labels
-    ax.scatter(digpos[:, 0], digpos[:, 1], digpos[:, 2], color='k', s=10)
-    
-    # Set viewing angle (elevation, azimuth)
-    ax.view_init(elev=10, azim=20)
-
-    #plt.show()
-    fig.savefig(filename, dpi=300, bbox_inches='tight')
-    
 ###############################################################################
 # Configuration and Setup Functions
 ###############################################################################
@@ -446,7 +167,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             - hpi_gofs (np.ndarray): Goodness of fit for each coil (0-1)
             - hpi_orig (np.ndarray): HPI locations in head coordinates
             - hpi_names (list): HPI coil channel names
-            - pol_info (mne.Info): Polhemus digitization information
+            - pol_info (dict): Polhemus digitization information
             - nasion, lpa, rpa (np.ndarray): Fiducial point coordinates
             - raw (mne.io.Raw): Processed HPI data
             - new_sfreq (bool): Whether data was resampled
@@ -484,7 +205,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 
     new_hedscan_files = []
     for file in hedscan_files:
-        sfreq = mne.io.read_raw_fif(file, preload=False, verbose='error').info['sfreq']
+        sfreq = load_datafile(file)['sfreq']
 
         proc = 'proc-hpi'
         if new_sfreq and not (int(new_sfreq) == int(sfreq)):
@@ -520,6 +241,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             file for pattern in polhemus_patterns + [f for f in config['tasks'] if f not in polhemus_patterns]
             for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern.replace('.fif', '')}*.fif")
         ]
+        # TODO: also discover JSON polhemus files from a separately configured path.
         polfile_list = [f for f in polfile_list if not file_contains(f, exclude_patterns + noise_patterns)]
 
         if not polfile_list:
@@ -532,481 +254,174 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             log("HPI", f"No hpi file found matching: {hpinames}", 'error',logfile=logfile, logpath=log_path)
             hpifile = None
             return hpi_fit_parameters
-        else:
-            hpifile = hpi_files[0]
-            verbose_print(f"HPI: Using {hpifile}")
-
-        raw = None
-        for hpifile in hpi_files:
-            
-            verbose_print(f'Processing HPI file: {hpifile}')
+        pol = None
+        for pf in polfile_list:
             try:
-                raw = mne.io.read_raw_fif(hpifile, preload=True, verbose='error')
-            
+                pol = load_polhemus(pf)
+                verbose_print(f"Using polhemus: {pf}")
+                break
             except Exception as e:
-                log("HPI", f"Error reading {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
-                continue
+                log("HPI", f"Error reading {pf}: {e}", 'error', logfile=logfile, logpath=log_path)
 
-
-            if raw is None:
-                log("HPI", "Could not read any HPI file.", 'error', logfile=logfile, logpath=log_path)
-                #return hpi_fit_parameters
-            #remove bad channels
-            for bad_chan in raw.info["bads"]:
-                raw.drop_channels(bad_chan)
-
-            #remove zero channels
-            bads=TC_findzerochans(raw.info)
-
-            for bad_chan in bads:
-                raw.drop_channels(bad_chan)
-            if len(bads) > 0:
-                verbose_print(f"HPI: found the following channels with locations at 0,0,0 {bads}")
-
-            hpi_names,hpi_indices=TC_get_hpiout_names(raw)
-
-            hpi_freqs=np.zeros(len(hpi_indices))
-            for i in range(len(hpi_indices)):
-                hpi_freqs[i]=hpifreq
-
-            #resample
-            if new_sfreq:
-                raw.resample(new_sfreq, verbose='error')
-
-            #assuming file with polhemus locations of fiducials and HPIs
-            dig_found = False
-            for polfile in polfile_list:
-                try:
-                    pol_info = mne.io.read_info(polfile, verbose='error')
-                    if not pol_info['dig']:
-                        continue
-                    verbose_print(f"Using: {polfile}")
-                    dig_found = True
-                    if dig_found:
-                        break
-                except Exception as e:
-                    log("HPI", f"Error reading {polfile}: {e}", 'error', logfile=logfile, logpath=log_path)
-                    pol_info = None
-                    continue
-
-            digpts=np.array([],dtype=float)
-            lpa=pol_info['dig'][0]['r']
-            rpa=pol_info['dig'][2]['r']
-            nasion=pol_info['dig'][1]['r']
-
-            hpi=np.array([],dtype=float)
-            for j in pol_info['dig']:
-                if j['kind']==2:    # FIFFV_POINT_HPI = 2
-                    hpi=np.append(hpi,j['r']) # to account for the gap between sensor surface and cell centre
-            n=int(hpi.shape[0]/3)
-            hpi=hpi.reshape((n,3))
-            hpi_orig = hpi
-
-            dev_head_t = Transform("meg", "head", trans=None)
-            dev_head_t['trans']=get_ras_to_neuromag_trans(nasion, lpa, rpa) #should remain identity with the above geometry
-            raw.info.update(dev_head_t=dev_head_t)
-
-            info=raw.info
-
-            digpts=np.array([],dtype=float)
-            for j in pol_info['dig']:
-                digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
-            n=int(digpts.shape[0]/3)
-            digpts=digpts.reshape((n,3))
-
-            with raw.info._unlock():
-                raw.info['dig'], ctf_head_t=_call_make_dig_points(nasion, lpa, rpa, hpi[0:len(hpi_indices)], digpts, convert=True)
-
-            sampling_freq = raw.info["sfreq"]
-
-            start_sample =  0
-            stop_sample = len(raw)
-
-            verbose_print(f'start_sample={start_sample}, stop_sample={stop_sample}')
-
-            hpi_locs = []
-
-            dist_limit = 0.005
-
-            raw_orig = raw.copy()
-            slope = np.zeros((len(hpi_indices),len(pick_types(raw.info, meg='mag'))),dtype=float)
-            # check if 
-
-            for index in range(len(hpi_indices)):
-                raw=raw_orig.copy()
-                channel_index=hpi_indices[index]
-                chan_name=raw.info['ch_names'][channel_index]
-
-                do_plot=False
-
-                raw_selection = raw[channel_index, start_sample:stop_sample]
-                x = raw_selection[1]
-                y = raw_selection[0].T
-                b = y.ravel()
-                dist=round(raw.info['sfreq']/int(hpifreq))-2
-                peaks, _ = find_peaks(b, distance=dist,height=0.0001)
-                if peaks.size == 0:
-                    log("HPI", f"No peaks found for {chan_name}", 'warning', logfile=logfile, logpath=log_path)
-                    continue
-                else:
-                    verbose_print(f'''*********HPI channel we want to localize {chan_name}**********
-                    channel_index = {channel_index}
-                    hpi_indices[index] = {hpi_indices[index]}
-                    ''')
-
-                if do_plot:
-                    plt.plot(b)
-                    plt.plot(peaks, b[peaks], "x")
-                    plt.show()
-
-                    
-                window=(peaks[-1]-peaks[0])/raw.info['sfreq']
-
-                #we use this window to extract the portion of data out for the magnetic dipole fit
-
-                minT=peaks[0]/raw.info['sfreq']
-                maxT=peaks[-1]/raw.info['sfreq']
-
-                tmin=(maxT-minT)/2.-1+minT
-                tmax=(maxT-minT)/2.+1+minT #we extract 2 seconds worth of data
-
-                msg = f'''{chan_name}
-                    - first point = {peaks[0]} and last point = {peaks[-1]}
-                    - time window = {window} s
-                    - min time = {minT}, max time = {maxT}
-                    - tmin window = {tmin}, t max window = {tmax}
-                '''
-                
-                verbose_print(msg)
-
-                raw.crop(tmin=tmin,tmax=tmax, verbose='error')
-
-
-                if do_plot:
-
-                    spectrum = raw.compute_psd(picks=hpi_indices[index],window='hann',proj=False, )
-                    fig=spectrum.plot(picks='misc', amplitude=True,dB=False,)
-
-                    psd_ylim = [1.,10000.]
-                    psd_xlim = [0.,100.]
-
-                    fig.suptitle('%s projs off hann' % (hpi_names[index]))
-                    fig.axes[0].set_xlim(psd_xlim)
-                    fig.subplots_adjust(0.1, 0.1, 0.95, 0.85)
-                    plt.show()
-
-                    raw_selection2 = raw[channel_index, 0:len(raw)]
-                    verbose_print(f'cropped time window length = {len(raw)}')
-                    x1 = raw_selection2[1]
-                    y1 = raw_selection2[0].T
-
-                    plt.plot(x1,y1)
-                    # plt.show()
-
-
-                verbose_print('************* add hpi struct to info ***********')
-
-                hpi_sub = dict()
-
-                hpi_sub["hpi_coils"] = []
-
-                for _ in range(len(hpi_indices)):
-                    hpi_sub["hpi_coils"].append({})
-
-                hpi_coils=[]
-                for _ in range(len(hpi_indices)):
-                    hpi_coils.append({})
-
-                drive_channels = hpi_names
-                key_base = "Head Localization"
-                default_freqs = hpi_freqs
-
-                for i in range(len(hpi_indices)):
-                    # build coil structure
-                    hpi_coils[i]["number"] = i + 1
-                    hpi_coils[i]["drive_chan"] = drive_channels[i]
-                    verbose_print(hpi_coils[i]["drive_chan"])
-                    hpi_coils[i]["coil_freq"] = default_freqs[i]
-
-                    hpi_sub["hpi_coils"][i]["event_bits"] = [256]
-
-                with raw.info._unlock():
-                    raw.info["hpi_subsystem"] = hpi_sub
-                    raw.info["hpi_meas"] = [{"hpi_coils": hpi_coils}]
-
-                #****************************************************
-                verbose_print('************* localize hpi *******************')
-                n_hpis = 0
-
-                info=raw.info
-
-                for d in info["hpi_subsystem"]["hpi_coils"]:
-                    if d["event_bits"] == [256]:
-                        n_hpis += 1
-                if n_hpis < 3:
-                    warn(
-                        f"{n_hpis:d} HPIs active. At least 3 needed to perform"
-                        "head localization\n *NO* head localization performed"
-                    )
-                else:
-                    # Localized HPIs using 2000 milliseconds of data.
-                    with info._unlock():
-                        info["hpi_results"] = [
-                            dict(
-                                dig_points=[
-                                    dict(
-                                        r=np.zeros(3),
-                                        coord_frame=FIFF.FIFFV_COORD_DEVICE,
-                                        ident=ii + 1,
-                                    )
-                                    for ii in range(n_hpis)
-                                ],
-                                coord_trans=Transform("meg", "head"),
-                            )
-                        ]
-                    raw.info["line_freq"]=None
-                    #verbose_print(raw.pick(meg='mag').get_data())
-                    #verbose_print(raw.ch_names)
-                    try:
-                        coil_amplitudes = compute_chpi_amplitudes(raw, tmin=0, tmax=2, t_window=2, t_step_min=2, verbose='error')
-                        slope[index,:] = coil_amplitudes['slopes'][0][index]
-                    except Exception as e:
-                        log("HPI", f"Warning occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
-                        continue
-                        
-            #********
-            #verbose_print(hpifile)
-            break  # Stop after successfully reading the first file
-        # except Exception as e:
-        #     log("HPI", f"Error occurred while processing HPI file {hpifile}: {e}", 'error', logfile=logfile, logpath=log_path)
+        if pol is None:
+            log("HPI", "No valid polhemus file found.", 'error', logfile=logfile, logpath=log_path)
+            return hpi_fit_parameters
 
         try:
-            assert len(coil_amplitudes["times"]) == 1
-            coil_amplitudes['slopes'][0]= slope
-            coil_locs = compute_chpi_locs(raw.info, coil_amplitudes, verbose='error')
-            hpi_dev = np.array(coil_locs['rrs'][0])
-            hpi_gofs = np.array(coil_locs['gofs'][0])
+            best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq)
+            gofs = fit['hpi_gofs']
+            high_gofs = gofs[gofs > 0.9]
+            mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)
+            verbose_print(f"Best HPI file: {best_hpi_path} (mean GOF {mean_gof:.3f})")
+        except RuntimeError as e:
+            log("HPI", str(e), 'error', logfile=logfile, logpath=log_path)
+            return hpi_fit_parameters
 
-            verbose_print('**** Apply trans to recording file ***********************************')
+        try:
+            verbose_print('**** HPI fit complete — building parameter dict ***')
             hpi_fit_parameters['hedscan_files'] = hedscan_files
-            hpi_fit_parameters['hpi_dev'] = hpi_dev
-            hpi_fit_parameters['hpi_gofs'] = hpi_gofs
-            hpi_fit_parameters['hpi_orig'] = hpi_orig
-            hpi_fit_parameters['hpi_names'] = hpi_names
-            hpi_fit_parameters['pol_info'] = pol_info
-            hpi_fit_parameters['nasion'] = nasion
-            hpi_fit_parameters['lpa'] = lpa
-            hpi_fit_parameters['rpa'] = rpa
-            hpi_fit_parameters['raw'] = raw
-            hpi_fit_parameters['new_sfreq'] = new_sfreq
-            hpi_fit_parameters['logfile'] = logfile
-            hpi_fit_parameters['log_path'] = log_path
+            hpi_fit_parameters['hpi_dev']    = fit['hpi_dev']
+            hpi_fit_parameters['hpi_gofs']   = fit['hpi_gofs']
+            hpi_fit_parameters['hpi_orig']   = fit['hpi_orig']
+            hpi_fit_parameters['hpi_names']  = fit['hpi_names']
+            hpi_fit_parameters['pol_info']   = pol
+            hpi_fit_parameters['nasion']     = fit['nasion']
+            hpi_fit_parameters['lpa']        = fit['lpa']
+            hpi_fit_parameters['rpa']        = fit['rpa']
+            hpi_fit_parameters['fit']        = fit   # full fit dict passed to process_single_file
+            hpi_fit_parameters['new_sfreq']  = new_sfreq
+            hpi_fit_parameters['logfile']    = logfile
+            hpi_fit_parameters['log_path']   = log_path
         except Exception as e:
-            log("HPI", f"Error occurred while processing HPI files: {e}", 'error', logfile=logfile, logpath=log_path)
+            log("HPI", f"Error building HPI parameter dict: {e}", 'error', logfile=logfile, logpath=log_path)
     else:
-        log("HPI", 'No (new) files to process', 'info',logfile=logfile, logpath=log_path)
- 
+        log("HPI", 'No (new) files to process', 'info', logfile=logfile, logpath=log_path)
+
     return hpi_fit_parameters
 
 def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path, rename_analog):
     """
-    Apply HPI-derived coordinate transformation to individual MEG file.
-    
-    Transforms a single raw MEG file from device to head coordinates using
-    the HPI coil locations determined by find_hpi_fit(). Includes quality
-    control and optional visualization.
-    
-    Processing Steps:
-    1. Load raw MEG data and resample if needed
-    2. Remove bad and zero-location channels
-    3. Match HPI coils between device and head coordinates
-    4. Compute optimal coordinate transformation
-    5. Apply transformation and update file metadata
-    6. Save transformed data with processing suffix
-    
+    Apply HPI-derived coordinate transformation to an individual MEG file.
+
+    Orchestrates file-level concerns (output-filename construction, skip-if-exists
+    check, bad-channel safety thresholds, analog channel renaming, 3-D plot) and
+    delegates the core transform/save step to
+    :func:`opm_utility_scripts.hpi._core.apply_transform`.
+
     Args:
-        datfile (str): Path to raw MEG file to transform
-        
-        hpi_fit_parameters (dict): Parameters from find_hpi_fit() using:
-        - hpi_dev (np.ndarray): HPI locations in device coordinates
-        - hpi_gofs (np.ndarray): Goodness of fit for each HPI coil
-        - hpi_orig (np.ndarray): HPI locations in head coordinates  
-        - hpi_names (list): HPI coil channel names
-        - pol_info (mne.Info): Polhemus digitization information
-        - nasion, lpa, rpa (np.ndarray): Fiducial point coordinates
-        - new_sfreq (float): Target sampling frequency
-        
-        plotResult (bool): Whether to generate 3D visualization
-        log_path (str): Directory for log files
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Saves transformed file with '_proc-hpi+ds_raw.fif' suffix
-        - Updates MNE info object with head coordinate system
-        - Logs transformation quality metrics
-        - Optionally displays 3D plot of sensor/coil positions
-    
-    Quality Control:
-        - Only uses HPI coils with goodness of fit >0.9
-        - Reports mean distance between matched coil pairs
-        - Logs individual coil fit quality and status
-    
-    Notes:
-        - Uses cKDTree for efficient HPI coil matching
-        - Applies quaternion-based rigid body transformation
-        - Preserves all channel types and metadata
-        - File naming indicates HPI processing and downsampling
+        datfile (str): Path to the raw MEG file to transform.
+        hpi_fit_parameters (dict): Parameters produced by :func:`find_hpi_fit`.
+            Required keys: ``fit`` (full fit dict from ``fit_hpi``),
+            ``hpi_names``, ``new_sfreq``, ``logfile``, ``log_path``, ``overwrite``.
+        plotResult (bool): Whether to generate a 3-D visualisation after saving.
+        log_path (str): Directory for log files.
+        rename_analog (bool): Whether to rename analog channels after saving.
     """
-    path=os.path.dirname(datfile)
-    savename=os.path.basename(datfile)
-    savename=os.path.splitext(savename)[0]
-    savename=savename.replace('_raw','')
-    
-    hpi_dev = hpi_fit_parameters['hpi_dev']
-    hpi_gofs = hpi_fit_parameters['hpi_gofs']
-    hpi_orig = hpi_fit_parameters['hpi_orig']
-    hpi_names = hpi_fit_parameters['hpi_names']
-    pol_info = hpi_fit_parameters['pol_info']
-    nasion = hpi_fit_parameters['nasion']
-    lpa = hpi_fit_parameters['lpa']
-    rpa = hpi_fit_parameters['rpa']
-    new_sfreq = hpi_fit_parameters['new_sfreq']
-    logfile = hpi_fit_parameters['logfile']
-    log_path = hpi_fit_parameters['log_path']
-    overwrite = hpi_fit_parameters.get('overwrite', False)
+    path = os.path.dirname(datfile)
+    stem = os.path.splitext(os.path.basename(datfile))[0].replace('_raw', '')
+
+    fit        = hpi_fit_parameters['fit']
+    hpi_names  = hpi_fit_parameters['hpi_names']
+    new_sfreq  = hpi_fit_parameters['new_sfreq']
+    logfile    = hpi_fit_parameters['logfile']
+    log_path   = hpi_fit_parameters['log_path']
+    overwrite  = hpi_fit_parameters.get('overwrite', False)
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
+    # Build the output filename with the same dynamic suffix as before.
     sfreq = mne.io.read_info(datfile, verbose='error').get('sfreq', None)
-
-    proc = 'proc-hpi'
+    proc  = 'proc-hpi'
     if new_sfreq and not (int(new_sfreq) == int(sfreq)):
-        proc += f'+ds'
-    proc += f'_raw'
-        
-    savename = f'{savename}_{proc}.fif'
-    
-    if overwrite or not os.path.exists(f'{path}/{savename}'):
-        """Process a single data file"""
-        try:
-            raw = mne.io.read_raw_fif(datfile, verbose='error')
+        proc += '+ds'
+    proc += '_raw'
+    suffix   = f'_{proc}.fif'
+    savename = stem + suffix                        # just the basename stem + suffix
+    outpath  = os.path.join(path, savename)
 
-            #resample if new sampling freq different from old one
-            if new_sfreq != raw.info['sfreq']: 
-                raw.load_data().resample(new_sfreq)
+    if not overwrite and os.path.exists(outpath):
+        verbose_print(f"Skipping {savename} (already exists)")
+        return
 
-            #remove bad channels
-            for bad_chan in raw.info["bads"]:
-                raw.drop_channels(bad_chan)
+    try:
+        # Pre-flight bad-channel check so we can abort before the expensive fit.
+        raw_check = mne.io.read_raw_fif(datfile, preload=False, verbose='error')
+        bads = find_zero_location_channels(raw_check.info)
+        if len(bads) > 100:
+            log("HPI", f"Found {len(bads)} bad channels. Check recording.", 'error',
+                logfile=logfile, logpath=log_path)
+            return
+        if len(bads) > 9:
+            log("HPI", f"Found {len(bads)} bad channels", 'warning',
+                logfile=logfile, logpath=log_path)
 
-            #remove zero channels
-            bads=TC_findzerochans(raw.info)
+        # Core load / transform / save — delegated to the shared implementation.
+        # apply_transform handles: load, resample, drop bads+zerochans, embed
+        # digitisation, update dev_head_t, and save.
+        saved_path = apply_transform(datfile, fit, new_sfreq, suffix)
 
-            if len(bads) > 100:
-                log("HPI", f"Found {len(bads)} bad channels. Check recording.", 'error', logfile=logfile, logpath=log_path)
-                return
+        # Optional: rename analog channels in the saved file.
+        if rename_analog:
+            mapping = generate_analog_channel_mapping()
+            verbose_print('Renaming analog channels using mapping')
+            verbose_print(f'{mapping}')
+            rename_channels(saved_path, mapping, saved_path)
 
-            if len(bads) > 9 and len(bads) < 100:
-                log("HPI", f"Found {len(bads)} bad channels", 'warning', logfile=logfile, logpath=log_path)
-            for bad_chan in bads:
-                raw.drop_channels(bad_chan)
+        # Fit quality report.
+        hpi_dev    = fit['hpi_dev']
+        hpi_gofs   = fit['hpi_gofs']
+        hpi_orig   = fit['hpi_orig']
+        dist       = fit['dist']
+        dev_to_head_trans = fit['dev_to_head_trans']
+        hpi_head   = apply_trans(dev_to_head_trans, hpi_dev)
 
+        msg_coils = ''
+        for idx, value in enumerate(hpi_gofs):
+            status = 'ok' if value > 0.9 else 'not ok'
+            msg_coils += f"Coil: {hpi_names[idx][-3:]}, GOF: {value:.3f}, Status: {status}\n"
 
-            #only use good fits
-            include_hpis = hpi_gofs>0.9
+        verbose_print(f'''---------------------------------------------
+        hpi_orig: {hpi_orig}
+        hpi_dev:  {hpi_dev}
+        mean distance = {np.mean(dist) * 1000:.1f} mm
+        {msg_coils}        ---------------------------------------------''')
 
-            tree = cKDTree(hpi_orig)
-            distances, indices = tree.query(hpi_dev[include_hpis])
+        if plotResult:
+            raw_plot = mne.io.read_raw_fif(saved_path, preload=False, verbose='error')
+            senspos = np.array([], dtype=float)
+            picks = pick_types(raw_plot.info, meg='mag')
+            for j in picks:
+                senspos = np.append(senspos,
+                    apply_trans(dev_to_head_trans, raw_plot.info['chs'][j]['loc'][0:3]))
+            n = int(senspos.shape[0] / 3)
+            senspos = senspos.reshape((n, 3))
 
-            verbose_print(f'''
-                  hpi_orig: 
-                    {hpi_dev[include_hpis]}
-                  hpi_dev: 
-                    {hpi_orig[indices]}
-                  ''')
+            senslabel = []
+            for j in picks:
+                idx = raw_plot.info['chs'][j]['ch_name'].find('s')
+                senslabel.append(raw_plot.info['chs'][j]['ch_name'][idx:] if idx != -1 else '')
 
-            trans = _quat_to_affine(_fit_matched_points(hpi_dev[include_hpis], hpi_orig[indices])[0])
-            dev_to_head_trans = Transform(fro="meg", to="head", trans=trans)
+            digpts = np.array([], dtype=float)
+            for j in raw_plot.info['dig']:
+                digpts = np.append(digpts, j['r'])
+            n = int(digpts.shape[0] / 3)
+            digpts = digpts.reshape((n, 3))
 
-            hpi_head = apply_trans(dev_to_head_trans, hpi_dev)
-            dist = np.linalg.norm(hpi_orig[indices]-hpi_head[include_hpis], axis=1)
+            hpilabel = [str(j + 1) for j in range(len(hpi_names))]
+            plot_params = {
+                'senspos': senspos,
+                'senslabel': senslabel,
+                'hpipos': hpi_orig,
+                'hpilabel': hpilabel,
+                'hpipos2': hpi_head,
+                'hpilabel2': hpi_names,
+                'digpos': digpts,
+            }
+            plot_3d(plot_params, saved_path.replace('_raw.fif', '_3d_plot.png'))
 
-            raw.info.update(dev_head_t=dev_to_head_trans)
-
-            info=raw.info
-            digpts=np.array([],dtype=float)
-            for j in pol_info['dig']:
-                digpts=np.append(digpts,j['r'])
-            n=int(digpts.shape[0]/3)
-            digpts=digpts.reshape((n,3))
-
-            with raw.info._unlock():
-                raw.info['dig']=_make_dig_points(nasion, lpa, rpa, hpi_orig, digpts)
-
-            if rename_analog:
-                mapping = generate_mapping()
-                print('Renaming analog channels using mapping')
-                verbose_print(f'{mapping}')
-                raw = rename_channels(raw, mapping, f'{path}/{savename}')
-                
-            else:
-                raw.save(f'{path}/{savename}',overwrite=True)
-
-            msg_coils = ''
-            for index, value in enumerate(hpi_gofs):
-                    status = 'ok' if hpi_gofs[index]>0.9 else 'not ok'
-                    msg_coils += f"Coil: {hpi_names[index][-3:]}, GOF: {value:.3f}, Status: {status}\n"
-            
-            verbose_print(f'''---------------------------------------------
-            hpi_orig: 
-                {hpi_orig}
-            hpi_dev: 
-                {hpi_dev}
-            mean distance = {np.mean(dist)*1000:.1f} mm\n
-            {msg_coils}
-            ---------------------------------------------''')
-
-            if plotResult:
-                senspos=np.array([],dtype=float)
-                picks = pick_types(raw.info, meg='mag')
-                for j in picks:
-                    senspos=np.append(senspos, apply_trans(dev_to_head_trans, (raw.info['chs'][j]['loc'][0:3])))
-                n=int(senspos.shape[0]/3)
-                senspos=senspos.reshape((n,3))
-
-                senslabel=list()
-                picks = pick_types(raw.info, meg='mag')
-                for j in picks:
-                    index = raw.info['chs'][j]['ch_name'].find('s')
-                    if index != -1:
-                        senslabel.append(raw.info['chs'][j]['ch_name'][index:])
-                    else:
-                        senslabel.append('')
-
-                digpts=np.array([],dtype=float)
-                for j in raw.info['dig']:
-                    digpts=np.append(digpts,j['r']) # to account for the gap between sensor surface and cell centre
-                n=int(digpts.shape[0]/3)
-                digpts=digpts.reshape((n,3))
-                hpilabel=list()
-                for j in range(len(hpi_names)):
-                    hpilabel+=[str(j+1)]
-                    
-                plot_params = {
-                    'senspos': senspos,
-                    'senslabel': senslabel,
-                    'hpipos': hpi_orig,
-                    'hpilabel': hpilabel,
-                    'hpipos2': hpi_head,
-                    'hpilabel2': hpi_names,
-                    'digpos': digpts
-                }
-
-                plot_3d(plot_params, f'{path}/{savename.replace("_raw.fif", "_3d_plot.png")}')
-        except Exception as e:
-            log("HPI", f"Error occurred while processing {savename}: {e}", 'error', logfile=logfile, logpath=log_path)
+    except Exception as e:
+        log("HPI", f"Error occurred while processing {savename}: {e}", 'error',
+            logfile=logfile, logpath=log_path)
 
 ###############################################################################
 # Command Line Interface
@@ -1172,5 +587,4 @@ if __name__ == '__main__':
     args = args_parser()
     configure_verbosity(args.verbose)
     main(config=args.config)
-
 
