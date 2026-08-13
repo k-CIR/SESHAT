@@ -232,17 +232,38 @@ def find_hpi_fit(config, subject, session, overwrite=False):
         hedscan_files = new_hedscan_files
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
-        # Ensure polhemus_file is a list for compatibility
-        polhemus_patterns = config['polhemus_file']
-        if isinstance(polhemus_patterns, str):
-            polhemus_patterns = [polhemus_patterns]
-        
-        polfile_list = [
-            file for pattern in polhemus_patterns + [f for f in config['tasks'] if f not in polhemus_patterns]
-            for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern.replace('.fif', '')}*.fif")
-        ]
-        # TODO: also discover JSON polhemus files from a separately configured path.
-        polfile_list = [f for f in polfile_list if not file_contains(f, exclude_patterns + noise_patterns)]
+        # Stage 1: new polhemus/ subdir (JSON and FIF), subject + session must appear in filename.
+        # If multiple files match, use the most recent by timestamp embedded in the filename
+        # (e.g. digitisation_sub-0009_20260811144612.json — 14-digit YYYYMMDDHHMMSS suffix).
+        polhemus_dir = f"{opmMEGdir}/{subject}/{session}/polhemus"
+        polfile_list = []
+        if os.path.isdir(polhemus_dir):
+            candidates = []
+            for f in glob(f"{polhemus_dir}/*"):
+                fname = os.path.basename(f)
+                if subject in fname and session in fname:
+                    if f.endswith('.json') or f.endswith('.fif'):
+                        # Extract the numeric timestamp from the filename for sorting.
+                        # Filenames carry a 14-digit YYYYMMDDHHMMSS stamp; fall back to
+                        # the full filename string so lexicographic order is preserved
+                        # even for files with shorter or absent numeric suffixes.
+                        ts_match = re.search(r'(\d{14})', fname)
+                        sort_key = ts_match.group(1) if ts_match else fname
+                        candidates.append((sort_key, f))
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                polfile_list = [candidates[-1][1]]  # most recent only
+
+        # Stage 2: legacy triux/ fallback (existing logic, unchanged)
+        if not polfile_list:
+            polhemus_patterns = config['polhemus_file']
+            if isinstance(polhemus_patterns, str):
+                polhemus_patterns = [polhemus_patterns]
+            polfile_list = [
+                file for pattern in polhemus_patterns + [f for f in config['tasks'] if f not in polhemus_patterns]
+                for file in glob(f"{opmMEGdir}/{subject}/{session}/triux/*{pattern.replace('.fif', '')}*.fif")
+            ]
+            polfile_list = [f for f in polfile_list if not file_contains(f, exclude_patterns + noise_patterns)]
 
         if not polfile_list:
             log("HPI", f"No polhemus file found matching: {polfile_list}", 'error',logfile=logfile, logpath=log_path)
