@@ -128,8 +128,8 @@ def get_parameters(config:str):
         'polhemus_file': config.get('OPM', {}).get('polhemus', ''),
         'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
         'hpinames': config.get('OPM', {}).get('hpi_names', ''),
-        'hpifreq': config.get('OPM', {}).get('frequency', 33.0),
-        'downsample_freq': config.get('OPM', {}).get('downsample_to_hz', 1000),
+        'hpifreq': float(config.get('OPM', {}).get('frequency', 33.0)),
+        'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
         'overwrite': config.get('OPM', {}).get('overwrite', False),
         'plot': config.get('OPM', {}).get('plot', False),
         'logfile': config.get('Project', {}).get('Logfile', '')
@@ -270,7 +270,9 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             polfile = None
             return hpi_fit_parameters
 
-        hpi_files = [f for f in all_files if file_contains(f, hpinames)]
+        hpi_files = [f for f in all_files
+                     if file_contains(f, hpinames)
+                     and not file_contains(f, proc_patterns + exclude_patterns)]
         if not hpi_files:
             log("HPI", f"No hpi file found matching: {hpinames}", 'error',logfile=logfile, logpath=log_path)
             hpifile = None
@@ -288,12 +290,19 @@ def find_hpi_fit(config, subject, session, overwrite=False):
             log("HPI", "No valid polhemus file found.", 'error', logfile=logfile, logpath=log_path)
             return hpi_fit_parameters
 
+        MIN_GOF = 0.7  # Minimum acceptable mean GOF across all coils
         try:
             best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq)
             gofs = fit['hpi_gofs']
             high_gofs = gofs[gofs > 0.9]
             mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)
             verbose_print(f"Best HPI file: {best_hpi_path} (mean GOF {mean_gof:.3f})")
+            if mean_gof < MIN_GOF:
+                log("HPI",
+                    f"HPI fit quality too low (mean GOF {mean_gof:.3f} < {MIN_GOF}). "
+                    f"Check HPI recording and polhemus file. Skipping {subject}/{session}.",
+                    'error', logfile=logfile, logpath=log_path)
+                return hpi_fit_parameters
         except RuntimeError as e:
             log("HPI", str(e), 'error', logfile=logfile, logpath=log_path)
             return hpi_fit_parameters
