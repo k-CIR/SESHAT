@@ -33,6 +33,7 @@ def create_default_config():
             'Sinuhe raw': '/neuro/data/sinuhe/<project_path_on_sinuhe>',
             'Kaptah raw': '/neuro/data/kaptah/<project_path_on_kaptah>',
             'Stimuli': '/neuro/data/stimulus/<project_path_on_stimulus>',
+            'Polhemus': '/neuro/data/polhemus/<project>',
             'Root': default_path,
             'Raw': f'{default_path}/<project>/raw',
             'BIDS': f'{default_path}/<project>/BIDS',
@@ -386,7 +387,7 @@ class ConfigMainWindow:
         standard_scrollable = self.create_scrollable_frame(standard_frame)
         
         
-        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw', 'Stimuli']
+        standard_keys = ['Name', 'CIR-ID', 'Description', 'Tasks', 'Sinuhe raw', 'Kaptah raw', 'Stimuli', 'Polhemus']
         standard_help = {
             'Name': 'Name of project',
             'CIR-ID': 'CIR ID of the project, used for data management',
@@ -395,6 +396,7 @@ class ConfigMainWindow:
             'Sinuhe raw': 'Path to project raw data directory on Sinuhe (squid acquisition)',
             'Kaptah raw': 'Path to project raw data directory on Kaptah (opm acquisition)',
             'Stimuli': 'Path to project stimulus/presentation data on Stimulus PC (eg. 26099_visual_wm)',
+            'Polhemus': 'Path to the project polhemus digitisation directory on /neuro/data/polhemus/',
         }
         
         for key in standard_keys:

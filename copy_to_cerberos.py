@@ -321,6 +321,7 @@ def make_process_list(paths, check_existing=False):
     sinuhe = paths.get('sinuhe', '')
     kaptah = paths.get('kaptah', '')
     stimulus = paths.get('stimulus', '')
+    polhemus_src = paths.get('polhemus', '')
 
     jobs = []
     
@@ -441,6 +442,20 @@ def make_process_list(paths, check_existing=False):
         log('Copy', f"{kaptah} is empty", 'warning', logfile)
     else: 
         log('Copy', 'No Hedscan directory defined', 'warning', logfile)
+
+    if polhemus_src and isdir(polhemus_src):
+        for item in glob(f'*', root_dir=polhemus_src):
+            # Parse subject and session from filename
+            # e.g. digitisation_sub-0009_20260811144612.json
+            m = re.search(r'(sub-\w+)_(\d{8})', item)
+            if not m:
+                continue
+            sub = m.group(1)       # 'sub-0009'
+            date8 = m.group(2)     # '20260811'
+            session = date8[2:]    # '260811'
+            source = f'{polhemus_src}/{item}'
+            destination = f'{local_dir}/{sub}/{session}/polhemus/{os.path.basename(item)}'
+            jobs.append(check_match(source, destination))
 
     if stimulus:
         for item in glob(f'*', root_dir=stimulus):

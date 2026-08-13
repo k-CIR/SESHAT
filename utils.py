@@ -92,6 +92,7 @@ def project_paths(config: str, init=False):
     paths['sinuhe'] = config['Project'].get('Sinuhe raw', None)
     paths['kaptah'] = config['Project'].get('Kaptah raw', None)
     paths['stimulus'] = config['Project'].get('Stimuli', None)
+    paths['polhemus'] = config['Project'].get('Polhemus', None)
     paths['calibration'] = config['Project'].get('Calibration', None)
     paths['crosstalk'] = config['Project'].get('Crosstalk', None)
 
