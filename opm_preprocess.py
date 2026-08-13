@@ -36,12 +36,11 @@ import mne
 import concurrent.futures
 from functools import partial
 from tqdm import tqdm
-from mne._fiff.pick import pick_types
 
 
 from mne.transforms import apply_trans
 from opm_utility_scripts.channels import find_zero_location_channels, get_hpi_output_channels
-from opm_utility_scripts.viz import plot_3d, plot_psd
+from opm_utility_scripts.viz import plot_3d, plot_psd, plot_hpi_alignment
 from opm_utility_scripts import load_datafile, load_polhemus, select_best_hpi_file
 from opm_utility_scripts.io import write_bw_marker_file
 from opm_utility_scripts.analog.mapping import generate_analog_channel_mapping
@@ -403,7 +402,6 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         hpi_orig   = fit['hpi_orig']
         dist       = fit['dist']
         dev_to_head_trans = fit['dev_to_head_trans']
-        hpi_head   = apply_trans(dev_to_head_trans, hpi_dev)
 
         msg_coils = ''
         for idx, value in enumerate(hpi_gofs):
@@ -416,38 +414,16 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         mean distance = {np.mean(dist) * 1000:.1f} mm
         {msg_coils}        ---------------------------------------------''')
 
-        if plotResult:
+        # Always save the alignment PNG next to the output file.
+        # Load the saved file MEG channels for the sensor cloud reference.
+        try:
             raw_plot = mne.io.read_raw_fif(saved_path, preload=False, verbose='error')
-            senspos = np.array([], dtype=float)
-            picks = pick_types(raw_plot.info, meg='mag')
-            for j in picks:
-                senspos = np.append(senspos,
-                    apply_trans(dev_to_head_trans, raw_plot.info['chs'][j]['loc'][0:3]))
-            n = int(senspos.shape[0] / 3)
-            senspos = senspos.reshape((n, 3))
-
-            senslabel = []
-            for j in picks:
-                idx = raw_plot.info['chs'][j]['ch_name'].find('s')
-                senslabel.append(raw_plot.info['chs'][j]['ch_name'][idx:] if idx != -1 else '')
-
-            digpts = np.array([], dtype=float)
-            for j in raw_plot.info['dig']:
-                digpts = np.append(digpts, j['r'])
-            n = int(digpts.shape[0] / 3)
-            digpts = digpts.reshape((n, 3))
-
-            hpilabel = [str(j + 1) for j in range(len(hpi_names))]
-            plot_params = {
-                'senspos': senspos,
-                'senslabel': senslabel,
-                'hpipos': hpi_orig,
-                'hpilabel': hpilabel,
-                'hpipos2': hpi_head,
-                'hpilabel2': hpi_names,
-                'digpos': digpts,
-            }
-            plot_3d(plot_params, saved_path.replace('_raw.fif', '_3d_plot.png'))
+            plot_path = saved_path.replace('_raw.fif', '_hpi_alignment.png')
+            plot_hpi_alignment(fit, raw=raw_plot, show=False, filename=plot_path)
+            verbose_print(f"Alignment plot saved: {plot_path}")
+        except Exception as plot_err:
+            log("HPI", f"Could not save alignment plot: {plot_err}", 'warning',
+                logfile=logfile, logpath=log_path)
 
     except Exception as e:
         log("HPI", f"Error occurred while processing {savename}: {e}", 'error',
