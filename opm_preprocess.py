@@ -45,7 +45,7 @@ from opm_utility_scripts import load_datafile, load_polhemus, select_best_hpi_fi
 from opm_utility_scripts.io import write_bw_marker_file
 from opm_utility_scripts.analog.mapping import generate_analog_channel_mapping
 from opm_utility_scripts.analog.rename import rename_channels
-from opm_utility_scripts.hpi._core import apply_transform
+from opm_utility_scripts.hpi._core import apply_transform, save_raw
 
 from utils import (
     log, configure_logging,
@@ -384,17 +384,19 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
             log("HPI", f"Found {len(bads)} bad channels", 'warning',
                 logfile=logfile, logpath=log_path)
 
-        # Core load / transform / save — delegated to the shared implementation.
-        # apply_transform handles: load, resample, drop bads+zerochans, embed
-        # digitisation, update dev_head_t, and save.
-        saved_path = apply_transform(datfile, fit, new_sfreq, suffix)
+        # Apply transform: load, resample, drop bads+zerochans, embed
+        # digitisation and dev_head_t.  Returns the modified Raw in memory.
+        raw_out = apply_transform(datfile, fit, new_sfreq)
 
-        # Optional: rename analog channels in the saved file.
+        # Optional: rename analog channels before saving.
         if rename_analog:
             mapping = generate_analog_channel_mapping()
             verbose_print('Renaming analog channels using mapping')
             verbose_print(f'{mapping}')
-            rename_channels(saved_path, mapping, saved_path)
+            raw_out = rename_channels(raw_out, mapping, newpath=None)
+
+        # Save to disk.
+        saved_path = save_raw(raw_out, datfile, suffix)
 
         # Fit quality report.
         hpi_dev    = fit['hpi_dev']
@@ -415,11 +417,9 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         {msg_coils}        ---------------------------------------------''')
 
         # Always save the alignment PNG next to the output file.
-        # Load the saved file MEG channels for the sensor cloud reference.
         try:
-            raw_plot = mne.io.read_raw_fif(saved_path, preload=False, verbose='error')
             plot_path = saved_path.replace('_raw.fif', '_hpi_alignment.png')
-            plot_hpi_alignment(fit, raw=raw_plot, show=False, filename=plot_path)
+            plot_hpi_alignment(fit, raw=raw_out, show=False, filename=plot_path)
             verbose_print(f"Alignment plot saved: {plot_path}")
         except Exception as plot_err:
             log("HPI", f"Could not save alignment plot: {plot_err}", 'warning',
