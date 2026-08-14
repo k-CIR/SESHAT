@@ -419,7 +419,8 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         # Always save the alignment PNG next to the output file.
         try:
             plot_path = saved_path.replace('_raw.fif', '_hpi_alignment.png')
-            plot_hpi_alignment(fit, raw=raw_out, show=False, filename=plot_path)
+            fig = plot_hpi_alignment(fit, raw=raw_out, show=False)
+            fig.savefig(plot_path)
             verbose_print(f"Alignment plot saved: {plot_path}")
         except Exception as plot_err:
             log("HPI", f"Could not save alignment plot: {plot_err}", 'warning',
