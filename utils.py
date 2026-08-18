@@ -28,7 +28,7 @@ from tkinter import filedialog
 
 default_output_path = '/neuro/data/local'
 noise_patterns = ['empty', 'noise', 'Empty']
-proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead']
+proc_patterns = ['tsss', 'sss', r'corr\d+', r'ds\d+', 'mc', 'avgHead', 'proc-hpi']
 headpos_patterns = ['headpos', 'headshape']
 opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
