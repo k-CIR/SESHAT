@@ -188,7 +188,7 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     hpifreq = config.get('hpifreq', 33.0)
     new_sfreq = config.get('downsample_freq', 1000)
     hpinames=config.get('hpinames')
-    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif', 'hpi']
+    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
     overwrite = config.get('overwrite', False)
     logfile = config.get('logfile', 'pipeline_log.log')
     
@@ -416,15 +416,15 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         mean distance = {np.mean(dist) * 1000:.1f} mm
         {msg_coils}        ---------------------------------------------''')
 
-        # Always save the alignment PNG next to the output file.
-        try:
-            plot_path = saved_path.replace('_raw.fif', '_hpi_alignment.png')
-            fig = plot_hpi_alignment(fit, raw=raw_out, show=False)
-            fig.savefig(plot_path)
-            verbose_print(f"Alignment plot saved: {plot_path}")
-        except Exception as plot_err:
-            log("HPI", f"Could not save alignment plot: {plot_err}", 'warning',
-                logfile=logfile, logpath=log_path)
+        if plotResult:
+            try:
+                plot_path = saved_path.replace('_raw.fif', '_alignment.png')
+                fig = plot_hpi_alignment(fit, raw=raw_out, show=False)
+                fig.savefig(plot_path)
+                verbose_print(f"Alignment plot saved: {plot_path}")
+            except Exception as plot_err:
+                log("HPI", f"Could not save alignment plot: {plot_err}", 'warning',
+                    logfile=logfile, logpath=log_path)
 
     except Exception as e:
         log("HPI", f"Error occurred while processing {savename}: {e}", 'error',
