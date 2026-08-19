@@ -2,8 +2,12 @@
 neuro
 data
 depricated
+
 # Ignore config files
 *projects_to_sync*
+
+# Ignore kilo files
+.kilo
 
 # Ignore test files
 *test*
