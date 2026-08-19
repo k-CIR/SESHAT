@@ -2,12 +2,30 @@
 
 SESHAT implements a modular preprocessing pipeline for MEG/EEG datasets. The architecture separates acquisition synchronization, preprocessing, data standardization, and reporting.
 
+## Package Structure
+
+```
+seshat/
+├── __init__.py          # version + description
+├── cli.py               # CLI entry point (seshat / natmeg commands)
+├── config.py            # config I/O, migration, Tkinter GUI
+├── utils.py             # logging, path helpers, shared utilities
+└── stages/
+    ├── __init__.py
+    ├── copy.py          # copy_raw stage (was copy_to_cerberos.py)
+    ├── opm_preprocess.py
+    ├── maxfilter.py
+    ├── sync.py          # sync stage (was sync_to_cir.py)
+    └── report.py        # HTML report generation (was render_report.py)
+```
+
 ## Core Components
 
-1. Data ingestion and synchronization from acquisition systems.
-2. Preprocessing steps including HPI coregistration and MaxFilter.
-3. Dataset standardization through BIDS conversion.
-4. Reporting and synchronization of processed data to central servers.
+1. Data ingestion and synchronization from acquisition systems (`stages/copy.py`).
+2. Preprocessing steps including HPI coregistration and OPM analog alignment (`stages/opm_preprocess.py`).
+3. MaxFilter for TRIUX/SQUID recordings (`stages/maxfilter.py`).
+4. Dataset standardization through BIDS conversion (stub; not yet implemented).
+5. Reporting and synchronization of processed data to central servers (`stages/report.py`, `stages/sync.py`).
 
 ## Processing Flow
 

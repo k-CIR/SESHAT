@@ -13,19 +13,21 @@ bash install.sh
 After installation:
 
 ```bash
-natmeg gui
-natmeg run --config config.yml
-natmeg --help
+seshat gui
+seshat run --config config.yml
+seshat --help
 ```
+
+> **Note:** The `natmeg` command is still available as a deprecated alias for backwards compatibility.
 
 ## Minimal Usage Example
 
 ```bash
 # Create configuration
-natmeg create-config --output config.yml
+seshat create-config --output config.yml
 
 # Run the full pipeline
-natmeg run --config config.yml
+seshat run --config config.yml
 ```
 
 ## Documentation

@@ -19,7 +19,7 @@ Dependencies:
 - PyYAML for configuration management
 
 Usage:
-    python add_hpi.py -c config.yml
+    python opm_preprocess.py -c config.yml
 """
 import sys
 import argparse
@@ -47,7 +47,7 @@ from opm_utility_scripts.analog.mapping import generate_analog_channel_mapping
 from opm_utility_scripts.analog.rename import rename_channels
 from opm_utility_scripts.hpi._core import apply_transform, save_raw
 
-from utils import (
+from seshat.utils import (
     log, configure_logging,
     askForConfig,
     file_contains,
@@ -79,11 +79,6 @@ def verbose_print(message: str):
     """
     if VERBOSE:
         print(message)
-
-# write_bw_marker_file, find_zero_location_channels (TC_findzerochans),
-# get_hpi_output_channels (TC_get_hpiout_names), plot_psd (tc_plot_psd),
-# and plot_3d were previously defined here. They are now imported from
-# opm_utility_scripts above.
 
 ###############################################################################
 # Configuration and Setup Functions
@@ -131,56 +126,13 @@ def get_parameters(config:str):
         'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
         'overwrite': config.get('OPM', {}).get('overwrite', False),
         'plot': config.get('OPM', {}).get('plot', False),
-        'logfile': config.get('Project', {}).get('Logfile', '')
+        'logfile': config.get('Project', {}).get('logfile', '')
     }
     return hpi_config
      
 def find_hpi_fit(config, subject, session, overwrite=False):
     """
     Localize HPI coils in device coordinates using sequential activation.
-    
-    Main HPI localization function that:
-    1. Finds HPI and Polhemus files for the session
-    2. Processes HPI activation signals to extract coil locations
-    3. Fits magnetic dipoles to determine device coordinates
-    4. Establishes coordinate transformation using fiducial points
-    
-    Processing Steps:
-    - Loads HPI activation recording and removes bad/zero channels
-    - Extracts HPI output channel signals and frequencies
-    - Crops data to HPI activation windows using peak detection
-    - Computes HPI amplitudes and locations for each coil
-    - Uses Polhemus fiducials to establish head coordinate system
-    
-    Args:
-        config (dict): Configuration dictionary with parameters
-        subject (str): Subject identifier (e.g., 'sub-001')
-        session (str): Session identifier (e.g., '20250127')
-        overwrite (bool): Force reprocessing of existing files
-    
-    Returns:
-        dict: {hedscan_files, hpi_dev, hpi_gofs, hpi_orig, hpi_names, 
-                pol_info, nasion, lpa, rpa, raw, new_sfreq}
-            - hedscan_files (list): Files requiring HPI transformation
-            - hpi_dev (np.ndarray): HPI locations in device coordinates
-            - hpi_gofs (np.ndarray): Goodness of fit for each coil (0-1)
-            - hpi_orig (np.ndarray): HPI locations in head coordinates
-            - hpi_names (list): HPI coil channel names
-            - pol_info (dict): Polhemus digitization information
-            - nasion, lpa, rpa (np.ndarray): Fiducial point coordinates
-            - raw (mne.io.Raw): Processed HPI data
-            - new_sfreq (bool): Whether data was resampled
-    
-    Side Effects:
-        - Logs processing steps and coil fit quality
-        - Modifies raw data sampling frequency if needed
-        - Removes bad and zero-location channels
-    
-    Notes:
-        - Requires minimum 3 HPI coils for head localization
-        - Uses 2-second data windows for dipole fitting
-        - Peak detection finds HPI activation periods
-        - Goodness of fit >0.9 indicates reliable coil localization
     """
     
     opmMEGdir = config.get('opmMEG')
@@ -232,8 +184,6 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         # Stage 1: new polhemus/ subdir (JSON and FIF), subject + session must appear in filename.
-        # If multiple files match, use the most recent by timestamp embedded in the filename
-        # (e.g. digitisation_sub-0009_20260811144612.json — 14-digit YYYYMMDDHHMMSS suffix).
         polhemus_dir = f"{opmMEGdir}/{subject}/{session}/polhemus"
         polfile_list = []
         if os.path.isdir(polhemus_dir):
@@ -242,10 +192,6 @@ def find_hpi_fit(config, subject, session, overwrite=False):
                 fname = os.path.basename(f)
                 if subject in fname and session in fname:
                     if f.endswith('.json') or f.endswith('.fif'):
-                        # Extract the numeric timestamp from the filename for sorting.
-                        # Filenames carry a 14-digit YYYYMMDDHHMMSS stamp; fall back to
-                        # the full filename string so lexicographic order is preserved
-                        # even for files with shorter or absent numeric suffixes.
                         ts_match = re.search(r'(\d{14})', fname)
                         sort_key = ts_match.group(1) if ts_match else fname
                         candidates.append((sort_key, f))
@@ -331,20 +277,6 @@ def find_hpi_fit(config, subject, session, overwrite=False):
 def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path, rename_analog):
     """
     Apply HPI-derived coordinate transformation to an individual MEG file.
-
-    Orchestrates file-level concerns (output-filename construction, skip-if-exists
-    check, bad-channel safety thresholds, analog channel renaming, 3-D plot) and
-    delegates the core transform/save step to
-    :func:`opm_utility_scripts.hpi._core.apply_transform`.
-
-    Args:
-        datfile (str): Path to the raw MEG file to transform.
-        hpi_fit_parameters (dict): Parameters produced by :func:`find_hpi_fit`.
-            Required keys: ``fit`` (full fit dict from ``fit_hpi``),
-            ``hpi_names``, ``new_sfreq``, ``logfile``, ``log_path``, ``overwrite``.
-        plotResult (bool): Whether to generate a 3-D visualisation after saving.
-        log_path (str): Directory for log files.
-        rename_analog (bool): Whether to rename analog channels after saving.
     """
     path = os.path.dirname(datfile)
     stem = os.path.splitext(os.path.basename(datfile))[0].replace('_raw', '')
@@ -437,12 +369,6 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 def args_parser():
     """
     Parse command-line arguments for HPI coregistration script.
-    
-    Defines command-line interface with configuration file option for
-    standalone script execution.
-    
-    Returns:
-        argparse.Namespace: Parsed arguments with config file path
     """
     parser = argparse.ArgumentParser(description='Add HPI to OPM-MEG recordings.')
     parser.add_argument('-c', '--config', type=str, default='config.yml',
@@ -454,51 +380,7 @@ def args_parser():
 def main(config: Union[str, dict]=None):
     """
     Main execution function for HPI coregistration pipeline.
-    
-    Orchestrates the complete HPI processing workflow:
-    1. Loads configuration and validates parameters
-    2. Scans for subjects and sessions requiring processing
-    3. Performs HPI localization for each session
-    4. Applies transformations to all relevant files
-    5. Uses parallel processing for efficiency
-    
-    Processing Pipeline:
-    - Iterates through all subjects in OPM MEG directory
-    - Finds sessions with 6-digit date format (YYMMDD)
-    - Calls find_hpi_fit() to localize HPI coils
-    - Applies transformations to hedscan files in parallel
-    - Handles errors and logs processing status
-    
-    Configuration Requirements:
-    - opmMEG: Directory containing subject/session structure
-    - hpinames: Patterns to identify HPI activation files
-    - polhemus_file: Patterns for Polhemus digitization files
-    - hpifreq: HPI coil driving frequency
-    - Processing options: overwrite, plotting, downsampling
-    
-    Args:
-        None (uses command-line arguments or GUI config selection)
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Processes all eligible MEG files with HPI transformation
-        - Creates log files in data/log directory
-        - Uses ProcessPoolExecutor for parallel file processing
-        - Prints completion status
-    
-    Error Handling:
-        - Continues processing if individual files fail
-        - Logs all exceptions for debugging
-        - Validates configuration file existence
-    
-    Performance:
-        - Parallel processing scales with available CPU cores
-        - ProcessPoolExecutor handles memory-intensive operations
-        - Shared parameter passing via functools.partial
     """
-    
 
     if config is None:
         # Parse command line arguments
@@ -594,4 +476,3 @@ if __name__ == '__main__':
     args = args_parser()
     configure_verbosity(args.verbose)
     main(config=args.config)
-

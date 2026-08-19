@@ -1,5 +1,5 @@
 """
-Utility Functions for NatMEG Processing Pipeline
+Utility Functions for SESHAT Processing Pipeline
 
 Common helper functions used across the MEG processing workflow including
 logging, file handling, configuration management, and filename parsing.
@@ -65,7 +65,7 @@ def project_paths(config: str, init=False):
     project_root = Path(os.path.join(base_root, project_name))
     raw_root = config['Project'].get('Raw', project_root / 'raw')
     bids_root = config['Project'].get('BIDS', project_root / 'bids')
-    log_file = config['Project'].get('LogFile', 'pipeline_log.log')
+    log_file = config['Project'].get('logfile', config['Project'].get('LogFile', 'pipeline_log.log'))
     
     paths = {
         'project_root': project_root,
@@ -89,9 +89,9 @@ def project_paths(config: str, init=False):
     
     paths['log_file'] = paths['logs'] / log_file
     paths['bids'] = bids_root
-    paths['sinuhe'] = config['Project'].get('Sinuhe raw', None)
-    paths['kaptah'] = config['Project'].get('Kaptah raw', None)
-    paths['stimulus'] = config['Project'].get('Stimuli', None)
+    paths['sinuhe'] = config['Project'].get('sinuhe_raw', None)
+    paths['kaptah'] = config['Project'].get('kaptah_raw', None)
+    paths['stimulus'] = config['Project'].get('stimulus', None)
     paths['polhemus'] = config['Project'].get('Polhemus', None)
     paths['calibration'] = config['Project'].get('Calibration', None)
     paths['crosstalk'] = config['Project'].get('Crosstalk', None)
@@ -127,10 +127,6 @@ def askForConfig():
     Initial Directory:
         Defaults to '/neuro/data/local' for convenient navigation
     """
-    # Create hidden root window
-    # if not exists(default_output_path):
-    #     default_output_path = '.'
-    
     config_file = filedialog.askopenfilename(
         title="Select Configuration File",
         initialdir=default_output_path,
@@ -239,7 +235,7 @@ def apply_ansi_colors_to_tk(text_widget, ansi_text):
 
 ###############################################################################
 
-_LOGGER_NAME = 'NatMEG'
+_LOGGER_NAME = 'seshat'
 _CONFIGURED: bool = False
 _FILE_HANDLER_REGISTRY: Dict[str, logging.Handler] = {}
 _CONSOLE_HANDLER: Optional[logging.Handler] = None
@@ -592,8 +588,8 @@ def extract_info_from_filename(file_name: str):
     return info_dict
 
 
- ###############################################################################
- # Other useful utilities
+###############################################################################
+# Other useful utilities
 ###############################################################################
 def delete_files(root, pattern, test=True, recursive=True):
 
@@ -665,7 +661,7 @@ def args_parser():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description='NatMEG Utilities - Run utility functions from command line',
+        description='SESHAT Utilities - Run utility functions from command line',
         add_help=True
     )
     

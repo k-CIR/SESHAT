@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NatMEG Server Sync Utility
+SESHAT Server Sync Utility
 Convenient script for syncing processed data to remote servers (CIR, etc.)
 """
 
@@ -17,10 +17,29 @@ from datetime import datetime
 from typing import Dict, List, Optional, Union
 from copy import deepcopy
 from mne_bids import print_dir_tree
-from utils import log, askdirectory
+from seshat.utils import log, askdirectory
 
-sync_config = '/home/natmeg/.config/sync_config.yml'
-general_log_file = '/home/natmeg/.log/sync_to_server.log'
+# Use an XDG-compliant per-user path instead of a hard-coded system path.
+sync_config = os.path.join(
+    os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')),
+    'seshat', 'sync_config.yml'
+)
+general_log_file = os.path.join(
+    os.environ.get('XDG_STATE_HOME', os.path.expanduser('~/.local/state')),
+    'seshat', 'sync_to_server.log'
+)
+
+# Allowlist of rsync flags that may be specified per-server in a config file.
+# Free-form option strings from config are never passed to subprocess directly.
+_RSYNC_OPTION_ALLOWLIST = {
+    '--checksum', '--compress', '--no-compress', '--bwlimit',
+    '--timeout', '--contimeout', '--no-motd', '--partial',
+    '--progress', '--no-progress',
+}
+# Allowlist of ssh flags that may be specified per-server in a config file.
+_SSH_OPTION_ALLOWLIST = {
+    '-p', '-i', '-o', '-l', '-F', '-c',
+}
 
 class ServerSync:
     """Handle syncing data to remote servers with rsync"""
@@ -65,7 +84,6 @@ class ServerSync:
             if not path:
                 raise ValueError("No local path selected")
         
-        # Ensure the path exists
         if not os.path.exists(path):
             raise FileNotFoundError(f"Local path does not exist: {path}")
         
@@ -79,31 +97,50 @@ class ServerSync:
         
         cmd = ['rsync']
 
-        # Source and destination
-        local_path = local_path.rstrip('/')  # Remove trailing slash
+        local_path = local_path.rstrip('/')
         remote_root = server_config['remote_path'].rstrip('/')
         
-        # Always avoid duplicating the local basename on the remote path
         remote_dest = f"{server_config['user']}@{server_config['host']}:{remote_root}"
 
         cmd.extend(self.config.get('default_rsync_options', []))
         
         global_excludes = self.config.get('sync_defaults', {}).get('global_excludes', [])
 
-        # Add includes (processed before excludes)
         global_includes = self.config.get('sync_defaults', {}).get('global_includes', [])
         
         log_commands = self.config.get('log_commands', {})
         
-        custom_opts = server_config.get('rsync_options', [])
-        
-        ssh_opts = server_config.get('ssh_options', [])
+        # Validate per-server rsync options against the allowlist to prevent
+        # arbitrary flag injection from a potentially attacker-controlled config.
+        raw_custom_opts = server_config.get('rsync_options', [])
+        custom_opts = []
+        for opt in raw_custom_opts:
+            flag = opt.split('=')[0] if '=' in opt else opt
+            if flag in _RSYNC_OPTION_ALLOWLIST:
+                custom_opts.append(opt)
+            else:
+                log(f"Ignoring disallowed rsync option from config: {opt!r}", 'warning')
+
+        # Validate per-server ssh options against the allowlist.
+        raw_ssh_opts = server_config.get('ssh_options', [])
+        ssh_opts = []
+        i = 0
+        while i < len(raw_ssh_opts):
+            flag = raw_ssh_opts[i]
+            if flag in _SSH_OPTION_ALLOWLIST:
+                ssh_opts.append(flag)
+                # These flags take a value argument; consume it too.
+                if flag in {'-p', '-i', '-o', '-l', '-F', '-c'} and i + 1 < len(raw_ssh_opts):
+                    i += 1
+                    ssh_opts.append(raw_ssh_opts[i])
+            else:
+                log(f"Ignoring disallowed ssh option from config: {flag!r}", 'warning')
+            i += 1
         
         if global_excludes:
             for pattern in global_excludes:
                 cmd.extend(['--exclude', pattern])
         
-        # Add custom excludes and includes
         if exclude_patterns:
             for pattern in exclude_patterns:
                 cmd.extend(['--exclude', pattern])
@@ -116,19 +153,15 @@ class ServerSync:
             for pattern in include_patterns:
                 cmd.extend(['--include', pattern])
 
-        # Also add itemize-changes to track what files are transferred
         if '--itemize-changes' not in cmd:
             cmd.append('--itemize-changes')
 
-        # Add dry-run option
         if dry_run:
             cmd.append('--dry-run')
             
-        # Custom rsync options from config
         if custom_opts:
             cmd.extend(custom_opts)
             
-        # SSH options
         if ssh_opts:
             ssh_cmd = ['ssh'] + ssh_opts
             cmd.extend(['-e', ' '.join(shlex.quote(arg) for arg in ssh_cmd)])
@@ -137,9 +170,16 @@ class ServerSync:
             cmd.append('--stats')
         cmd.extend([local_path, remote_dest])
 
-        # Log 
-        if log_commands:
-            cmd.extend(['--log-file', log_commands.get('file', '')])
+        if log_commands and log_commands.get('file'):
+            # Confine the log file path to a subdirectory of local_path to prevent
+            # an attacker-controlled config from writing to arbitrary system paths.
+            raw_log = log_commands['file']
+            resolved = os.path.realpath(os.path.join(local_path, raw_log))
+            local_real = os.path.realpath(local_path)
+            if resolved.startswith(local_real + os.sep) or resolved == local_real:
+                cmd.extend(['--log-file', resolved])
+            else:
+                log(f"Ignoring --log-file path outside project directory: {raw_log!r}", 'warning')
 
         return cmd
     
@@ -162,11 +202,10 @@ class ServerSync:
         try:
             server_config = self.validate_server_config(server_name)
             cmd = self.build_rsync_command(
-                local_path, server_config, exclude_patterns, 
+                local_path, server_config, exclude_patterns,
                 include_patterns, dry_run)
-            # Log the command
             cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
-            log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path, )
+            log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path)
 
             if dry_run:
                 log("DRY RUN MODE - No files will be transferred", 'info',
@@ -174,28 +213,29 @@ class ServerSync:
                 if delete:
                     log("DRY RUN MODE - Local files would be deleted after successful sync", 'info',
                         logfile=self.log_file, logpath=log_path)
-                print_dir_tree(local_path, max_depth=2)  # Print directory structure for verification
-            
-            # Execute rsync
+                print_dir_tree(local_path, max_depth=2)
+
+            # Snapshot files before transfer so deletion is based on a directory
+            # diff rather than parsing rsync stdout (which is vulnerable to injection).
+            snapshot_before = self._snapshot_files(local_path) if (delete and not dry_run) else set()
+
             result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            # Log output
+
             if result.stdout:
                 log(f"Rsync output:\n{result.stdout}", 'info',
                     logfile=self.log_file, logpath=log_path)
-                    
+
             if result.stderr:
                 log(f"Rsync errors:\n{result.stderr}", 'warning',
                     logfile=self.log_file, logpath=log_path)
-            
+
             if result.returncode == 0:
                 log(f"Successfully synced {local_path} to {server_name}", 'info',
                     logfile=self.log_file, logpath=log_path)
-                
-                # If delete flag is set and sync was successful, delete local files
+
                 if delete and not dry_run:
-                    self._delete_local_files_after_sync(local_path, result.stdout, log_path)
-                
+                    self._delete_local_files_after_sync(local_path, snapshot_before, log_path)
+
                 return True
             else:
                 log(f"Rsync failed with return code {result.returncode}", 'error',
@@ -207,28 +247,35 @@ class ServerSync:
                 logfile=self.log_file, logpath=log_path)
             return False
     
-    def _delete_local_files_after_sync(self, local_path: str, rsync_output: str, log_path: str):
-        """Delete local files that were successfully transferred to server"""
+    def _snapshot_files(self, base_path: str) -> set:
+        """Return the set of all regular file paths under base_path."""
+        result = set()
+        for root, _dirs, files in os.walk(base_path):
+            for fname in files:
+                result.add(os.path.join(root, fname))
+        return result
+
+    def _delete_local_files_after_sync(self, local_path: str, snapshot_before: set, log_path: str):
+        """Delete local files that existed before the sync (i.e. were transferred).
+
+        Uses a pre/post directory snapshot instead of parsing rsync stdout,
+        which would be vulnerable to output-injection from a malicious remote.
+        Files are only deleted if they still exist and are strictly under local_path.
+        """
         try:
-            import re
-            
-            # Parse rsync output to find transferred files
-            transferred_files = []
-            lines = rsync_output.strip().split('\n')
-            
-            for line in lines:
-                # Look for lines that indicate file transfers (starts with > or <)
-                # Format: >f+++++++++ path/to/file
-                match = re.match(r'^[><]f[\+\.\s]*\s+(.+)$', line.strip())
-                if match:
-                    relative_path = match.group(1)
-                    full_path = os.path.join(local_path, relative_path)
-                    if os.path.exists(full_path) and os.path.isfile(full_path):
-                        transferred_files.append(full_path)
-            
-            # Delete the transferred files
+            local_real = os.path.realpath(local_path)
+            snapshot_after = self._snapshot_files(local_path)
+            # Files present both before and after the transfer are candidates for deletion.
+            candidates = snapshot_before & snapshot_after
+
             deleted_count = 0
-            for file_path in transferred_files:
+            for file_path in candidates:
+                # Safety check: only delete files strictly within local_path.
+                resolved = os.path.realpath(file_path)
+                if not (resolved.startswith(local_real + os.sep) or resolved == local_real):
+                    log(f"Skipping deletion of file outside project directory: {file_path}", 'warning',
+                        logfile=self.log_file, logpath=log_path)
+                    continue
                 try:
                     os.remove(file_path)
                     deleted_count += 1
@@ -237,14 +284,12 @@ class ServerSync:
                 except Exception as e:
                     log(f"Failed to delete local file {file_path}: {e}", 'warning',
                         logfile=self.log_file, logpath=log_path)
-            
+
             if deleted_count > 0:
                 log(f"Deleted {deleted_count} local files after successful sync", 'info',
                     logfile=self.log_file, logpath=log_path)
-                
-                # Clean up empty directories
                 self._cleanup_empty_directories(local_path, log_path)
-            
+
         except Exception as e:
             log(f"Error during local file cleanup: {e}", 'warning',
                 logfile=self.log_file, logpath=log_path)
@@ -253,11 +298,9 @@ class ServerSync:
         """Remove empty directories after file deletion"""
         try:
             for root, dirs, files in os.walk(base_path, topdown=False):
-                # Skip the log directory
                 if root == log_path or log_path in root:
                     continue
                     
-                # If directory is empty (no files and no subdirectories), remove it
                 if not files and not dirs:
                     try:
                         os.rmdir(root)
@@ -275,7 +318,6 @@ class ServerSync:
         try:
             server_config = self.validate_server_config(server_name)
             
-            # Test SSH connection
             ssh_cmd = ['ssh']
             ssh_opts = server_config.get('ssh_options', [])
             if ssh_opts:
@@ -289,32 +331,19 @@ class ServerSync:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
-                print(f"✅ Successfully connected to {server_name}")
+                print(f"Successfully connected to {server_name}")
                 return True
             else:
-                print(f"❌ Failed to connect to {server_name}: {result.stderr}")
+                print(f"Failed to connect to {server_name}: {result.stderr}")
                 return False
                 
         except Exception as e:
-            print(f"❌ Error testing connection to {server_name}: {e}")
+            print(f"Error testing connection to {server_name}: {e}")
             return False
 
 def get_parameters(config: Union[str, Dict]) -> Dict:
     """
     Extract and merge BIDS configuration parameters from file or dictionary.
-    
-    Reads configuration from JSON/YAML file or processes existing dictionary,
-    combining project and BIDS-specific parameters into a unified configuration.
-
-    Args:
-        config (str or dict): Path to config file (.json/.yml/.yaml) or
-                             configuration dictionary
-
-    Returns:
-        dict: Merged configuration dictionary combining project and BIDS settings
-
-    Raises:
-        ValueError: If unsupported file format is provided
     """
     if isinstance(config, str):
         if config.endswith('.json'):
@@ -341,23 +370,16 @@ def create_example_config():
                 'user': 'your_username',
                 'remote_path': '/data/natmeg/project_name',
                 'ssh_options': ['-p', '22', '-i', '~/.ssh/id_rsa'],
-                'rsync_options': ['--checksum']  # Additional rsync options
+                'rsync_options': ['--checksum']
             },
-            # 'backup_server': {
-            #     'host': 'backup.example.com', 
-            #     'user': 'backup_user',
-            #     'remote_path': '/backup/natmeg',
-            #     'ssh_options': ['-p', '2222'],
-            #     'rsync_options': ['--backup', '--backup-dir=old_versions']
-            # }
         },
         'default_rsync_options': [
-            '--archive',           # Archive mode
-            '--verbose',           # Verbose output
-            '--compress',          # Compress during transfer
-            '--partial',           # Keep partial files on interruption
-            '--progress',          # Show progress
-            '--human-readable'    # Human readable sizes
+            '--archive',
+            '--verbose',
+            '--compress',
+            '--partial',
+            '--progress',
+            '--human-readable'
         ],
         'sync_defaults': {
             'global_excludes': [
@@ -383,18 +405,18 @@ def create_example_config():
 def main(path:str=None):
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description="NatMEG Server Sync Utility",
+        description="SESHAT Server Sync Utility",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Test connection to server
-  python sync_to_cir.py --test cir
+  seshat sync --test --server cir
   
   # Sync custom directory
-  python sync_to_cir.py --directory /path/to/data cir
+  seshat sync --directory /path/to/data
 
   # Generate example config
-  python sync_to_cir.py --create-config
+  seshat sync --create-config
         """
     )
 
@@ -421,7 +443,6 @@ Examples:
 
     server_name = args.server or 'cir'
     
-    # Create example config
     if args.create_config:
         example = create_example_config()
         server_config_file = 'server_sync_config.yml'
@@ -431,7 +452,6 @@ Examples:
         print("Edit this file with your server details before using the sync tool.")
         return
     
-    # Load configuration
     if args.server_config:
         server_config_file = args.server_config
         if not os.path.exists(server_config_file):
@@ -447,13 +467,10 @@ Examples:
     else:
         syncer = ServerSync()
 
-    # Test connection only
     if args.test:
         syncer.check_server_connection(server_name)
         return
     
-    # Sync operations
-
     if args.config:
         try:
             config = get_parameters(args.config)

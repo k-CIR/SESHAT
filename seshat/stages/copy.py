@@ -20,7 +20,7 @@ import sys
 calibration = '/neuro/databases/sss/sss_cal.dat'
 crosstalk = '/neuro/databases/ctc/ct_sparse.fif'
 
-from utils import (
+from seshat.utils import (
     log, configure_logging,
     headpos_patterns,
     proc_patterns,
@@ -117,9 +117,11 @@ def check_match(source, destination, size_tolerance_bytes=4096, check_info=False
                 }
                 info_match = all(metadata_checks.values())
             
-            # Just check fif-size (sum split files if any)
-            if isinstance(get_split_file_parts(destination), list):
-                dest_size = sum([getsize(dest) for dest in get_split_file_parts(destination)])
+            # Just check fif-size (sum split files if any).
+            # Cache the split-parts result to avoid a second filesystem walk.
+            _dst_parts = get_split_file_parts(destination)
+            if isinstance(_dst_parts, list):
+                dest_size = sum(getsize(p) for p in _dst_parts)
             else:
                 dest_size = getsize(destination)
         else:
@@ -235,10 +237,6 @@ def estimate_job_duration(jobs_to_process):
         else:
             str_estimates['size'] = f"{total_size} bytes"
 
-    # print(f"""
-    #     Estimated total transfer time: {str_estimates['time']}
-    #     Estimated total size to transfer: {str_estimates['size']}
-    # """)
     return estimated_time, total_size, str_estimates
 
 def copy_data(source, destination):
@@ -255,16 +253,18 @@ def copy_data(source, destination):
     new_file = 0
     failed_file = 0
 
-    if check_match(source, destination)[0]:
-        
-       match = True
-       source = get_split_file_parts(source)
-       destination = get_split_file_parts(destination)
-       message = "Copied"
-       level = 'info'
-       existing_file = 1
+    # Call check_match once and reuse the result to avoid double filesystem probes.
+    _match, _src, _dst = check_match(source, destination)
 
-    if not check_match(source, destination)[0]:
+    if _match:
+        match = True
+        source = get_split_file_parts(source)
+        destination = get_split_file_parts(destination)
+        message = "Copied"
+        level = 'info'
+        existing_file = 1
+
+    if not _match:
 
         os.makedirs(dirname(destination), exist_ok=True)
         
@@ -314,7 +314,7 @@ def make_process_list(paths, check_existing=False):
             
     project_root = paths['project_root']
     log_path = paths['logs']
-    logfile = paths['log_file']
+    logfile = paths.get('log_file', 'pipeline_log.log')
     docspath = paths.get('docs', '')
     scriptspath = paths.get('scripts', '')
     
@@ -335,8 +335,6 @@ def make_process_list(paths, check_existing=False):
             destination = f'{docspath}/{item}'
             jobs.append(check_match(source, destination))
 
-            # copy_file(source, destination, logfile=logfile, log_path=log_path)
-        
         for subject in subjects:
             sessions = sorted([session for session in glob('*', root_dir = f'{sinuhe}/NatMEG_{subject}')
             if isdir(f'{sinuhe}/NatMEG_{subject}/{session}') and re.match(r'^\d{6}$', session)
@@ -351,15 +349,12 @@ def make_process_list(paths, check_existing=False):
                 destination = f'{local_subject_docs_dir}_{item}'
                 jobs.append(check_match(source, destination))
 
-                # copy_file(source, destination, logfile=logfile, log_path=log_path)
-                
             for session in sessions:
                 items = [f for f in glob(f'*', root_dir=f'{sinuhe_subject_dir}/{session}/meg')]
                 for item in items:
                     source = f'{sinuhe_subject_dir}/{session}/meg/{item}'
                     destination = f'{local_dir}/sub-{subject}/{session}/triux/{item}'
                     jobs.append(check_match(source, destination))
-                    # copy_file(source, destination, logfile=logfile, log_path=log_path)
     elif not isdir(sinuhe):
         log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
     
@@ -492,9 +487,9 @@ def process_file_worker(file_info, logfile):
     return match, source, destination, msg, existing_file, new_file, failed_file
 
 
-def copy_files(paths):
+def copy_files_to_raw(paths):
     """
-    Copy files to the Cerberos directory.
+    Copy files to the local raw directory.
 
     Args:
         paths: directories
@@ -523,15 +518,18 @@ def copy_files(paths):
     failed_file_count = 0
     size_cumsum = 0
 
+    # Pre-compute per-job sizes once to avoid re-stating every file on each loop iteration.
+    job_sizes = [estimate_job_duration([job])[1] for job in jobs_to_process]
+
     pbar = tqdm(total=len(jobs_to_process),
                 desc="Copy files",
                 unit=f' file(s)',
-                       disable=not sys.stdout.isatty(),
-                       ncols=80,
-                       bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+                disable=not sys.stdout.isatty(),
+                ncols=80,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
-    for job in jobs_to_process:
-        size_cumsum += estimate_job_duration([job])[1]
+    for job, job_size in zip(jobs_to_process, job_sizes):
+        size_cumsum += job_size
         print(f'{size_cumsum}/{total_size}')
 
         try:
@@ -591,8 +589,8 @@ def update_copy_report(results, paths):
         int: Number of new entries added to the report
     """
     
-    logfile = paths['log_file']
-    report_file = f'{paths['logs']}/copy_results.json'
+    logfile = paths.get('log_file', 'pipeline_log.log')
+    report_file = f'{paths["logs"]}/copy_results.json'
     
     # Load existing report if it exists
     existing_report = []
@@ -694,14 +692,14 @@ def update_copy_report(results, paths):
 
 def args_parser():
     parser = argparse.ArgumentParser(description=
-                                     '''Maxfilter
+                                     '''Copy raw data to local processing directory.
                                      
-                                     Will use a configuation file to run MaxFilter on the data.
-                                     Select to open an existing configuration file or create a new one.
+                                     Will use a configuration file to copy raw data from acquisition
+                                     computers to the local project directory.
                                      
                                      ''',
                                      add_help=True,
-                                     usage='maxfilter [-h] [-c CONFIG]')
+                                     usage='seshat copy [-h] [-c CONFIG]')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     args = parser.parse_args()
     return args
@@ -720,10 +718,9 @@ def main(config: str=None):
     copy_squid_databases(paths['calibration'], paths['crosstalk'])
 
     # Perform file copying
-    results = copy_files(paths)
+    results = copy_files_to_raw(paths)
     update_copy_report(results, paths)
     return True
 
 if __name__ == "__main__":
     main()
-            

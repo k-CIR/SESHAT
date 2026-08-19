@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "seshat"
+version = "0.1.0"
+description = "Scripts for Extraction, Synchronisation, HPI + Analog alignment and Transfer"
+requires-python = ">=3.9"
+
+[project.scripts]
+seshat = "seshat.cli:main"
+natmeg = "seshat.cli:natmeg_compat"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seshat*"]

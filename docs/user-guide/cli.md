@@ -1,53 +1,55 @@
 # CLI Usage
 
-The `natmeg` command provides access to all pipeline functionality.
+The `seshat` command provides access to all pipeline functionality.
+
+> **Note:** The `natmeg` command is still available as a deprecated alias. Please update scripts to use `seshat`.
 
 ## GUI
 
 ```bash
-natmeg gui
+seshat gui
 ```
 
 ## Configuration
 
 ```bash
-natmeg create-config --output my_config.yml
+seshat create-config --output my_config.yml
 ```
 
 ## Run Pipeline
 
 ```bash
-natmeg run --config config.yml
-natmeg run --config config.yml --dry-run
-natmeg run --config config.yml --no-report
+seshat run --config config.yml
+seshat run --config config.yml --dry-run
+seshat run --config config.yml --no-report
 ```
 
 ## Individual Components
 
 ```bash
-natmeg copy --config config.yml
-natmeg hpi --config config.yml
-natmeg maxfilter --config config.yml
+seshat copy --config config.yml
+seshat opm-preprocess --config config.yml
+seshat maxfilter --config config.yml
 ```
 
 ## Server Synchronization
 
 ```bash
-natmeg sync --create-config
-natmeg sync --server-config servers.yml --test
-natmeg sync --directory /data/project
-natmeg sync --directory /data/project --delete
+seshat sync --create-config
+seshat sync --server-config servers.yml --test
+seshat sync --directory /data/project
+seshat sync --directory /data/project --delete
 ```
 
 ## Reports
 
 ```bash
-natmeg report --config config.yml
+seshat report --config config.yml
 ```
 
 ## Help
 
 ```bash
-natmeg --help
-natmeg run --help
+seshat --help
+seshat run --help
 ```

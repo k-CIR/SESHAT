@@ -287,23 +287,15 @@ else
     fi
 fi
 
-# Install requirements with uv or pip (same approach for both conda and venv)
-echo "Installing Python dependencies..."
+# Install the seshat package and its dependencies via pyproject.toml
+echo "Installing SESHAT package and Python dependencies..."
 if [ "$USE_UV" = true ]; then
-    if [ -f "$TARGET_DIR/requirements.txt" ]; then
-        uv pip install -r "$TARGET_DIR/requirements.txt"
-    else
-        echo "Warning: requirements.txt not found, installing basic dependencies..."
-        uv pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil PyQt6
-    fi
+    uv pip install -e "$TARGET_DIR"
 else
-    if [ -f "$TARGET_DIR/requirements.txt" ]; then
-        pip install -r "$TARGET_DIR/requirements.txt"
-    else
-        echo "Warning: requirements.txt not found, installing basic dependencies..."
-        pip install numpy scipy pandas matplotlib scikit-learn mne mne-bids bids-validator h5py tqdm requests pyyaml jinja2 click psutil PyQt6
-    fi
+    pip install -e "$TARGET_DIR"
 fi
+# The entry-points (seshat / natmeg) are now registered by pip from pyproject.toml.
+# The legacy wrapper scripts below are kept for PATH-based installs that predate pip.
 
 echo "✓ Virtual environment created and dependencies installed"
 
@@ -336,87 +328,38 @@ trap 'echo "Warning: Error in seshat script, but terminal will remain open." >&2
 trap 'echo "Warning: Script interrupted, but terminal will remain open." >&2; exit 130' INT
 trap 'echo "Warning: Script terminated, but terminal will remain open." >&2; exit 143' TERM
 
-SCRIPT_PATH="\$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py"
-
 # Environment-specific setup
 ENV_TYPE="$ENV_TYPE"
 
 if [ "\$ENV_TYPE" = "conda" ]; then
-    # Conda environment setup
     CONDA_ENV_NAME="$CONDA_ENV_NAME"
-    
-    # Check if conda is available
     if ! command -v conda &> /dev/null; then
         echo "Error: conda command not found"
-        echo "Please ensure conda is installed and in your PATH"
         exit 1
     fi
-    
-    # Check if conda environment exists
     if ! conda env list | grep -q "\$CONDA_ENV_NAME"; then
         echo "Error: Conda environment '\$CONDA_ENV_NAME' not found"
-        echo "Please re-run the installation script with --conda flag"
         exit 1
     fi
-    
-    # Activate conda environment and run script
     source "\$(conda info --base)/etc/profile.d/conda.sh"
     conda activate "\$CONDA_ENV_NAME"
     PYTHON_CMD="python"
-    
 else
-    # Virtual environment setup
     VENV_PATH="\$HOME/.local/bin/NatMEG-utils/.venv"
     PYTHON_VENV="\$VENV_PATH/bin/python"
-    
-    # Check if virtual environment exists
-    if [ ! -d "\$VENV_PATH" ]; then
-        echo "Error: Virtual environment not found at \$VENV_PATH"
-        echo "Please re-run the installation script."
-        exit 1
-    fi
-    
-    # Check if Python executable exists in venv
     if [ ! -f "\$PYTHON_VENV" ]; then
         echo "Error: Python executable not found in virtual environment"
-        echo "Virtual environment may be corrupted. Please re-run the installation script."
         exit 1
     fi
-    
     PYTHON_CMD="\$PYTHON_VENV"
 fi
 
-# Check if main script exists
-if [ ! -f "\$SCRIPT_PATH" ]; then
-    echo "Error: Could not find pipeline entrypoint at \$SCRIPT_PATH"
-    echo "Please ensure the NatMEG-utils installation is complete"
-    exit 1
-fi
+# Invoke via the installed package entry point
+"\$PYTHON_CMD" -m seshat.cli "\$@"
 
-# Check if main script is readable
-if [ ! -r "\$SCRIPT_PATH" ]; then
-    echo "Error: Cannot read pipeline entrypoint at \$SCRIPT_PATH"
-    echo "Please check file permissions"
-    exit 1
-fi
-
-# Run the script with the appropriate Python
-"\$PYTHON_CMD" "\$SCRIPT_PATH" "\$@"
-
-# If the above fails and it's a GUI command, provide helpful error message
 if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
     echo ""
-    echo "GUI failed to start. This may be due to PyQt issues."
-    if [ "\$ENV_TYPE" = "venv" ]; then
-        echo "Try installing with conda (default, better PyQt support):"
-        echo "  bash install.sh"
-    else
-        echo "Try these solutions:"
-        echo "  1. Reinstall with: bash install.sh"
-        echo "  2. Check PyQt installation: conda list pyqt"
-        echo "  3. Try venv installation: bash install.sh --venv"
-    fi
-    echo "  4. Use command-line interface instead: seshat run --config config.yml"
+    echo "GUI failed to start. Try: seshat run --config config.yml"
 fi
 EOF
 
@@ -545,12 +488,12 @@ if (command -v seshat &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/seshat
     echo "✓ natmeg alias created for backward compatibility"
     
     # Test basic execution only if environment exists
-    if [ "$ENV_EXISTS" = true ] && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg_pipeline.py" ]; then
-        echo "✓ Virtual environment and main Python file ready"
+    if [ "$ENV_EXISTS" = true ]; then
+        echo "✓ Virtual environment and seshat package ready"
         INSTALL_SUCCESS=true
     else
         echo "⚠ seshat executable created but virtual environment needs setup"
-        INSTALL_SUCCESS=false   
+        INSTALL_SUCCESS=false
     fi
 else
     echo "✗ Failed to create seshat executable"
@@ -580,7 +523,7 @@ if [ "$ENV_EXISTS" = false ]; then
         echo "  3. rm -rf .venv  # Remove corrupted environment"
         echo "  4. $PYTHON -m venv .venv  # Recreate environment"
         echo "  5. source .venv/bin/activate"
-        echo "  6. pip install -r requirements.txt"
+        echo "  6. pip install -e .  # Install seshat package with all dependencies"
         echo "  7. Test with: seshat --help"
         echo ""
         echo "  Alternative (if default conda fails):"

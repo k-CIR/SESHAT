@@ -44,7 +44,7 @@ matplotlib.use('Agg')
 import matplotlib.patches as mpatches
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-from utils import (
+from seshat.utils import (
     log, configure_logging,
     proc_patterns,
     noise_patterns,
@@ -66,23 +66,6 @@ exclude_patterns = [r'-\d+.fif', '_trans', 'opm',  'eeg', 'avg.fif']
 def get_parameters(config):
     """
     Extract and validate MaxFilter configuration parameters.
-    
-    Processes configuration from file (JSON/YAML) or dictionary, extracting
-    MaxFilter-specific settings and merging with project parameters for
-    calibration files, data paths, and processing options.
-    
-    Args:
-        config (str or dict): Path to config file or configuration dictionary
-                             containing 'maxfilter' and 'project' sections
-    
-    Returns:
-        dict: Merged MaxFilter configuration with keys:
-            - standard_settings: Basic processing parameters
-            - advanced_settings: Expert-level options
-            - Includes calibration/crosstalk file paths from project config
-    
-    Raises:
-        ValueError: If unsupported configuration file format provided
     """
     if isinstance(config, str):
         if config.endswith('.json'):
@@ -102,26 +85,13 @@ def get_parameters(config):
     maxfilter_dict['standard_settings']['project_name'] = config_dict['Project']['Name']
     maxfilter_dict['standard_settings']['data_path'] = config_dict['Project']['Raw']
     maxfilter_dict['standard_settings']['out_path'] = config_dict['Project']['Raw']
-    maxfilter_dict['standard_settings']['logfile'] = config_dict['Project']['Logfile']
+    maxfilter_dict['standard_settings']['logfile'] = config_dict['Project'].get('logfile', 'maxfilter.log')
     
     return maxfilter_dict
 
 def match_task_files(files, task: str):
     """
     Filter file list to match specific task while excluding processed files.
-    
-    Identifies raw files for a given task by matching task name in filename
-    and excluding already processed files, split files, and other derivatives.
-    
-    Args:
-        files (list): List of FIF filenames to filter
-        task (str): Task name to match (e.g., 'Phalanges', 'AudOdd')
-    
-    Returns:
-        list: Filtered filenames containing task name, excluding processed files
-        
-    Note:
-        Excludes files matching exclude_patterns and proc_patterns from utils
     """
     matched_files = [f for f in files if not file_contains(basename(f).lower(), exclude_patterns + proc_patterns) and task in f]
     return matched_files
@@ -129,23 +99,6 @@ def match_task_files(files, task: str):
 def plot_movement(raw, head_pos, mean_trans):
     """
     Generate head movement visualization for quality assessment.
-    
-    Creates movement trace plots comparing original head position with
-    average position transformation, useful for assessing subject movement
-    and transformation quality.
-    
-    Args:
-        raw (mne.io.Raw): Raw MEG data with device-head transformation
-        head_pos (str or array): Head position file path or position array
-        mean_trans (str or dict): Mean transformation file path or transform
-    
-    Returns:
-        matplotlib.Figure: Movement trace plot with original and average positions
-        
-    Side Effects:
-        - Displays translation traces in mm
-        - Shows original position (red) vs average (green)
-        - Includes legend and tight layout
     """
 
     if isinstance(head_pos, str):
@@ -155,9 +108,6 @@ def plot_movement(raw, head_pos, mean_trans):
         
     original_head_dev_t = invert_transform(raw.info["dev_head_t"])
     
-    """
-    Plot trances of movement for insepction. Uses mne.viz.plot_head_positions
-    """
     fig = mne.viz.plot_head_positions(head_pos, mode='traces', show=False)
     red_patch = mpatches.Patch(color='r', label='Original')
     green_patch = mpatches.Patch(color='g', label='Average')
@@ -179,14 +129,6 @@ def plot_movement(raw, head_pos, mean_trans):
 class set_parameter:
     """
     Container for MaxFilter parameter strings in multiple formats.
-    
-    Stores parameter values for both Elekta MaxFilter command-line interface
-    and MNE-Python equivalents, along with descriptive strings for file naming.
-    
-    Attributes:
-        mxf (str): Elekta MaxFilter command-line parameter
-        mne_mxf (str): MNE-Python equivalent parameter  
-        string (str): Descriptive string for output file naming
     """
     def __init__(self, mxf, mne_mxf, string):
         self.mxf = mxf
@@ -196,37 +138,11 @@ class set_parameter:
 class MaxFilter:
     """
     Comprehensive MaxFilter processing pipeline for MEG data.
-    
-    Handles complete Signal Space Separation workflow including:
-    - Head position tracking and movement compensation
-    - Temporal SSS for interference suppression
-    - Bad channel detection and correction
-    - Coordinate system transformations
-    - Parallel processing of multiple subjects/sessions
-    
-    Key Features:
-    - Automatic parameter validation and setting
-    - Task-specific processing configurations
-    - Empty room recording handling
-    - Movement compensation with head position files
-    - Quality control and logging
-    - BIDS-compatible output naming
     """
     
     def __init__(self, config_dict: Union[dict, str], **kwargs):
         """
         Initialize MaxFilter processor with configuration parameters.
-        
-        Processes configuration dictionary and converts string flags ('on'/'off')
-        to boolean values for internal parameter handling.
-        
-        Args:
-            config_dict (dict): Complete configuration including maxfilter settings
-            **kwargs: Additional parameters (currently unused)
-        
-        Side Effects:
-            - Merges standard and advanced settings into self.parameters
-            - Converts 'on'/'off' strings to True/False booleans
         """
         if isinstance(config_dict, str):
             config_dict = get_parameters(config_dict)
@@ -255,40 +171,6 @@ class MaxFilter:
                             **kwargs):
         """
         Generate average head position and transformation for task runs.
-        
-        Computes HPI-based head position tracking across multiple runs of the
-        same task, creating average head position file and coordinate transformation
-        for movement compensation during MaxFilter processing.
-        
-        Processing Steps:
-        1. Load raw data files for the task
-        2. Optionally merge runs with consistent head position
-        3. Compute HPI amplitudes and locations
-        4. Calculate continuous head position estimates
-        5. Generate average transformation matrix
-        6. Create movement visualization plot
-        
-        Args:
-            data_path (str): Input directory containing raw files
-            out_path (str): Output directory for head position files
-            task (str): Task name for file naming
-            files (list or str): Raw file(s) for head position calculation
-            overwrite (bool): Whether to regenerate existing files
-            **kwargs: Additional parameters passed to computation functions
-        
-        Returns:
-            None
-            
-        Side Effects:
-            - Creates {task}_headpos.pos file with continuous head positions
-            - Creates {task}_trans.fif file with average transformation
-            - Saves {task}_movement.png plot for quality control
-            - Logs processing steps and file creation
-        
-        Notes:
-            - Requires HPI coils active during recording
-            - Merges runs if merge_runs parameter enabled
-            - Uses compute_chpi_* functions from MNE for localization
         """
 
         parameters = self.parameters
@@ -341,7 +223,6 @@ class MaxFilter:
                 raw = raws[0]
 
             head_pos = read_head_pos(headpos_name)
-            # trans, rot, t = head_pos_to_trans_rot_t(head_pos) 
 
             mean_trans = invert_transform(
                 compute_average_dev_head_t(raw, head_pos))
@@ -374,37 +255,6 @@ class MaxFilter:
     def set_params(self, subject, session, task):
         """
         Configure MaxFilter parameters for specific subject/session/task.
-        
-        Dynamically sets all MaxFilter command-line parameters based on
-        configuration settings, task type, and file availability. Handles
-        special cases like empty room recordings and task-specific options.
-        
-        Parameter Categories:
-        - Transformation: Head position correction and coordinate transforms
-        - SSS/tSSS: Signal space separation and temporal extension
-        - Movement compensation: HPI-based head tracking
-        - Bad channel handling: Automatic and manual bad channel specification
-        - Filtering: Line frequency and correlation thresholds
-        - Calibration: Cal/ctc files and system-specific corrections
-        
-        Args:
-            subject (str): Subject identifier (e.g., 'sub-001')
-            session (str): Session identifier (e.g., '20250127')
-            task (str): Task name affecting parameter selection
-        
-        Returns:
-            None
-            
-        Side Effects:
-            - Sets instance attributes for all MaxFilter parameters
-            - Configures command strings for both Elekta and MNE interfaces
-            - Adapts parameters based on task type (e.g., disables movement
-              compensation for empty room recordings)
-            - Generates BIDS-compatible processing suffix string
-        
-        Parameter Attributes Set:
-            _trans, _force, _cal, _ctc, _ds, _tsss, _corr, _mc, 
-            _autobad, _bad_channels, _linefreq, _proc, _merge_runs, _additional_cmd
         """
         parameters = self.parameters
             
@@ -420,7 +270,7 @@ class MaxFilter:
         trans_option = parameters.get('trans_option')
 
         def set_trans(param=None):
-            if 'continous' in trans_option and task in trans_conditions:
+            if 'continuous' in trans_option and task in trans_conditions:
                 if param:
                     mxf = '-trans %s' % param
                     mne_mxf = '--trans=%s' % param
@@ -430,7 +280,6 @@ class MaxFilter:
                 mne_mxf = ''
                 string = ''
                 print('No information about trans')
-                #sys.exit(1)
             return(set_parameter(mxf, mne_mxf, string))
         _trans = set_trans(trans_file)
         
@@ -468,7 +317,6 @@ class MaxFilter:
             return(set_parameter(mxf, mne_mxf, string))
         _ctc = set_ctc(parameters.get('ctc'))
         
-        # create set_mc function (sets movecomp according to wishes above and abort if set incorrectly, this is a function such that it can be changed throughout the script if empty_room files are found) 
         def set_mc(param=None):
             if param:
                 mxf = '-movecomp'
@@ -610,7 +458,7 @@ class MaxFilter:
             if parameters.get('movecomp_default'):
                 proc.append(_mc.string)
             
-            if 'continous' in trans_option and task in parameters.get('trans_conditions'):
+            if 'continuous' in trans_option and task in parameters.get('trans_conditions'):
                 proc.append(_trans.string)
             
             proc = [p for p in proc if p != '']
@@ -639,19 +487,6 @@ class MaxFilter:
     def process_task_files(self, subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv):
         """
         Process all files for a specific task, potentially in parallel.
-        
-        Args:
-            subject (str): Subject identifier
-            session (str): Session identifier
-            task (str): Task name
-            files (list): List of files to process for this task
-            subj_in (str): Input directory path
-            subj_out (str): Output directory path
-            maxfilter_path (str): Path to MaxFilter executable
-            naming_conv (regex): Naming convention pattern
-        
-        Returns:
-            list: List of processing results
         """
         parameters = self.parameters
         debug = parameters.get('debug', False)
@@ -702,30 +537,19 @@ class MaxFilter:
 
             if not exists(clean_path):
 
-                #TODO: add check for bads and exclude?
-                # raw = mne.io.read_raw_fif(file_path, allow_maxshield=True, verbose='error')
-                # bads = mne.preprocessing.find_bad_channels_maxwell(
-                #     raw=raw,
-                #     calibration=self._cal.mxf.replace('-cal ', ''),
-                #     cross_talk=self._ctc.mxf.replace('-ctc ', ''),
-                #     verbose='error'
-                # )
-
                 print(f'Running MaxFilter on {subject} | {session} | {task} | {file}')
                 if not debug:
                     try:
-                        # Use safer subprocess options for threading
                         result = subprocess.run(
                             command_mxf, 
                             shell=True, 
                             cwd=subj_in,
-                            capture_output=False,  # Don't capture to avoid buffer issues
+                            capture_output=False,
                             text=True,
-                            env=os.environ.copy()  # Use copy of environment
+                            env=os.environ.copy()
                         )
                         print(f"MaxFilter exit code: {result.returncode}")
                         
-                        # Check if the output file was actually created (more reliable than exit code)
                         if os.path.exists(clean_path):
                             log('MaxFilter', f'{file_path} -> {clean_path}', 'info', logfile=self.logfile, logpath=self.logpath)
                             print(f'Successfully processed: {os.path.basename(clean)}')
@@ -754,46 +578,6 @@ class MaxFilter:
     def run_command(self, subject, session, max_workers=1):
         """
         Execute MaxFilter processing for all tasks in a subject/session.
-        
-        Main processing function that handles complete MaxFilter workflow:
-        1. Identifies eligible files and organizes by task
-        2. Creates head position files for transformation tasks
-        3. Configures task-specific parameters
-        4. Executes MaxFilter commands with proper logging
-        5. Manages file naming and output organization
-        
-        Processing Features:
-        - Task-based file organization and processing with optional parallelization
-        - Automatic head position file generation
-        - BIDS-compatible output naming with processing suffixes
-        - Comprehensive logging with individual file logs
-        - Skip processing for existing output files
-        - Handles both standard and expert parameter sets
-        
-        Args:
-            subject (str): Subject directory name
-            session (str): Session directory name
-            max_workers (int): Number of parallel workers for task processing
-        
-        Returns:
-            None
-            
-        Side Effects:
-            - Creates processed FIF files with descriptive suffixes
-            - Generates individual log files for each processed file
-            - Creates head position and transformation files
-            - Executes system calls to Elekta MaxFilter
-            - Logs all processing steps and file operations
-        
-        File Naming Convention:
-            Input: {task}_raw.fif
-            Output: {task}_proc-{processing_string}_meg.fif
-            Where processing_string describes applied corrections
-        
-        Error Handling:
-            - Skips missing files with informative messages
-            - Continues processing if individual files fail
-            - Logs all subprocess calls and outputs
         """
 
         parameters = self.parameters
@@ -802,22 +586,17 @@ class MaxFilter:
 
         data_root = parameters.get('data_path')
         output_path = parameters.get('out_path')
-        # Check if output path is set
         if not output_path:
             output_path = data_root
  
         subj_in = f'{data_root}/{subject}/{session}/triux'
         subj_out = f'{output_path}/{subject}/{session}/triux'
         
-        # Create maxfilter log directory if it doesn't exist
         os.makedirs(f'{subj_out}/log', exist_ok=True)
         
         maxfilter_path = parameters.get('maxfilter_version')
 
-        # List all files in directory
         all_fifs = sorted(glob('*.fif', root_dir=subj_in))
-
-        # Create patterns to exclude files
         
         naming_convs = [
             'raw',
@@ -841,10 +620,8 @@ class MaxFilter:
             sss_files +
             empty_room_files)))
         
-        # Remove if empty
         tasks_to_run = [t for t in tasks_to_run if t != '']
 
-        # Prepare task processing - create head position files first (sequential)
         task_data = []
         for task in tasks_to_run:
             files = match_task_files(all_fifs, task)
@@ -853,19 +630,15 @@ class MaxFilter:
                 print(f'No files found for task: {task}')
                 continue
 
-            # Average head position (must be done sequentially due to file I/O)
             if task in trans_files:
                 self.create_task_headpos(subj_in, subj_out, task, files, overwrite=False)
             
             task_data.append((task, files))
 
-        # Process tasks - potentially in parallel
         if max_workers == 1 or len(task_data) == 1:
-            # Sequential processing
             for task, files in task_data:
                 self.process_task_files(subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv)
         else:
-            # Parallel task processing
             with ThreadPoolExecutor(max_workers=min(max_workers, len(task_data))) as executor:
                 futures = [
                     executor.submit(self.process_task_files, subject, session, task, files, subj_in, subj_out, maxfilter_path, naming_conv) 
@@ -875,48 +648,12 @@ class MaxFilter:
                 for future in as_completed(futures):
                     try:
                         results = future.result()
-                        # Process results if needed
                     except Exception as e:
                         print(f"Error in task processing: {e}")
 
     def loop_dirs(self, max_workers=4):
         """
         Process multiple subjects and sessions sequentially with task-level parallelization.
-        
-        Orchestrates MaxFilter processing across entire dataset with efficient parallel
-        execution at the task level within each subject/session. Handles subject filtering, 
-        session discovery, and error management for large-scale processing.
-        
-        Processing Workflow:
-        1. Scan data directory for subjects (sub-* or NatMEG*)
-        2. Filter subjects based on skip list
-        3. Discover sessions within each subject directory
-        4. Process each (subject, session) sequentially
-        5. Within each subject/session, parallelize task processing
-        6. Handle exceptions and continue processing on failures
-        
-        Args:
-            max_workers (int): Maximum number of parallel workers for task processing (default: 4)
-        
-        Returns:
-            None
-            
-        Side Effects:
-            - Processes subjects/sessions sequentially but tasks in parallel
-            - Creates all output files and logs
-            - Prints progress and error messages
-            - Continues processing despite individual failures
-        
-        Performance Notes:
-            - Sequential subject/session processing prevents resource conflicts
-            - Parallel task processing within each subject improves efficiency
-            - Safer for subprocess management and file I/O
-            - Reduced memory usage compared to full parallelization
-        
-        Error Handling:
-            - Captures and reports exceptions for individual sessions
-            - Continues processing remaining sessions on failure
-            - Logs all subprocess errors and completion status
         """
         parameters = self.parameters
         data_root = parameters.get('data_path')
@@ -932,27 +669,18 @@ class MaxFilter:
 
         subjects = sorted([s for s in subjects if file_contains(s, skip_subjects)])
 
-        # Process each subject/session sequentially
         for subject in subjects:
             sessions = sorted([s for s in sorted(glob('*', root_dir=f'{data_root}/{subject}')) if isdir(f'{data_root}/{subject}/{s}')])
             for session in sessions:
                 print(f'Running MaxFilter on {subject} | {session} |')
                 try:
-                    # Pass max_workers to enable task-level parallelization
                     self.run_command(subject, session, max_workers=max_workers)
                 except Exception as e:
                     print(f"Error processing {subject}/{session}: {e}")
-                    # Continue with next subject/session
 
 def args_parser():
     """
     Parse command-line arguments for MaxFilter script execution.
-    
-    Defines command-line interface with configuration file option for
-    standalone script usage outside of pipeline integration.
-    
-    Returns:
-        argparse.Namespace: Parsed arguments containing config file path
     """
     parser = argparse.ArgumentParser(description=
                                      '''Maxfilter
@@ -962,7 +690,7 @@ def args_parser():
                                      
                                      ''',
                                      add_help=True,
-                                     usage='maxfilter [-h] [-c CONFIG] [--dry-run]')
+                                     usage='seshat maxfilter [-h] [-c CONFIG] [--dry-run]')
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
     parser.add_argument('--dry-run', action='store_true', help='Show what would be executed without actually running MaxFilter')
     args = parser.parse_args()
@@ -972,37 +700,6 @@ def args_parser():
 def main(config=None, dry_run=False):
     """
     Main entry point for MaxFilter processing pipeline.
-    
-    Coordinates complete MaxFilter workflow:
-    1. Loads configuration from file or parameter
-    2. Initializes MaxFilter processor with validated parameters
-    3. Executes parallel processing across all subjects/sessions
-    4. Handles configuration file selection and validation
-    
-    Args:
-        config (dict, optional): Configuration dictionary. If None, loads
-                                from command-line arguments or GUI selection
-        dry_run (bool, optional): Show commands without executing them
-    
-    Returns:
-        None
-        
-    Side Effects:
-        - Executes complete MaxFilter processing pipeline
-        - Creates all processed files with SSS/tSSS corrections
-        - Generates head position and transformation files
-        - Produces movement plots for quality control
-        
-    Raises:
-        SystemExit: If no configuration file provided or invalid config
-    
-    Usage Examples:
-        # Command line with config file
-        python maxfilter.py -c config.yml --dry-run
-        
-        # Programmatic usage
-        from maxfilter import main
-        main(config_dict, dry_run=True)
     """
     if config is None:
         args = args_parser()
@@ -1020,7 +717,6 @@ def main(config=None, dry_run=False):
             return
     
     elif isinstance(config, str):
-        # If config is a string, treat it as a file path
         config_file = config
         if os.path.exists(config_file):
             config = get_parameters(config_file)
@@ -1031,9 +727,7 @@ def main(config=None, dry_run=False):
             print(f'Configuration file not found: {config_file}')
             return
 
-    # Override debug setting if dry_run is specified
     if dry_run:
-        # After get_parameters, config structure is flattened maxfilter config
         if 'advanced_settings' in config:
             config['advanced_settings']['debug'] = True
         else:
