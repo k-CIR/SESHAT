@@ -119,7 +119,7 @@ class ServerSync:
             if flag in _RSYNC_OPTION_ALLOWLIST:
                 custom_opts.append(opt)
             else:
-                log(f"Ignoring disallowed rsync option from config: {opt!r}", 'warning')
+                log('Sync', f"Ignoring disallowed rsync option from config: {opt!r}", 'warning')
 
         # Validate per-server ssh options against the allowlist.
         raw_ssh_opts = server_config.get('ssh_options', [])
@@ -134,7 +134,7 @@ class ServerSync:
                     i += 1
                     ssh_opts.append(raw_ssh_opts[i])
             else:
-                log(f"Ignoring disallowed ssh option from config: {flag!r}", 'warning')
+                log('Sync', f"Ignoring disallowed ssh option from config: {flag!r}", 'warning')
             i += 1
         
         if global_excludes:
@@ -179,7 +179,7 @@ class ServerSync:
             if resolved.startswith(local_real + os.sep) or resolved == local_real:
                 cmd.extend(['--log-file', resolved])
             else:
-                log(f"Ignoring --log-file path outside project directory: {raw_log!r}", 'warning')
+                log('Sync', f"Ignoring --log-file path outside project directory: {raw_log!r}", 'warning')
 
         return cmd
     
@@ -187,16 +187,28 @@ class ServerSync:
                       exclude_patterns: List[str] = None,
                       include_patterns: List[str] = None,
                       dry_run: bool = False,
-                      delete: bool = False) -> bool:
-        """Sync a directory to remote server and optionally delete local files after successful transfer"""
+                      delete: bool = False,
+                      log_file_path: str = None) -> bool:
+        """Sync a directory to remote server and optionally delete local files after successful transfer.
         
-        log_path = f'{local_path}/log' or './log'
-        if not os.path.exists(log_path):
-            os.makedirs(log_path, exist_ok=True)
-        
+        Args:
+            log_file_path: Full path to project log file (e.g. '/project/logs/pipeline_log.log').
+                           When provided (called from cli.py), logging is already configured and
+                           this path is used directly.  When None (standalone), falls back to
+                           a per-invocation log dir under local_path.
+        """
+        if log_file_path is not None:
+            log_path = os.path.dirname(log_file_path)
+            _logfile = os.path.basename(log_file_path)
+        else:
+            log_path = f'{local_path}/log'
+            _logfile = self.log_file
+            if not os.path.exists(log_path):
+                os.makedirs(log_path, exist_ok=True)
+
         if not os.path.exists(local_path):
-            log(f"Local path does not exist: {local_path}", 'error', 
-                logfile=self.log_file, logpath=log_path)
+            log('Sync', f"Local path does not exist: {local_path}", 'error',
+                logfile=_logfile, logpath=log_path)
             return False
             
         try:
@@ -205,14 +217,14 @@ class ServerSync:
                 local_path, server_config, exclude_patterns,
                 include_patterns, dry_run)
             cmd_str = ' '.join(shlex.quote(arg) for arg in cmd)
-            log(f"Executing: {cmd_str}", 'info', logfile=self.log_file, logpath=log_path)
+            log('Sync', f"Executing: {cmd_str}", 'info', logfile=_logfile, logpath=log_path)
 
             if dry_run:
-                log("DRY RUN MODE - No files will be transferred", 'info',
-                    logfile=self.log_file, logpath=log_path)
+                log('Sync', "DRY RUN MODE - No files will be transferred", 'info',
+                    logfile=_logfile, logpath=log_path)
                 if delete:
-                    log("DRY RUN MODE - Local files would be deleted after successful sync", 'info',
-                        logfile=self.log_file, logpath=log_path)
+                    log('Sync', "DRY RUN MODE - Local files would be deleted after successful sync", 'info',
+                        logfile=_logfile, logpath=log_path)
                 print_dir_tree(local_path, max_depth=2)
 
             # Snapshot files before transfer so deletion is based on a directory
@@ -222,29 +234,29 @@ class ServerSync:
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if result.stdout:
-                log(f"Rsync output:\n{result.stdout}", 'info',
-                    logfile=self.log_file, logpath=log_path)
+                log('Sync', f"Rsync output:\n{result.stdout}", 'info',
+                    logfile=_logfile, logpath=log_path)
 
             if result.stderr:
-                log(f"Rsync errors:\n{result.stderr}", 'warning',
-                    logfile=self.log_file, logpath=log_path)
+                log('Sync', f"Rsync errors:\n{result.stderr}", 'warning',
+                    logfile=_logfile, logpath=log_path)
 
             if result.returncode == 0:
-                log(f"Successfully synced {local_path} to {server_name}", 'info',
-                    logfile=self.log_file, logpath=log_path)
+                log('Sync', f"Successfully synced {local_path} to {server_name}", 'info',
+                    logfile=_logfile, logpath=log_path)
 
                 if delete and not dry_run:
-                    self._delete_local_files_after_sync(local_path, snapshot_before, log_path)
+                    self._delete_local_files_after_sync(local_path, snapshot_before, log_path, _logfile)
 
                 return True
             else:
-                log(f"Rsync failed with return code {result.returncode}", 'error',
-                    logfile=self.log_file, logpath=log_path)
+                log('Sync', f"Rsync failed with return code {result.returncode}", 'error',
+                    logfile=_logfile, logpath=log_path)
                 return False
                 
         except Exception as e:
-            log(f"Error syncing to {server_name}: {e}", 'error',
-                logfile=self.log_file, logpath=log_path)
+            log('Sync', f"Error syncing to {server_name}: {e}", 'error',
+                logfile=_logfile, logpath=log_path)
             return False
     
     def _snapshot_files(self, base_path: str) -> set:
@@ -255,13 +267,15 @@ class ServerSync:
                 result.add(os.path.join(root, fname))
         return result
 
-    def _delete_local_files_after_sync(self, local_path: str, snapshot_before: set, log_path: str):
+    def _delete_local_files_after_sync(self, local_path: str, snapshot_before: set,
+                                        log_path: str, logfile: str = None):
         """Delete local files that existed before the sync (i.e. were transferred).
 
         Uses a pre/post directory snapshot instead of parsing rsync stdout,
         which would be vulnerable to output-injection from a malicious remote.
         Files are only deleted if they still exist and are strictly under local_path.
         """
+        _logfile = logfile if logfile is not None else self.log_file
         try:
             local_real = os.path.realpath(local_path)
             snapshot_after = self._snapshot_files(local_path)
@@ -273,45 +287,48 @@ class ServerSync:
                 # Safety check: only delete files strictly within local_path.
                 resolved = os.path.realpath(file_path)
                 if not (resolved.startswith(local_real + os.sep) or resolved == local_real):
-                    log(f"Skipping deletion of file outside project directory: {file_path}", 'warning',
-                        logfile=self.log_file, logpath=log_path)
+                    log('Sync', f"Skipping deletion of file outside project directory: {file_path}", 'warning',
+                        logfile=_logfile, logpath=log_path)
                     continue
                 try:
                     os.remove(file_path)
                     deleted_count += 1
-                    log(f"Deleted local file after successful sync: {file_path}", 'info',
-                        logfile=self.log_file, logpath=log_path)
+                    log('Sync', f"Deleted local file after successful sync: {file_path}", 'info',
+                        logfile=_logfile, logpath=log_path)
                 except Exception as e:
-                    log(f"Failed to delete local file {file_path}: {e}", 'warning',
-                        logfile=self.log_file, logpath=log_path)
+                    log('Sync', f"Failed to delete local file {file_path}: {e}", 'warning',
+                        logfile=_logfile, logpath=log_path)
 
             if deleted_count > 0:
-                log(f"Deleted {deleted_count} local files after successful sync", 'info',
-                    logfile=self.log_file, logpath=log_path)
-                self._cleanup_empty_directories(local_path, log_path)
+                log('Sync', f"Deleted {deleted_count} local files after successful sync", 'info',
+                    logfile=_logfile, logpath=log_path)
+                self._cleanup_empty_directories(local_path, log_path, _logfile)
 
         except Exception as e:
-            log(f"Error during local file cleanup: {e}", 'warning',
-                logfile=self.log_file, logpath=log_path)
+            log('Sync', f"Error during local file cleanup: {e}", 'warning',
+                logfile=_logfile, logpath=log_path)
     
-    def _cleanup_empty_directories(self, base_path: str, log_path: str):
+    def _cleanup_empty_directories(self, base_path: str, log_path: str, logfile: str = None):
         """Remove empty directories after file deletion"""
+        _logfile = logfile if logfile is not None else self.log_file
+        real_log_path = os.path.realpath(log_path)
         try:
             for root, dirs, files in os.walk(base_path, topdown=False):
-                if root == log_path or log_path in root:
+                real_root = os.path.realpath(root)
+                if real_root == real_log_path or real_root.startswith(real_log_path + os.sep):
                     continue
                     
                 if not files and not dirs:
                     try:
                         os.rmdir(root)
-                        log(f"Removed empty directory: {root}", 'info',
-                            logfile=self.log_file, logpath=log_path)
+                        log('Sync', f"Removed empty directory: {root}", 'info',
+                            logfile=_logfile, logpath=log_path)
                     except Exception as e:
-                        log(f"Failed to remove empty directory {root}: {e}", 'warning',
-                            logfile=self.log_file, logpath=log_path)
+                        log('Sync', f"Failed to remove empty directory {root}: {e}", 'warning',
+                            logfile=_logfile, logpath=log_path)
         except Exception as e:
-            log(f"Error during directory cleanup: {e}", 'warning',
-                logfile=self.log_file, logpath=log_path)
+            log('Sync', f"Error during directory cleanup: {e}", 'warning',
+                logfile=_logfile, logpath=log_path)
     
     def check_server_connection(self, server_name: str) -> bool:
         """Test connection to server"""

@@ -11,7 +11,7 @@ import yaml
 import subprocess
 from seshat.utils import askForConfig, log
 
-def nested_dir_tree(root_path, rel_path="", logpath=None, max_entries: int | None = None):
+def nested_dir_tree(root_path, rel_path="", logpath=None, logfile=None, max_entries: int | None = None):
     """Return nested directory tree for local or SSH (user@host:/path) roots."""
 
     # Remote (SSH) path detection
@@ -26,7 +26,7 @@ def nested_dir_tree(root_path, rel_path="", logpath=None, max_entries: int | Non
             proc = subprocess.run(find_cmd, capture_output=True, text=True, timeout=60)
             if proc.returncode != 0:
                 log('Report', f"SSH find failed ({proc.returncode}): {proc.stderr.strip()[:200]}",
-                    level='warning', logpath=logpath)
+                    level='warning', logfile=logfile, logpath=logpath)
                 return {}
             lines = proc.stdout.strip().splitlines()
             if max_entries:
@@ -57,7 +57,7 @@ def nested_dir_tree(root_path, rel_path="", logpath=None, max_entries: int | Non
                         _ = _.setdefault(part, {})
             return tree
         except Exception as e:
-            log('Report', f"Remote listing failed: {e}", level='warning', logpath=logpath)
+            log('Report', f"Remote listing failed: {e}", level='warning', logfile=logfile, logpath=logpath)
             return {}
 
     # Local path handling
@@ -65,7 +65,8 @@ def nested_dir_tree(root_path, rel_path="", logpath=None, max_entries: int | Non
     try:
         for entry in os.scandir(os.path.join(root_path, rel_path)):
             if entry.is_dir():
-                tree[entry.name] = nested_dir_tree(root_path, os.path.join(rel_path, entry.name))
+                tree[entry.name] = nested_dir_tree(root_path, os.path.join(rel_path, entry.name),
+                                                   logpath=logpath, logfile=logfile)
             else:
                 stat_info = entry.stat()
                 tree.setdefault('__files__', []).append({
@@ -75,9 +76,9 @@ def nested_dir_tree(root_path, rel_path="", logpath=None, max_entries: int | Non
                     'size': stat_info.st_size,
                 })
     except FileNotFoundError:
-        log('Report', f"Path not found: {root_path}", level='warning', logpath=logpath)
+        log('Report', f"Path not found: {root_path}", level='warning', logfile=logfile, logpath=logpath)
     except PermissionError:
-        log('Report', f"Permission denied: {root_path}", level='warning', logpath=logpath)
+        log('Report', f"Permission denied: {root_path}", level='warning', logfile=logfile, logpath=logpath)
     return tree
 
 def create_hierarchical_list(tree, current_path="", level=0):
@@ -406,7 +407,7 @@ def args_parser():
     args = parser.parse_args()
     return args
 
-def main(config: str=None):
+def main(config: str=None, log_file_path: str = None):
     if config is None:
         args = args_parser()
         config_file = args.config
@@ -421,16 +422,23 @@ def main(config: str=None):
     project = config['Project'].get("Name", "")
     root = config['Project'].get("Root", "")
     local_root = join(root, project)
-    logpath = os.path.join(project, 'logs', config['Project'].get('logfile', ''))
-    
+
+    if log_file_path is not None:
+        # Called from cli.py — logging already configured; split for legacy log() calls.
+        logpath = os.path.dirname(log_file_path)
+        logfile = os.path.basename(log_file_path)
+    else:
+        logfile = config['Project'].get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
+        logpath = os.path.join(root, project, 'logs')
+
     remote_root = f'natmeg@compute.kcir.se:/data/vault/natmeg/{project}' if project else None
 
-    dir_tree = nested_dir_tree(local_root, logpath=logpath)
+    dir_tree = nested_dir_tree(local_root, logpath=logpath, logfile=logfile)
     if remote_root:
-        remote_tree = nested_dir_tree(remote_root, logpath=logpath)
+        remote_tree = nested_dir_tree(remote_root, logpath=logpath, logfile=logfile)
         if not remote_tree:
             log('Report', f"Remote path unreachable or empty: {remote_root}", level='warning',
-                  logpath=logpath)
+                  logfile=logfile, logpath=logpath)
 
     dict_to_table_report(dir_tree, title=project, output_file=join(local_root, 'report.html'), remote_tree=remote_tree if 'remote_tree' in locals() else None)
 

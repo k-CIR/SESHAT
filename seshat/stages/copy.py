@@ -158,17 +158,21 @@ def copy_squid_databases(calibration_path=None, crosstalk_path=None):
     calibration_dest = calibration_path
     crosstalk_dest = crosstalk_path
     
-    if calibration and exists(calibration):
+    if calibration_dest and calibration and exists(calibration):
         if not exists(dirname(calibration_dest)):
-            os.makedirs(dirname(calibration_dest), exist_ok=True)    
+            os.makedirs(dirname(calibration_dest), exist_ok=True)
         copy_data(calibration, calibration_dest)
+    elif not calibration_dest:
+        print('Calibration destination path not configured; skipping.')
     else:
         print(f'Calibration file {calibration} does not exist.')
-    
-    if crosstalk and exists(crosstalk):
+
+    if crosstalk_dest and crosstalk and exists(crosstalk):
         if not exists(dirname(crosstalk_dest)):
             os.makedirs(dirname(crosstalk_dest), exist_ok=True)
         copy_data(crosstalk, crosstalk_dest)
+    elif not crosstalk_dest:
+        print('Crosstalk destination path not configured; skipping.')
     else:
         print(f'Crosstalk file {crosstalk} does not exist.')
 
@@ -314,7 +318,7 @@ def make_process_list(paths, check_existing=False):
             
     project_root = paths['project_root']
     log_path = paths['logs']
-    logfile = paths.get('log_file', 'pipeline_log.log')
+    log_file_path = paths.get('log_file', 'pipeline_log.log')
     docspath = paths.get('docs', '')
     scriptspath = paths.get('scripts', '')
     
@@ -325,7 +329,13 @@ def make_process_list(paths, check_existing=False):
 
     jobs = []
     
-    if sinuhe:
+    if sinuhe is None:
+        log('Copy', 'No TRIUX (sinuhe) directory configured; skipping.', 'info', log_file_path)
+    elif not isdir(sinuhe):
+        log('Copy', f"{sinuhe} is not a directory", 'error', log_file_path)
+    elif not glob('*', root_dir=sinuhe):
+        log('Copy', f"{sinuhe} is empty", 'warning', log_file_path)
+    else:
         natmeg_subjects  = [s for s in glob(f'NatMEG_*', root_dir=sinuhe) if isdir(f'{sinuhe}/{s}')]
         subjects = sorted(list(set([s.split('_')[-1] for s in natmeg_subjects])))
         other_files_and_dirs = [f for f in glob(f'*', root_dir=sinuhe) if f not in natmeg_subjects]
@@ -342,7 +352,7 @@ def make_process_list(paths, check_existing=False):
             sinuhe_subject_dir = f'{sinuhe}/NatMEG_{subject}'
             local_subject_docs_dir = f'{docspath}/sub-{subject}'
             local_subject_dir = f'{local_dir}/sub-{subject}'
-            
+
             items = [f for f in glob(f'*', root_dir=sinuhe_subject_dir) if f not in sessions]
             for item in items:
                 source = f'{sinuhe_subject_dir}/{item}'
@@ -355,22 +365,21 @@ def make_process_list(paths, check_existing=False):
                     source = f'{sinuhe_subject_dir}/{session}/meg/{item}'
                     destination = f'{local_dir}/sub-{subject}/{session}/triux/{item}'
                     jobs.append(check_match(source, destination))
-    elif not isdir(sinuhe):
-        log('Copy', f"{sinuhe} is not a directory", 'error', logfile)
-    
-    elif not glob('*', root_dir=sinuhe):
-        log('Copy', f"{sinuhe} is empty", 'warning', logfile)
-    else: 
-        log('Copy', 'No TRIUX directory defined', 'warning', logfile)
 
     
-    if kaptah:
+    if kaptah is None:
+        log('Copy', 'No Hedscan (kaptah) directory configured; skipping.', 'info', log_file_path)
+    elif not isdir(kaptah):
+        log('Copy', f"{kaptah} is not a directory", 'error', log_file_path)
+    elif not glob('*', root_dir=kaptah):
+        log('Copy', f"{kaptah} is empty", 'warning', log_file_path)
+    else:
         kaptah_subjects  = [s for s in glob(f'sub-*', root_dir=kaptah) if isdir(f'{kaptah}/{s}')]
-        
+
         other_files_and_dirs = [f for f in glob(f'*', root_dir=kaptah) if f not in kaptah_subjects]
-        
+
         subjects = sorted(list(set([s.split('-')[-1] for s in kaptah_subjects])))
-        
+
         for item in other_files_and_dirs:
             source = f'{kaptah}/{item}'
             destination = f'{docspath}/{item}'
@@ -388,9 +397,9 @@ def make_process_list(paths, check_existing=False):
             sessions = sorted(list(hedscan_dates))
             kaptah_subject_dir = f'{kaptah}/sub-{subject}'
             local_subject_dir = f'{local_dir}/sub-{subject}'
-            
+
             # Copy any files not marked with a date
-            items = [f for f in glob(f'*', root_dir=kaptah_subject_dir) 
+            items = [f for f in glob(f'*', root_dir=kaptah_subject_dir)
                      if not any(f.startswith(f'20{session}') for session in sessions)]
             for item in items:
                 source = f'{kaptah_subject_dir}/{item}'
@@ -398,7 +407,7 @@ def make_process_list(paths, check_existing=False):
                 jobs.append(check_match(source, destination))
 
             for session in sessions:
-                
+
                 items = sorted([f for f in glob(f'*', root_dir=kaptah_subject_dir)
                                 if f.startswith(f'20{session}')])
 
@@ -411,32 +420,24 @@ def make_process_list(paths, check_existing=False):
                         prefix, suffix = item.split('file-', 1)
                         # Count occurrences of each suffix
                         name_counts[suffix] = name_counts.get(suffix, 0) + 1
-                        
+
                         # Generate new name with duplicate numbering if needed
                         if name_counts[suffix] == 1:
                             new_name = suffix
                         else:
                             pre, post = suffix.rsplit('_', 1)
                             new_name = f"{pre}_run-{name_counts[suffix]}_{post}"
-                        
+
                         file_mapping[item] = new_name
-                
+
                 for item in items:
                     source = f'{kaptah}/sub-{subject}/{item}'
                     # Clean filename
                     dst_item = file_mapping.get(item, item)
-                    
+
                     destination = f'{local_dir}/sub-{subject}/{session}/hedscan/{dst_item}'
 
                     jobs.append(check_match(source, destination))
-
-    elif not isdir(kaptah):
-            log('Copy', f"{kaptah} is not a directory", 'error', logfile)
-    
-    elif not glob('*', root_dir=kaptah):
-        log('Copy', f"{kaptah} is empty", 'warning', logfile)
-    else: 
-        log('Copy', 'No Hedscan directory defined', 'warning', logfile)
 
     if polhemus_src and isdir(polhemus_src):
         for item in glob(f'*', root_dir=polhemus_src):
@@ -460,14 +461,14 @@ def make_process_list(paths, check_existing=False):
 
     return jobs
 
-def process_file_worker(file_info, logfile):
+def process_file_worker(file_info, log_file_path):
     """
     Worker function to process a single file transfer.
     
     Args:
         file_info: Tuple of (source, destination)
-        logfile: Log filename
-        log_path: Log directory path
+        log_file_path: Full path to the log file (unused directly here; kept for
+                       API symmetry with callers that log errors after this call).
     
     Returns:
         Tuple of (success, source, destination, message)
@@ -510,7 +511,7 @@ def copy_files_to_raw(paths):
     # Extract log configuration from config
     local_dir = paths.get('raw', '')
     project_root = paths.get('project_root', '')
-    logfile = paths.get('log_file', '')
+    log_file_path = paths.get('log_file', '')
 
     results = []
     new_file_count = 0
@@ -533,7 +534,7 @@ def copy_files_to_raw(paths):
         print(f'{size_cumsum}/{total_size}')
 
         try:
-            match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, logfile)
+            match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, log_file_path)
             results.append((match, source, destination, message))
 
             
@@ -556,7 +557,7 @@ def copy_files_to_raw(paths):
             match, source, destination = job
             error_msg = f'Exception occurred: {exc}'
             results.append((False, source, destination, error_msg))
-            log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', logfile)
+            log('Copy', f'EXCEPTION: {error_msg} - {source} -> {destination}', 'error', log_file_path)
             
             # Update progress bar for exceptions and continue
             pbar.set_postfix({
@@ -573,7 +574,7 @@ def copy_files_to_raw(paths):
     # Log summary
     log('Copy', f'Copy completed. Files to process: {len(jobs_to_process)}, Success: {new_file_count}, Failed: {failed_file_count}',
         'info',
-        logfile)
+        log_file_path)
 
     return results
 
@@ -589,7 +590,7 @@ def update_copy_report(results, paths):
         int: Number of new entries added to the report
     """
     
-    logfile = paths.get('log_file', 'pipeline_log.log')
+    log_file_path = paths.get('log_file', 'pipeline_log.log')
     report_file = f'{paths["logs"]}/copy_results.json'
     
     # Load existing report if it exists
@@ -684,7 +685,7 @@ def update_copy_report(results, paths):
     # Log summary of this session
     log('Copy', f'Report updated: {len(new_entries)} new entries added to existing {len(existing_report)} entries',
         'info',
-        logfile)
+        log_file_path)
     
     return len(new_entries)
 
@@ -705,7 +706,13 @@ def args_parser():
     return args
 
 # Create local directories for each project
-def main(config: str=None):
+def main(config: str=None, log_file_path: str = None):
+    """
+    Args:
+        log_file_path: Full path to the project log file (e.g. '/project/logs/pipeline_log.log').
+                       When provided (called from cli.py), this overrides the path derived from
+                       project_paths() so all stages use a single central log file.
+    """
 
     if config is None:
         args = args_parser()
@@ -714,6 +721,12 @@ def main(config: str=None):
             config = askForConfig()
 
     paths = project_paths(config, init=True)
+    if log_file_path is not None:
+        # Use the central log file path supplied by cli.py rather than the
+        # one independently derived by project_paths().
+        from pathlib import Path
+        paths['log_file'] = Path(log_file_path)
+
     # If config is already a dict, use it as-is
     copy_squid_databases(paths['calibration'], paths['crosstalk'])
 

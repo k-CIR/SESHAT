@@ -6,6 +6,7 @@ Replaces natmeg_pipeline.py.
 import sys
 import os
 import argparse
+import traceback
 import warnings
 import yaml
 
@@ -123,7 +124,7 @@ Examples:
 
             dry_run = getattr(args, 'dry_run', False)
 
-            log("Pipeline", '----------------------------------------------------', 'info')
+            log("Pipeline", '----------------------------------------------------', 'info', f'{logpath}/{logfile}')
             log("Pipeline", f'Using config file: {args.config}', 'info', f'{logpath}/{logfile}')
 
             if dry_run:
@@ -134,14 +135,16 @@ Examples:
 
             pipeline_success = []
 
+            log_file_path = f'{logpath}/{logfile}'
+
             if config['RUN'].get('copy_raw', False):
                 from seshat.stages import copy as copy_stage
-                copy_success = copy_stage.main(args.config)
+                copy_success = copy_stage.main(args.config, log_file_path=log_file_path)
                 pipeline_success.append(copy_success)
 
             if config['RUN'].get('opm_preprocess', False):
                 from seshat.stages import opm_preprocess as opm_stage
-                opm_preprocess_success = opm_stage.main(args.config)
+                opm_preprocess_success = opm_stage.main(args.config, log_file_path=log_file_path)
                 pipeline_success.append(opm_preprocess_success)
 
             # if config['RUN'].get('Run Maxfilter', False):
@@ -166,13 +169,14 @@ Examples:
                     include_patterns=getattr(args, 'include', None),
                     dry_run=dry_run,
                     delete=getattr(args, 'delete', False),
+                    log_file_path=log_file_path,
                 )
                 pipeline_success.append(success)
 
             if not getattr(args, 'no_report', False):
                 try:
                     from seshat.stages import report as report_stage
-                    report_stage.main(args.config)
+                    report_stage.main(args.config, log_file_path=log_file_path)
                     log("Pipeline", "Report generated (report.html)", 'info', f'{logpath}/{logfile}')
                 except Exception as e:
                     log("Pipeline", f"Report generation failed: {e}", 'warning', f'{logpath}/{logfile}')
@@ -302,6 +306,7 @@ Examples:
                 sync_stage.main()
 
     except Exception as e:
+        traceback.print_exc()
         log("Pipeline", f"Error: {e}", 'error')
         sys.exit(1)
 

@@ -13,9 +13,9 @@ The installer automatically detects the platform and sets up the required enviro
 After installation:
 
 ```bash
-natmeg gui
-natmeg run --config config.yml
-natmeg --help
+seshat gui
+seshat run --config config.yml
+seshat --help
 ```
 
 ## Manual Installation
@@ -23,8 +23,8 @@ natmeg --help
 ### Conda
 
 ```bash
-conda create -n natmeg_utils python>=3.12 pip uv -y
-conda activate natmeg_utils
+conda create -n seshat_utils python>=3.12 pip uv -y
+conda activate seshat_utils
 uv pip install -r requirements.txt
 ```
 
@@ -53,7 +53,7 @@ Use the conda installation:
 bash install.sh
 ```
 
-### natmeg command not found
+### seshat command not found
 
 Ensure `~/.local/bin` is on the PATH.
 
@@ -67,6 +67,6 @@ source ~/.zshrc
 Recreate the environment:
 
 ```bash
-conda env remove -n natmeg_utils -y
+conda env remove -n seshat_utils -y
 bash install.sh
 ```

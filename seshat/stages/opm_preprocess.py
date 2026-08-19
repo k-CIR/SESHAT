@@ -126,13 +126,23 @@ def get_parameters(config:str):
         'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
         'overwrite': config.get('OPM', {}).get('overwrite', False),
         'plot': config.get('OPM', {}).get('plot', False),
-        'logfile': config.get('Project', {}).get('logfile', '')
+        'logfile': config.get('Project', {}).get('logfile', 'pipeline_log.log')
     }
     return hpi_config
      
-def find_hpi_fit(config, subject, session, overwrite=False):
+def find_hpi_fit(config, subject, session, overwrite=False,
+                 log_path: str = None, logfile: str = None):
     """
     Localize HPI coils in device coordinates using sequential activation.
+    
+    Args:
+        config: HPI configuration dict.
+        subject: Subject identifier string.
+        session: Session identifier string.
+        overwrite: Whether to overwrite existing output files.
+        log_path: Directory for the log file.  When None (standalone), derived
+                  from opmMEGdir.
+        logfile: Log filename.  When None, taken from config or defaulted.
     """
     
     opmMEGdir = config.get('opmMEG')
@@ -142,12 +152,14 @@ def find_hpi_fit(config, subject, session, overwrite=False):
     hpinames=config.get('hpinames')
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
     overwrite = config.get('overwrite', False)
-    logfile = config.get('logfile', 'pipeline_log.log')
-    
-    log_path = opmMEGdir.replace('raw', 'logs')
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
-    configure_logging(log_dir=log_path, log_file=logfile)
+
+    if logfile is None:
+        logfile = config.get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
+    if log_path is None:
+        log_path = opmMEGdir.replace('raw', 'logs')
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        configure_logging(log_dir=log_path, log_file=logfile)
 
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
@@ -377,9 +389,16 @@ def args_parser():
                         help='Enable verbose output')
     return parser.parse_args()
 
-def main(config: Union[str, dict]=None):
+def main(config: Union[str, dict]=None, log_file_path: str = None):
     """
     Main execution function for HPI coregistration pipeline.
+    
+    Args:
+        config: Path to config file, or already-parsed config dict.
+        log_file_path: Full path to the log file (e.g. '/project/logs/pipeline_log.log').
+                       When provided (called from cli.py), logging is already configured
+                       and this path is used directly.  When None (standalone run), the
+                       path is derived from opmMEGdir.
     """
 
     if config is None:
@@ -406,11 +425,17 @@ def main(config: Union[str, dict]=None):
     plotResult = config.get('plot', False)
     rename_analog = config.get('rename_analog_channels', False)
 
-    log_path = opmMEGdir.replace('raw', 'logs')
-    if not os.path.exists(log_path):
-        os.makedirs(log_path)
-    logfile = config.get('logfile', 'adding_hpi.log')
-    configure_logging(log_dir=log_path, log_file=logfile)
+    if log_file_path is not None:
+        # Called from cli.py — logging already configured; use supplied path.
+        log_path = os.path.dirname(log_file_path)
+        logfile = os.path.basename(log_file_path)
+    else:
+        # Standalone invocation — derive log dir from opmMEGdir.
+        logfile = config.get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
+        log_path = opmMEGdir.replace('raw', 'logs')
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        configure_logging(log_dir=log_path, log_file=logfile)
     
     subjects = sorted([subject for subject in glob('sub-*',
                                                 root_dir = f'{opmMEGdir}')
@@ -430,7 +455,8 @@ def main(config: Union[str, dict]=None):
             if os.path.isdir(f'{opmMEGdir}/{subject}/{session}') and re.match(r'^\d{6}$', session)
         ])
         for session in sessions:
-            hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite)
+            hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite,
+                                              log_path=log_path, logfile=logfile)
 
             hedscan_files = hpi_fit_parameters.get('hedscan_files', [])
             # Create partial function with shared parameters
