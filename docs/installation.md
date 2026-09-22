@@ -1,16 +1,26 @@
 # Installation
 
+Primary supported platform: **Rocky Linux** (RHEL/Fedora-family). macOS and
+Debian/Ubuntu are also supported.
+
 ## Quick Installation
 
 ```bash
-git clone git@github.com:k-CIR/SESHAT.git
+git clone --recurse-submodules git@github.com:k-CIR/SESHAT.git
 cd SESHAT
 bash install.sh
 ```
 
-The installer automatically detects the platform and sets up the required environment.
+(If you already cloned without `--recurse-submodules`, `install.sh` will
+fetch the missing `opm_utility_scripts` submodule for you.)
 
-After installation:
+This installs `seshat` as an isolated global command for your user account,
+using [`uv tool install`](https://docs.astral.sh/uv/guides/tools/) if `uv`
+is available (installed automatically otherwise), or `pipx` as a fallback.
+It does **not** require `sudo`, conda, or a manually managed virtual
+environment, and it won't conflict with any other Python project.
+
+After installation, open a new terminal (or `source ~/.bashrc`) and run:
 
 ```bash
 seshat gui
@@ -18,55 +28,75 @@ seshat run --config config.yml
 seshat --help
 ```
 
-## Manual Installation
-
-### Conda
+### Options
 
 ```bash
-conda create -n seshat_utils python>=3.12 pip uv -y
-conda activate seshat_utils
-uv pip install -r requirements.txt
-```
-
-### Python Virtual Environment
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
+bash install.sh --editable   # dev install: code changes apply without reinstalling
+bash install.sh --uv         # force uv as the installer
+bash install.sh --pipx       # force pipx as the installer
 ```
 
 ## Prerequisites
 
-- Python 3.12+
-- Conda or Miniconda (recommended)
+- Python 3.9+ (the installer picks the newest suitable interpreter it finds)
 - Git
-- macOS or Linux
+- Rocky Linux / RHEL / Fedora, Debian/Ubuntu, or macOS
+- tkinter, for the GUI only (`seshat run`/`seshat copy`/etc. work without it):
+  - Rocky/RHEL/Fedora: `sudo dnf install python3-tkinter`
+  - Debian/Ubuntu: `sudo apt install python3-tk`
+  - macOS: `brew install python-tk`
+
+`install.sh` checks for tkinter automatically and prints the correct command
+for your distro if it's missing.
+
+## Manual / Development Installation
+
+Instead of `install.sh`, you can install into your own environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pip install -e opm_utility_scripts/   # required for the opm-preprocess stage
+```
+
+Optional notebook extras (`jupyter`, `ipython`, `seaborn`):
+
+```bash
+pip install -e ".[notebook]"
+```
 
 ## Troubleshooting
 
-### PyQt Issues on Linux
+### `seshat: command not found`
 
-Use the conda installation:
+Ensure `~/.local/bin` is on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Reinstalling / updating
+
+Re-run the installer; it reinstalls in place:
 
 ```bash
 bash install.sh
 ```
 
-### seshat command not found
-
-Ensure `~/.local/bin` is on the PATH.
+### Uninstalling
 
 ```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
+uv tool uninstall seshat   # if installed via uv
+pipx uninstall seshat      # if installed via pipx
 ```
 
-### Environment issues
+### opm-preprocess stage fails to import `opm_utility_scripts`
 
-Recreate the environment:
+The submodule wasn't fetched. Run:
 
 ```bash
-conda env remove -n seshat_utils -y
+git submodule update --init --recursive
 bash install.sh
 ```

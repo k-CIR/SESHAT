@@ -1,31 +1,55 @@
 #!/bin/bash
-# Cross-platform SESHAT Pipeline installer using Python virtual environment or Conda
+# SESHAT Pipeline installer
+#
+# Installs the 'seshat' command (with the deprecated 'natmeg' alias) as an
+# isolated, globally-available CLI tool for the current user, using
+# `uv tool` (preferred) or `pipx` as a fallback. Each install gets its own
+# private virtual environment, so it never conflicts with other Python
+# projects or the system Python.
+#
+# Primary target: Rocky Linux / RHEL / Fedora (dnf-based). Also works on
+# Debian/Ubuntu (apt-based) and macOS (Homebrew).
 
 set -e
 
-# Parse command line arguments
-USE_CONDA=true  # Default to conda installation
+EDITABLE=false
+FORCE_PIPX=false
+FORCE_UV=false
+
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --venv)
-            USE_CONDA=false
+        --editable|-e)
+            EDITABLE=true
             shift
             ;;
-        --conda)
-            USE_CONDA=true
+        --uv)
+            FORCE_UV=true
+            shift
+            ;;
+        --pipx)
+            FORCE_PIPX=true
             shift
             ;;
         --help|-h)
-            echo "SESHAT Pipeline Installer"
-            echo "Usage: $0 [options]"
-            echo ""
-            echo "Options:"
-            echo "  --venv      Use Python virtual environment instead of conda"
-            echo "  --conda     Use conda environment (default)"
-            echo "  --help, -h  Show this help message"
-            echo ""
-            echo "Default installation uses conda environment for better PyQt compatibility"
-            echo "Virtual environment installation available with --venv flag"
+            cat <<'HLP'
+SESHAT Pipeline Installer
+
+Installs the 'seshat' command (with the deprecated 'natmeg' alias) as an
+isolated, globally-available CLI tool for the current user, using
+uv tool (preferred) or pipx as a fallback.
+
+Usage: bash install.sh [options]
+
+Options:
+  --editable, -e   Install in editable mode from this checkout (for development;
+                    code changes take effect immediately without reinstalling)
+  --uv             Force use of 'uv tool install'
+  --pipx           Force use of 'pipx install'
+  --help, -h       Show this help message
+
+No option is required for a normal install: the script picks 'uv' if
+available (installing it automatically otherwise), falling back to 'pipx'.
+HLP
             exit 0
             ;;
         *)
@@ -36,359 +60,166 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ "$USE_CONDA" = true ]; then
-    echo "Installing SESHAT Pipeline with Conda environment (default)..."
-else
-    echo "Installing SESHAT Pipeline with Python virtual environment..."
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OS=$(uname -s)
+echo "Detected platform: $OS"
+
+# Detect a dnf-based distro (Rocky/RHEL/Fedora/AlmaLinux/CentOS) for
+# distro-specific package hints (python3-tkinter, pipx, etc.).
+IS_DNF=false
+if command -v dnf &> /dev/null; then
+    IS_DNF=true
 fi
 
-# Detect operating system
-OS=$(uname -s)
-ARCH=$(uname -m)
-
-echo "Detected platform: $OS ($ARCH)"
-
-# Function to find conda Python version
-find_conda_python_version() {
-    if command -v conda &> /dev/null; then
-        # Check available Python versions in conda
-        local available_versions=$(conda search python 2>/dev/null | grep "^python " | awk '{print $2}' | grep -E "^3\.(1[2-9]|[2-9][0-9])" | sort -V | tail -1)
-        if [ -n "$available_versions" ]; then
-            echo "$available_versions"
-            return 0
-        fi
+# --- opm_utility_scripts git submodule ---
+# Not published to PyPI; not a dependency in pyproject.toml. It must be
+# fetched and installed alongside seshat for 'seshat run --opm-preprocess'
+# (seshat/stages/opm_preprocess.py) to work.
+OPM_UTILS_DIR="$SOURCE_DIR/opm_utility_scripts"
+if [ -f "$SOURCE_DIR/.gitmodules" ] && command -v git &> /dev/null; then
+    if [ ! -f "$OPM_UTILS_DIR/pyproject.toml" ]; then
+        echo "Fetching opm_utility_scripts submodule..."
+        git -C "$SOURCE_DIR" submodule update --init --recursive
     fi
-    echo "3.12"  # Default fallback
-    return 0
-}
+fi
+INSTALL_OPM_UTILS=false
+if [ -f "$OPM_UTILS_DIR/pyproject.toml" ]; then
+    INSTALL_OPM_UTILS=true
+else
+    echo "⚠ opm_utility_scripts submodule not found at $OPM_UTILS_DIR."
+    echo "  The OPM preprocessing stage ('opm_preprocess') will not work until you run:"
+    echo "    git submodule update --init --recursive"
+    echo "  and then re-run this script."
+fi
 
-# Function to find Python installation
-find_python() {
-    # For conda installation, we don't need to search for system Python
-    # conda will provide Python in the environment
-    if [ "$USE_CONDA" = true ]; then
-        # Just return a placeholder since conda will handle Python installation
-        echo "conda-python"
-        return 0
-    fi
-    
-    # For venv installation, search for system Python 3.12+
-    local python_with_tkinter=""
-    local python_without_tkinter=""
-    
-    # For venv installation, prioritize system Python with tkinter
-    for python_cmd in /usr/bin/python3 python3.13 python3.12 python3 python; do
-        if command -v "$python_cmd" &> /dev/null; then
-            local version=$($python_cmd --version 2>&1 | cut -d' ' -f2)
-            local major=$(echo "$version" | cut -d'.' -f1)
-            local minor=$(echo "$version" | cut -d'.' -f2)
-            
-            if [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; then
-                # Test if tkinter is available (preferred for GUI)
-                if $python_cmd -c "import tkinter" 2>/dev/null; then
-                    if [ -z "$python_with_tkinter" ]; then
-                        python_with_tkinter="$python_cmd"
-                    fi
+# --- Find a system Python (>=3.9) to back the tool install, preferring one
+#     that already has tkinter so 'seshat gui' works out of the box. ---
+find_system_python() {
+    local best_with_tk=""
+    local best_without_tk=""
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
+        if command -v "$candidate" &> /dev/null; then
+            local version major minor
+            version=$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
+            major=${version%%.*}
+            minor=${version##*.}
+            if [ "$major" -eq 3 ] 2>/dev/null && [ "$minor" -ge 9 ] 2>/dev/null; then
+                if "$candidate" -c "import tkinter" 2>/dev/null; then
+                    [ -z "$best_with_tk" ] && best_with_tk="$candidate"
                 else
-                    if [ -z "$python_without_tkinter" ]; then
-                        python_without_tkinter="$python_cmd"
-                    fi
+                    [ -z "$best_without_tk" ] && best_without_tk="$candidate"
                 fi
             fi
         fi
     done
-    
-    # Return best available Python for venv
-    if [ -n "$python_with_tkinter" ]; then
-        echo "$python_with_tkinter"
-        return 0
-    elif [ -n "$python_without_tkinter" ]; then
-        echo "$python_without_tkinter"
-        return 0
+    if [ -n "$best_with_tk" ]; then
+        echo "$best_with_tk"
+    else
+        echo "$best_without_tk"
     fi
-    
-    return 1
 }
 
-# Find suitable Python installation
-if [ "$USE_CONDA" = true ]; then
-    # For conda, just verify conda is available - it will provide Python
-    echo "🔍 Checking conda availability..."
-    if ! command -v conda &> /dev/null; then
-        echo "❌ Error: conda is not installed or not in PATH" >&2
-        echo "   Please install Miniconda or Anaconda first:" >&2
-        echo "   https://docs.conda.io/en/latest/miniconda.html" >&2
-        exit 1
-    fi
-    echo "✅ Found conda: $(conda --version)"
-    PYTHON="conda-python"  # Placeholder - conda will provide Python
-else
-    # For venv, find system Python interpreter
-    echo "🔍 Finding Python interpreter..."
-    if ! PYTHON=$(find_python); then
-        echo "❌ Error: Python 3.12+ is required but not found" >&2
-        echo "   Please install Python 3.12 or higher" >&2
-        exit 1
-    fi
-    echo "✅ Found Python: $PYTHON ($($PYTHON --version))"
-fi
+SYSTEM_PYTHON=$(find_system_python || true)
 
-# Check for GUI library availability and show appropriate info
-if [ "$USE_CONDA" = true ]; then
-    echo "ℹ️  GUI libraries will be installed via conda (PyQt6) for full functionality"
-else
-    if $PYTHON -c "import tkinter" 2>/dev/null; then
-        echo "✅ GUI support: tkinter available"
-    elif $PYTHON -c "import PyQt6.QtWidgets" 2>/dev/null; then
-        echo "✅ GUI support: PyQt6 available"
+if [ -z "$SYSTEM_PYTHON" ]; then
+    echo "❌ Error: no suitable Python 3.9+ interpreter found." >&2
+    if [ "$IS_DNF" = true ]; then
+        echo "   Install one with: sudo dnf install python3.12" >&2
     else
-        echo "ℹ️  GUI libraries will be installed via PyQt6 for full functionality"
+        echo "   Please install Python 3.9 or higher." >&2
     fi
+    exit 1
 fi
 
-# Check for uv and mention the benefits
-if command -v uv &> /dev/null; then
-    echo "✓ uv found - will use for faster package installation"
+echo "✓ Using Python: $SYSTEM_PYTHON ($($SYSTEM_PYTHON --version 2>&1))"
+
+if $SYSTEM_PYTHON -c "import tkinter" 2>/dev/null; then
+    echo "✓ tkinter available - GUI ('seshat gui') will work"
 else
-    echo "💡 uv will be installed in the virtual environment for faster package installation"
-    echo "   (uv is 10-100x faster than pip for installing packages)"
-fi
-
-# Check if installation directory already exists and ask for confirmation
-TARGET_DIR="$HOME/.local/bin/NatMEG-utils"
-
-if [ -d "$TARGET_DIR" ]; then
-    echo "NatMEG-utils installation already exists at $TARGET_DIR"
-    echo "This will:"
-    echo "  - Overwrite all Python scripts and configuration files"
-    echo "  - Recreate the virtual environment (.venv)"
-    echo "  - Reinstall all Python packages"
-    echo ""
-    read -p "Do you want to continue and overwrite the existing installation? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
-    fi
-    echo "Proceeding with overwrite..."
-fi
-
-# Copy the entire NatMEG-utils folder to the target directory
-SOURCE_DIR=$(pwd)
-
-# Create local bin directory
-mkdir -p "$HOME/.local/bin"
-mkdir -p "$TARGET_DIR"
-
-if [ -d "$SOURCE_DIR" ]; then
-    # Clean up any existing .git directory in target
-    if [ -d "$TARGET_DIR/.git" ]; then
-        rm -rf "$TARGET_DIR/.git"
-    fi
-    
-    # Use rsync to copy, excluding .git and respecting .gitignore
-    if command -v rsync &> /dev/null; then
-        # Use rsync if available for better control over exclusions
-        rsync -av \
-            --exclude='.git' \
-            --exclude='.gitignore' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='.DS_Store' \
-            --exclude='*.egg-info' \
-            --exclude='.venv' \
-            --exclude='venv' \
-            --exclude='conda_env' \
-            "$SOURCE_DIR/" "$TARGET_DIR/" 2>/dev/null || {
-            echo "⚠ Warning: rsync copy had some issues, attempting fallback copy method..."
-        }
+    echo "⚠ tkinter not found for $SYSTEM_PYTHON."
+    echo "  'seshat gui' will not work until tkinter is installed for this interpreter."
+    if [ "$IS_DNF" = true ]; then
+        echo "  Install it with: sudo dnf install python3-tkinter"
+    elif [ "$OS" = "Darwin" ]; then
+        echo "  Install it with: brew install python-tk"
     else
-        # Fallback: use cp with --no-preserve if rsync is not available
-        cp -r --no-preserve=mode,ownership \
-            --exclude='.git' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            "$SOURCE_DIR/." "$TARGET_DIR" 2>/dev/null || {
-            echo "⚠ Warning: Some files could not be copied (permission denied), continuing..."
-        }
+        echo "  Install it with: sudo apt install python3-tk"
     fi
-    echo "✓ Copied NatMEG-utils folder (excluding .git and cache files)"
-else
-    echo "⚠ Warning: NatMEG-utils folder does not exist in $SOURCE_DIR"
+    echo "  The command-line interface (seshat run, seshat copy, etc.) works regardless."
 fi
 
-# Create environment (conda or venv)
-if [ "$USE_CONDA" = true ]; then
-    echo "Setting up Conda environment..."
-    
-    # Check if conda is available
-    if ! command -v conda &> /dev/null; then
-        echo "❌ Error: conda is not installed or not in PATH" >&2
-        echo "   Please install Miniconda or Anaconda first:" >&2
-        echo "   https://docs.conda.io/en/latest/miniconda.html" >&2
-        exit 1
-    fi
-    
-    CONDA_ENV_NAME="seshat_utils"
-    
-    # Remove existing conda environment if it exists
-    if conda env list | grep -q -E "(seshat-utils|seshat_utils|natmeg-utils|natmeg_utils)"; then
-        echo "Removing existing conda environment..."
-        # Clean up both current and legacy environment names.
-        conda env remove -n "seshat-utils" -y 2>/dev/null || true
-        conda env remove -n "seshat_utils" -y 2>/dev/null || true
-        conda env remove -n "natmeg-utils" -y 2>/dev/null || true
-        conda env remove -n "natmeg_utils" -y 2>/dev/null || true
-    fi
-    
-    # Create basic conda environment with Python and pip
-    echo "Creating conda environment with Python and pip..."
-    conda create -n "$CONDA_ENV_NAME" --channel conda-forge "python=3.12" pip uv -y 
-    
-    # Initialize conda for the current shell session
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    
-    # Activate the environment
-    conda activate "$CONDA_ENV_NAME"
-    
-    ENV_TYPE="conda"
-    ENV_PATH="$CONDA_ENV_NAME"
-    
-else
-    echo "Creating Python virtual environment..."
-    VENV_PATH="$TARGET_DIR/.venv"
-    
-    if [ -d "$VENV_PATH" ]; then
-        echo "Removing existing virtual environment..."
-        rm -rf "$VENV_PATH"
-    fi
-    
-    # Always create venv with standard Python first
-    $PYTHON -m venv "$VENV_PATH"
-    source "$VENV_PATH/bin/activate"
-    ENV_TYPE="venv"
-    ENV_PATH="$VENV_PATH"
+# --- Choose installer: uv tool (preferred, fast, self-contained) or pipx ---
+INSTALLER=""
+if [ "$FORCE_PIPX" = true ]; then
+    INSTALLER="pipx"
+elif [ "$FORCE_UV" = true ]; then
+    INSTALLER="uv"
+elif command -v uv &> /dev/null; then
+    INSTALLER="uv"
+elif command -v pipx &> /dev/null; then
+    INSTALLER="pipx"
 fi
 
-# Check if uv is available globally, if not install it in the environment
-if command -v uv &> /dev/null; then
-    echo "✓ Using system uv for package installation"
-    USE_UV=true
-else
-    echo "Installing uv in $ENV_TYPE environment for faster package installation..."
-    pip install --upgrade pip
-    pip install uv
+if [ -z "$INSTALLER" ]; then
+    echo "Neither 'uv' nor 'pipx' found. Installing 'uv' (recommended, self-contained, no root needed)..."
+    if command -v curl &> /dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    elif command -v wget &> /dev/null; then
+        wget -qO- https://astral.sh/uv/install.sh | sh
+    fi
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
     if command -v uv &> /dev/null; then
-        echo "✓ uv installed successfully in $ENV_TYPE environment"
-        USE_UV=true
+        INSTALLER="uv"
     else
-        echo "⚠ uv installation failed, falling back to pip"
-        USE_UV=false
-    fi
-fi
-
-# Install the seshat package and its dependencies via pyproject.toml
-echo "Installing SESHAT package and Python dependencies..."
-if [ "$USE_UV" = true ]; then
-    uv pip install -e "$TARGET_DIR"
-else
-    pip install -e "$TARGET_DIR"
-fi
-# The entry-points (seshat / natmeg) are now registered by pip from pyproject.toml.
-# The legacy wrapper scripts below are kept for PATH-based installs that predate pip.
-
-echo "✓ Virtual environment created and dependencies installed"
-
-# Determine shell config file
-SHELL_CONFIG=""
-if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "/bin/zsh" ] || [ "$SHELL" = "/usr/bin/zsh" ]; then
-    SHELL_CONFIG="$HOME/.zshrc"
-elif [ -n "$BASH_VERSION" ] || [ "$SHELL" = "/bin/bash" ] || [ "$SHELL" = "/usr/bin/bash" ]; then
-    SHELL_CONFIG="$HOME/.bashrc"
-else
-    SHELL_CONFIG="$HOME/.profile"
-fi
-
-echo "Using shell config: $SHELL_CONFIG"
-
-# Create the seshat executable
-echo "Creating seshat executable..."
-
-cat > "$HOME/.local/bin/NatMEG-utils/seshat" << EOF
-#!/bin/bash
-# SESHAT Pipeline Executable - Auto-generated with $ENV_TYPE environment
-
-# SAFETY CHECKS - Prevent terminal crashes at all costs
-set +e  # Don't exit on errors
-set +u  # Don't exit on undefined variables
-set +o pipefail  # Don't exit on pipe failures
-
-# Multiple layers of error handling
-trap 'echo "Warning: Error in seshat script, but terminal will remain open." >&2; exit 1' ERR
-trap 'echo "Warning: Script interrupted, but terminal will remain open." >&2; exit 130' INT
-trap 'echo "Warning: Script terminated, but terminal will remain open." >&2; exit 143' TERM
-
-# Environment-specific setup
-ENV_TYPE="$ENV_TYPE"
-
-if [ "\$ENV_TYPE" = "conda" ]; then
-    CONDA_ENV_NAME="$CONDA_ENV_NAME"
-    if ! command -v conda &> /dev/null; then
-        echo "Error: conda command not found"
+        echo "❌ Error: could not install uv automatically." >&2
+        echo "   Install one of the following manually and re-run this script:" >&2
+        echo "   - uv:   https://docs.astral.sh/uv/getting-started/installation/" >&2
+        echo "   - pipx: https://pipx.pypa.io/stable/installation/" >&2
         exit 1
     fi
-    if ! conda env list | grep -q "\$CONDA_ENV_NAME"; then
-        echo "Error: Conda environment '\$CONDA_ENV_NAME' not found"
-        exit 1
-    fi
-    source "\$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "\$CONDA_ENV_NAME"
-    PYTHON_CMD="python"
+fi
+
+echo "Using installer: $INSTALLER"
+
+# --- Install / reinstall SESHAT as an isolated global tool ---
+echo "Installing SESHAT..."
+
+if [ "$INSTALLER" = "uv" ]; then
+    UV_ARGS=(tool install --force --reinstall --python "$SYSTEM_PYTHON")
+    [ "$EDITABLE" = true ] && UV_ARGS+=(--editable)
+    [ "$INSTALL_OPM_UTILS" = true ] && UV_ARGS+=(--with-editable "$OPM_UTILS_DIR")
+    UV_ARGS+=("$SOURCE_DIR")
+    uv "${UV_ARGS[@]}"
+    uv tool update-shell || true
 else
-    VENV_PATH="\$HOME/.local/bin/NatMEG-utils/.venv"
-    PYTHON_VENV="\$VENV_PATH/bin/python"
-    if [ ! -f "\$PYTHON_VENV" ]; then
-        echo "Error: Python executable not found in virtual environment"
-        exit 1
+    if ! command -v pipx &> /dev/null; then
+        echo "Installing pipx..."
+        if [ "$IS_DNF" = true ] && command -v dnf &> /dev/null && sudo -n true 2>/dev/null; then
+            sudo dnf install -y pipx || "$SYSTEM_PYTHON" -m pip install --user pipx
+        else
+            "$SYSTEM_PYTHON" -m pip install --user pipx
+        fi
+        "$SYSTEM_PYTHON" -m pipx ensurepath || true
+        export PATH="$HOME/.local/bin:$PATH"
     fi
-    PYTHON_CMD="\$PYTHON_VENV"
+    PIPX_ARGS=(install --force --python "$SYSTEM_PYTHON")
+    [ "$EDITABLE" = true ] && PIPX_ARGS+=(--editable)
+    PIPX_ARGS+=("$SOURCE_DIR")
+    pipx "${PIPX_ARGS[@]}"
+    if [ "$INSTALL_OPM_UTILS" = true ]; then
+        pipx inject seshat "$OPM_UTILS_DIR" --editable --force
+    fi
+    pipx ensurepath || true
 fi
 
-# Invoke via the installed package entry point
-"\$PYTHON_CMD" -m seshat.cli "\$@"
+echo "✓ SESHAT installed"
 
-if [ \$? -ne 0 ] && [ "\$1" = "gui" ]; then
-    echo ""
-    echo "GUI failed to start. Try: seshat run --config config.yml"
-fi
-EOF
-
-# Make it executable
-chmod +x "$HOME/.local/bin/NatMEG-utils/seshat"
-
-# Create backward-compatible natmeg alias executable
-cat > "$HOME/.local/bin/NatMEG-utils/natmeg" << 'EOF'
-#!/bin/bash
-# Backward-compatible alias for legacy command name.
-exec "$HOME/.local/bin/NatMEG-utils/seshat" "$@"
-EOF
-
-# Make alias executable
-chmod +x "$HOME/.local/bin/NatMEG-utils/natmeg"
-
-# Add to PATH if not already there
-if ! echo "$PATH" | grep -q "$HOME/.local/bin/NatMEG-utils"; then
-    echo "Adding $HOME/.local/bin/NatMEG-utils to PATH in $SHELL_CONFIG"
-    echo 'export PATH="$HOME/.local/bin/NatMEG-utils:$PATH"' >> "$SHELL_CONFIG"
-    echo "Please run: source $SHELL_CONFIG"
-else
-    echo "$HOME/.local/bin/NatMEG-utils is already in PATH"
-fi
-
-# Create Linux desktop launcher for GUI usage.
-if [ "$OS" = "Linux" ]; then
+# --- Optional: Linux desktop launcher for GUI usage ---
+if [ "$OS" = "Linux" ] && command -v seshat &> /dev/null; then
     DESKTOP_DIR="$HOME/.local/share/applications"
     DESKTOP_FILE="$DESKTOP_DIR/seshat.desktop"
+    SESHAT_BIN="$(command -v seshat)"
+    ICON_PATH="$SOURCE_DIR/assets/seshat_col_white.svg"
     mkdir -p "$DESKTOP_DIR"
 
     cat > "$DESKTOP_FILE" << EOF
@@ -397,155 +228,31 @@ Version=1.0
 Type=Application
 Name=SESHAT
 Comment=SESHAT Pipeline Config Editor
-Exec=$HOME/.local/bin/NatMEG-utils/seshat gui
-Icon=$HOME/.local/bin/NatMEG-utils/assets/seshat_col_white.svg
+Exec=$SESHAT_BIN gui
+Icon=$ICON_PATH
 Terminal=false
 Categories=Science;Education;
 StartupNotify=true
 EOF
-
     chmod +x "$DESKTOP_FILE"
     echo "✓ Linux desktop app created at $DESKTOP_FILE"
 fi
 
-# Check environment
-echo "Checking $ENV_TYPE environment..."
-
-if [ "$ENV_TYPE" = "conda" ]; then
-    # Check conda environment
-    if conda env list | grep -q "$CONDA_ENV_NAME"; then
-        echo "✓ Conda environment '$CONDA_ENV_NAME' found"
-        
-        # Initialize conda for the current shell session and activate
-        source "$(conda info --base)/etc/profile.d/conda.sh"
-        conda activate "$CONDA_ENV_NAME"
-        if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
-            echo "✓ Core packages (mne, pandas, numpy) successfully installed"
-            
-            # Test PyQt for GUI functionality
-            if python -c "import PyQt6.QtWidgets" 2>/dev/null || python -c "import PyQt5.QtWidgets" 2>/dev/null; then
-                echo "✓ PyQt available - GUI will work"
-                ENV_EXISTS=true
-            elif python -c "import tkinter" 2>/dev/null; then
-                echo "✓ tkinter available - GUI will work (fallback)"
-                ENV_EXISTS=true
-            else
-                echo "⚠ Warning: No GUI toolkit available - GUI features disabled"
-                echo "  Command-line interface will still work"
-                ENV_EXISTS=true
-            fi
-        else
-            echo "⚠ Warning: Some required packages may be missing"
-            ENV_EXISTS=false
-        fi
-    else
-        echo "⚠ Warning: Conda environment not found"
-        ENV_EXISTS=false
-    fi
+echo ""
+if command -v seshat &> /dev/null; then
+    echo "✅ Installation complete!"
+    echo ""
+    echo "Usage:"
+    echo "  seshat gui                        # Launch GUI"
+    echo "  seshat run --config config.yml    # Run pipeline"
+    echo "  seshat report --config config.yml # Generate HTML report only"
+    echo ""
+    echo "('natmeg' is also available as a deprecated alias for 'seshat')"
+    echo ""
+    echo "To update later:      bash install.sh"
+    echo "To uninstall:         $([ "$INSTALLER" = "uv" ] && echo "uv tool uninstall seshat" || echo "pipx uninstall seshat")"
 else
-    # Check virtual environment
-    VENV_PATH="$TARGET_DIR/.venv"
-    
-    if [ -d "$VENV_PATH" ] && [ -f "$VENV_PATH/bin/activate" ]; then
-        echo "✓ Virtual environment found at $VENV_PATH"
-        
-        # Test if we can import key packages
-        source "$VENV_PATH/bin/activate"
-        if python -c "import mne, pandas, numpy; print('Core packages available')" 2>/dev/null; then
-            echo "✓ Core packages (mne, pandas, numpy) successfully installed"
-            
-            # Test GUI toolkits
-            if python -c "import PyQt6.QtWidgets" 2>/dev/null; then
-                echo "✓ PyQt6 available - GUI will work"
-                ENV_EXISTS=true
-            elif python -c "import tkinter" 2>/dev/null; then
-                echo "✓ tkinter available - GUI will work (fallback)"
-                ENV_EXISTS=true
-            else
-                echo "⚠ Warning: No GUI toolkit available - GUI features disabled"
-                echo "  Command-line interface will still work"
-                ENV_EXISTS=true
-            fi
-        else
-            echo "⚠ Warning: Some required packages may be missing"
-            ENV_EXISTS=false
-        fi
-        deactivate
-    else
-        echo "⚠ Warning: Virtual environment not found or corrupted"
-        ENV_EXISTS=false
-    fi
-fi
-
-echo ""
-echo "Installation complete!"
-echo ""
-echo "Testing the installation..."
-
-# Test if the executable works
-if (command -v seshat &> /dev/null || [ -f "$HOME/.local/bin/NatMEG-utils/seshat" ]) && [ -f "$HOME/.local/bin/NatMEG-utils/natmeg" ]; then
-    echo "✓ seshat executable created successfully"
-    echo "✓ natmeg alias created for backward compatibility"
-    
-    # Test basic execution only if environment exists
-    if [ "$ENV_EXISTS" = true ]; then
-        echo "✓ Virtual environment and seshat package ready"
-        INSTALL_SUCCESS=true
-    else
-        echo "⚠ seshat executable created but virtual environment needs setup"
-        INSTALL_SUCCESS=false
-    fi
-else
-    echo "✗ Failed to create seshat executable"
-    INSTALL_SUCCESS=false
-fi
-
-echo ""
-echo "Usage:"
-echo "  seshat gui                      # Launch GUI"
-echo "  seshat run --config config.yml   # Run pipeline"
-echo "  seshat report --config config.yml # Generate HTML report only"
-echo ""
-
-# Conditional instructions based on installation status
-if [ "$ENV_EXISTS" = false ]; then
-    if [ "$USE_CONDA" = true ]; then
-        echo "NEXT STEPS - Fix conda environment:"
-        echo "  1. source $SHELL_CONFIG"
-        echo "  2. conda env remove -n seshat_utils"
-        echo "  3. cd $TARGET_DIR"
-        echo "  4. bash install.sh --conda  # Recreate conda environment"
-        echo "  5. Test with: seshat --help"
-    else
-        echo "NEXT STEPS - Fix virtual environment:"
-        echo "  1. source $SHELL_CONFIG"
-        echo "  2. cd $TARGET_DIR"
-        echo "  3. rm -rf .venv  # Remove corrupted environment"
-        echo "  4. $PYTHON -m venv .venv  # Recreate environment"
-        echo "  5. source .venv/bin/activate"
-        echo "  6. pip install -e .  # Install seshat package with all dependencies"
-        echo "  7. Test with: seshat --help"
-        echo ""
-        echo "  Alternative (if default conda fails):"
-        echo "  bash install.sh --venv  # Use venv instead of conda"
-    fi
-elif [ "$INSTALL_SUCCESS" = true ]; then
-    echo "✅ Installation complete and ready to use!"
-    if [ "$USE_CONDA" = true ]; then
-        echo "Using conda environment: $CONDA_ENV_NAME"
-    fi
-    echo "Test with: seshat --help"
-else
-    echo "TROUBLESHOOTING:"
-    if [ "$USE_CONDA" = true ]; then
-        echo "  - Check conda installation: conda --version"
-        echo "  - Check environment: conda env list"
-        echo "  - Recreate environment: bash install.sh --conda"
-    else
-        echo "  - Ensure Python 3.12+ is working: $PYTHON --version"
-        echo "  - Try venv installation: bash install.sh --venv"
-    fi
-    echo "  - Check PATH: echo \$PATH"
-    echo "  - View executable: cat ~/.local/bin/NatMEG-utils/seshat"
-    echo "  - Re-run installer if needed"
+    echo "⚠ Installed, but 'seshat' is not yet on PATH in this shell."
+    echo "  Open a new terminal, or run:"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi

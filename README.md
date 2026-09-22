@@ -5,10 +5,14 @@ SESHAT is a MEG/EEG preprocessing pipeline designed for NatMEG datasets. It prov
 ## Quick Installation
 
 ```bash
-git clone git@github.com:k-CIR/SESHAT.git
+git clone --recurse-submodules git@github.com:k-CIR/SESHAT.git
 cd SESHAT
 bash install.sh
 ```
+
+Installs `seshat` as an isolated global command via `uv tool`/`pipx` (no conda,
+no manual virtual environment). See [docs/installation.md](docs/installation.md)
+for prerequisites (Rocky Linux/RHEL, Debian/Ubuntu, macOS) and troubleshooting.
 
 After installation:
 
