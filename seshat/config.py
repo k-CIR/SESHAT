@@ -107,6 +107,24 @@ def create_default_config():
     }
     return config
 
+def merge_with_defaults(config: dict, defaults: dict) -> dict:
+    """Recursively fill in keys missing from `config` using `defaults`.
+
+    Needed when loading an older ("legacy") config file that predates a
+    newly added setting (e.g. OPM.noise_reffile): without this, the field
+    is absent from the loaded config, never gets a GUI widget, and keeps
+    being dropped every time the file is re-saved. Existing values already
+    present in `config` are never overwritten.
+    """
+    merged = dict(config)
+    for key, default_val in defaults.items():
+        if key not in merged:
+            merged[key] = default_val
+        elif isinstance(default_val, dict) and isinstance(merged[key], dict):
+            merged[key] = merge_with_defaults(merged[key], default_val)
+    return merged
+
+
 def rename_legacy_keys(config: dict) -> dict:
     """Rename legacy keys in the configuration dictionary.
     Preserves insertion order. Also normalises legacy values (e.g. continous→continuous).
@@ -680,6 +698,7 @@ class ConfigMainWindow:
                     if isinstance(config['Project']['Tasks'], str):
                         config['Project']['Tasks'] = config['Project']['Tasks'].split(',')
                 config = rename_legacy_keys(config)
+                config = merge_with_defaults(config, create_default_config())
 
             return config if config else create_default_config()
 
