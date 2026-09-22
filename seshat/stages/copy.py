@@ -31,6 +31,21 @@ from seshat.utils import (
 
 global local_dir
 
+def is_unconfigured_path(path):
+    """
+    True when a configured project path is unset or still contains an
+    unresolved config template placeholder such as
+    ``<project_path_on_sinuhe>``.
+
+    Config templates ship with placeholder segments the user is expected to
+    fill in; when left untouched they should be treated the same as "not
+    configured" (skip quietly with an info message) rather than surfacing
+    a filesystem "is not a directory" error.
+    """
+    if not path:
+        return True
+    return bool(re.search(r'<[^>]+>', str(path)))
+
 def check_fif(file_path):
     """Check if a file is a .fif file based on its extension."""
     is_fif = file_contains(basename(file_path), [r'\.fif$', r'\.fif'])
@@ -329,8 +344,8 @@ def make_process_list(paths, check_existing=False):
 
     jobs = []
     
-    if sinuhe is None:
-        log('Copy', 'No TRIUX (sinuhe) directory configured; skipping.', 'info', log_file_path)
+    if is_unconfigured_path(sinuhe):
+        log('Copy', 'No sinuhe path defined; skipping.', 'info', log_file_path)
     elif not isdir(sinuhe):
         log('Copy', f"{sinuhe} is not a directory", 'error', log_file_path)
     elif not glob('*', root_dir=sinuhe):
@@ -367,8 +382,8 @@ def make_process_list(paths, check_existing=False):
                     jobs.append(check_match(source, destination))
 
     
-    if kaptah is None:
-        log('Copy', 'No Hedscan (kaptah) directory configured; skipping.', 'info', log_file_path)
+    if is_unconfigured_path(kaptah):
+        log('Copy', 'No kaptah path defined; skipping.', 'info', log_file_path)
     elif not isdir(kaptah):
         log('Copy', f"{kaptah} is not a directory", 'error', log_file_path)
     elif not glob('*', root_dir=kaptah):
@@ -439,7 +454,11 @@ def make_process_list(paths, check_existing=False):
 
                     jobs.append(check_match(source, destination))
 
-    if polhemus_src and isdir(polhemus_src):
+    if is_unconfigured_path(polhemus_src):
+        log('Copy', 'No polhemus path defined; skipping.', 'info', log_file_path)
+    elif not isdir(polhemus_src):
+        log('Copy', f"{polhemus_src} is not a directory", 'error', log_file_path)
+    else:
         for item in glob(f'*', root_dir=polhemus_src):
             # Parse subject and session from filename
             # e.g. digitisation_sub-0009_20260811144612.json
@@ -453,7 +472,11 @@ def make_process_list(paths, check_existing=False):
             destination = f'{local_dir}/{sub}/{session}/polhemus/{os.path.basename(item)}'
             jobs.append(check_match(source, destination))
 
-    if stimulus:
+    if is_unconfigured_path(stimulus):
+        log('Copy', 'No stimulus path defined; skipping.', 'info', log_file_path)
+    elif not isdir(stimulus):
+        log('Copy', f"{stimulus} is not a directory", 'error', log_file_path)
+    else:
         for item in glob(f'*', root_dir=stimulus):
             source = f'{stimulus}/{item}'
             destination = f'{docspath}/{item}'
