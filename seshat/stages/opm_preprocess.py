@@ -480,17 +480,22 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                     log("HPI", f"Error occurred while processing: {e}", 'error', logfile=logfile, logpath=log_path)
                 
 
-                # Use ThreadPoolExecutor or ProcessPoolExecutor
-                with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:
-                    # Submit all tasks and get future objects
-                    futures = [executor.submit(process_func, datfile) for datfile in hedscan_files]
-                    
-                    # Wait for all tasks to complete and handle any exceptions
-                    for future in concurrent.futures.as_completed(futures):
-                        try:
-                            future.result()  # This will raise an exception if the task failed
-                        except Exception as exc:
-                            log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
+                if not hedscan_files:
+                    log("HPI", f"No hedscan files to process for {subject}/{session} "
+                               f"(HPI fit failed or no candidate files found)", 'warning',
+                        logfile=logfile, logpath=log_path)
+                else:
+                    # Use ThreadPoolExecutor or ProcessPoolExecutor
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:
+                        # Submit all tasks and get future objects
+                        futures = [executor.submit(process_func, datfile) for datfile in hedscan_files]
+
+                        # Wait for all tasks to complete and handle any exceptions
+                        for future in concurrent.futures.as_completed(futures):
+                            try:
+                                future.result()  # This will raise an exception if the task failed
+                            except Exception as exc:
+                                log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
         count += 1
         print(f'Completed {count}/{subjects_to_process} subjects')
         pbar.update(1)
