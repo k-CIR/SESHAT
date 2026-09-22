@@ -53,6 +53,7 @@ def create_default_config():
             'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
             'frequency': 33,
             'downsample_to_hz': 1000,
+            'noise_reffile': '',
             'overwrite': False,
             'plot': False,
         },
@@ -444,6 +445,7 @@ class ConfigMainWindow:
             'hpi_names':      'Comma-separated list of names of HPI recording',
             'frequency':      'Frequency of the HPI in Hz',
             'downsample_to_hz': 'Downsample OPM data to this frequency',
+            'noise_reffile':  'Path to a reference recording (e.g. empty room/resting state) for channel noise detection; a 10s window starting 10s after its start is used',
             'overwrite':      'Overwrite existing OPM data files',
             'plot':           'Store a plot of the OPM data after processing',
         }

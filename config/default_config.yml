@@ -32,6 +32,7 @@ OPM:
   - HPIafter
   frequency: 33
   downsample_to_hz: 1000
+  noise_reffile: ''
   overwrite: false
   plot: false
 MaxFilter:

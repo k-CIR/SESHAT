@@ -101,6 +101,9 @@ def get_parameters(config:str):
             - opmMEG: OPM MEG data directory
             - hpinames: HPI coil naming patterns
             - hpifreq: HPI coil frequency (default: 33.0 Hz)
+            - noise_reffile: Path to a reference recording used for
+              background-power-based noisy-channel detection (a 10s window
+              starting 10s after its start is used). None to disable.
             - downsample_freq: Target sampling frequency (default: 1000 Hz)
             - overwrite: Whether to overwrite existing files
             - plot: Whether to generate visualization plots
@@ -123,6 +126,7 @@ def get_parameters(config:str):
         'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
         'hpinames': config.get('OPM', {}).get('hpi_names', ''),
         'hpifreq': float(config.get('OPM', {}).get('frequency', 33.0)),
+        'noise_reffile': config.get('OPM', {}).get('noise_reffile', '') or None,
         'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
         'overwrite': config.get('OPM', {}).get('overwrite', False),
         'plot': config.get('OPM', {}).get('plot', False),
@@ -150,6 +154,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     hpifreq = config.get('hpifreq', 33.0)
     new_sfreq = config.get('downsample_freq', 1000)
     hpinames=config.get('hpinames')
+    noise_reffile = config.get('noise_reffile')
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
     overwrite = config.get('overwrite', False)
 
@@ -249,7 +254,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
 
         MIN_GOF = 0.7  # Minimum acceptable mean GOF across all coils
         try:
-            best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq)
+            best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq, reffile=noise_reffile)
             gofs = fit['hpi_gofs']
             high_gofs = gofs[gofs > 0.9]
             mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)
