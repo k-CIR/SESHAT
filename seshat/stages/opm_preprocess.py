@@ -56,6 +56,22 @@ from seshat.utils import (
 )
 
 ###############################################################################
+# Variables
+###############################################################################
+
+"""
+- GOF_LIMIT: Minimum dipole GOF for a coil to be included in
+              the device-to-head transform fit (default: 0.95)
+- CENTER_MATCHING: Whether to centroid-centre HPI/Polhemus
+              point clouds before nearest-neighbour matching in the
+              device-to-head transform fit (default: True). False
+              reproduces the legacy pipeline's uncentred matching;
+              intended for regression testing, not routine use.
+"""
+GOF_LIMIT = 0.95
+CENTER_MATCHING = True
+
+###############################################################################
 # Utility Functions
 ###############################################################################
 global VERBOSE
@@ -101,8 +117,6 @@ def get_parameters(config:str):
             - opmMEG: OPM MEG data directory
             - hpinames: HPI coil naming patterns
             - hpifreq: HPI coil frequency (default: 33.0 Hz)
-            - gof_limit: Minimum dipole GOF for a coil to be included in
-              the device-to-head transform fit (default: 0.95)
             - noise_reffile: Path to a reference recording used for
               background-power-based noisy-channel detection (a 10s window
               starting 10s after its start is used). None to disable.
@@ -128,8 +142,9 @@ def get_parameters(config:str):
         'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
         'hpinames': config.get('OPM', {}).get('hpi_names', ''),
         'hpifreq': float(config.get('OPM', {}).get('frequency', 33.0)),
-        'gof_limit': float(config.get('OPM', {}).get('gof_limit', 0.95)),
+        'gof_limit': GOF_LIMIT,
         'noise_reffile': config.get('OPM', {}).get('noise_reffile', '') or None,
+        'center_matching': CENTER_MATCHING,
         'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
         'overwrite': config.get('OPM', {}).get('overwrite', False),
         'plot': config.get('OPM', {}).get('plot', False),
@@ -159,6 +174,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     hpinames=config.get('hpinames')
     gof_limit = config.get('gof_limit', 0.95)
     noise_reffile = config.get('noise_reffile')
+    center_matching = config.get('center_matching', True)
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
     overwrite = config.get('overwrite', False)
 
@@ -260,7 +276,8 @@ def find_hpi_fit(config, subject, session, overwrite=False,
         try:
             best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq,
                                                        gof_limit=gof_limit,
-                                                       reffile=noise_reffile)
+                                                       reffile=noise_reffile,
+                                                       center_matching=center_matching)
             gofs = fit['hpi_gofs']
             high_gofs = gofs[gofs > 0.9]
             mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)

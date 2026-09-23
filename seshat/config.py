@@ -52,7 +52,6 @@ def create_default_config():
             'polhemus': [''],
             'hpi_names': ['HPIpre', 'HPIpost', 'HPIbefore', 'HPIafter'],
             'frequency': 33,
-            'gof_limit': 0.95,
             'downsample_to_hz': 1000,
             'noise_reffile': '',
             'overwrite': False,
@@ -83,27 +82,6 @@ def create_default_config():
                 'MaxFilter_commands': '',
                 'debug': False
             }
-        },
-        'BIDS': {
-            'Dataset_description': 'dataset_description.json',
-            'Participants': 'participants.tsv',
-            'Participants_mapping_file': 'participant_mapping_example.csv',
-            'Conversion_file': 'bids_conversion.tsv',
-            'Overwrite_conversion': False,
-            'Original_subjID_name': 'old_subject_id',
-            'New_subjID_name': 'new_subject_id',
-            'Original_session_name': 'old_session_id',
-            'New_session_name': 'new_session_id',
-            'overwrite': False,
-            'dataset_type': 'raw',
-            'data_license': '',
-            'authors': '',
-            'acknowledgements': '',
-            'how_to_acknowledge': '',
-            'funding': '',
-            'ethics_approvals': '',
-            'references_and_links': '',
-            'doi': 'doi:<insert_doi>'
         }
     }
     return config
@@ -464,6 +442,7 @@ class ConfigMainWindow:
             'hpi_names':      'Comma-separated list of names of HPI recording',
             'frequency':      'Frequency of the HPI in Hz',
             'gof_limit':      'Minimum dipole GOF for an HPI coil to be included in the device-to-head transform fit',
+            'center_matching': 'Centroid-centre HPI/Polhemus point clouds before nearest-neighbour matching (uncheck to reproduce legacy uncentred matching; regression-testing only)',
             'downsample_to_hz': 'Downsample OPM data to this frequency',
             'noise_reffile':  'Path to a reference recording (e.g. empty room/resting state) for channel noise detection; a 10s window starting 10s after its start is used',
             'overwrite':      'Overwrite existing OPM data files',

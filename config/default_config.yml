@@ -31,7 +31,6 @@ OPM:
   - HPIbefore
   - HPIafter
   frequency: 33
-  gof_limit: 0.95
   downsample_to_hz: 1000
   noise_reffile: ''
   overwrite: false
@@ -65,23 +64,3 @@ MaxFilter:
     maxfilter_version: /neuro/bin/util/maxfilter
     MaxFilter_commands: ''
     debug: false
-BIDS:
-  Dataset_description: dataset_description.json
-  Participants: participants.tsv
-  Participants_mapping_file: participant_mapping_example.csv
-  Conversion_file: bids_conversion.tsv
-  Overwrite_conversion: false
-  Original_subjID_name: old_subject_id
-  New_subjID_name: new_subject_id
-  Original_session_name: old_session_id
-  New_session_name: new_session_id
-  overwrite: false
-  dataset_type: raw
-  data_license: ''
-  authors: ''
-  acknowledgements: ''
-  how_to_acknowledge: ''
-  funding: ''
-  ethics_approvals: ''
-  references_and_links: ''
-  doi: doi:<insert_doi>
