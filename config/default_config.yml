@@ -31,6 +31,7 @@ OPM:
   - HPIbefore
   - HPIafter
   frequency: 33
+  gof_limit: 0.95
   downsample_to_hz: 1000
   noise_reffile: ''
   overwrite: false
