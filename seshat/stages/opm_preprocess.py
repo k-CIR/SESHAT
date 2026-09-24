@@ -8,14 +8,13 @@ This script performs HPI coregistration for OPM-MEG data by:
 2. Computing coordinate transformations between device and head space
 3. Applying transformations to MEG recordings for head localization
 
-The pipeline processes subjects and sessions automatically, using parallel
-processing for efficiency. It requires configuration files specifying
+The pipeline processes subjects and sessions automatically, one hedscan
+file at a time (sequentially). It requires configuration files specifying
 OPM parameters, HPI frequencies, and file patterns.
 
 Dependencies:
 - MNE-Python for MEG data processing
 - scipy for signal processing and spatial operations
-- concurrent.futures for parallel processing
 - PyYAML for configuration management
 
 Usage:
@@ -33,7 +32,6 @@ import matplotlib.pyplot as plt
 from typing import Union
 import mne
 
-import concurrent.futures
 from functools import partial
 from tqdm import tqdm
 
@@ -52,7 +50,8 @@ from seshat.utils import (
     askForConfig,
     file_contains,
     noise_patterns,
-    proc_patterns
+    proc_patterns,
+    opm_exceptions_patterns
 )
 
 ###############################################################################
@@ -175,7 +174,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     gof_limit = config.get('gof_limit', 0.95)
     noise_reffile = config.get('noise_reffile')
     center_matching = config.get('center_matching', True)
-    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
+    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + hpinames + opm_exceptions_patterns + noise_patterns + proc_patterns
     overwrite = config.get('overwrite', False)
 
     if logfile is None:
@@ -189,7 +188,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
-    hedscan_files = [f for f in all_files if not file_contains(f, hpinames + noise_patterns + proc_patterns + exclude_patterns)]
+    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns)]
 
     new_hedscan_files = []
     for file in hedscan_files:
@@ -510,72 +509,17 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                                f"(HPI fit failed or no candidate files found)", 'warning',
                         logfile=logfile, logpath=log_path)
                 else:
-                    # Cap parallel workers to the number of CPUs actually
-                    # available to this process (and never more workers than
-                    # files). sched_getaffinity respects cgroup/container CPU
-                    # quotas and CPU-affinity restrictions; os.cpu_count()
-                    # reports the host's total core count regardless of any
-                    # such limits, which would let this still over-subscribe
-                    # workers on a constrained host. Each worker fully
-                    # preloads a MEG recording into RAM (see apply_transform),
-                    # so spawning more workers than are really available just
-                    # multiplies peak memory usage without adding throughput
-                    # and can exhaust RAM/swap the whole machine on large OPM
-                    # recordings.
-                    try:
-                        n_cpus = len(os.sched_getaffinity(0))
-                    except AttributeError:
-                        # sched_getaffinity is POSIX-only (not on macOS/Windows).
-                        n_cpus = os.cpu_count() or 1
-                    max_workers = max(1, min(len(hedscan_files), n_cpus))
-                    # Optional per-task timeout (seconds), configurable via
-                    # 'task_timeout' in the config, so a single stuck/thrashing
-                    # worker cannot block the whole pipeline forever. None (the
-                    # default) preserves the previous unbounded-wait behaviour.
-                    task_timeout = config.get('task_timeout', None)
-
-                    executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
-                    try:
-                        future_to_file = {executor.submit(process_func, datfile): datfile
-                                           for datfile in hedscan_files}
-                        pending = set(future_to_file)
-                        while pending:
-                            done, pending = concurrent.futures.wait(
-                                pending, timeout=task_timeout,
-                                return_when=concurrent.futures.FIRST_COMPLETED)
-                            if not done:
-                                # Nothing finished within task_timeout: log and
-                                # stop waiting rather than block indefinitely.
-                                stuck = [future_to_file[f] for f in pending]
-                                log("HPI",
-                                    f'No task finished within {task_timeout}s; abandoning '
-                                    f'{len(stuck)} stuck task(s): {stuck}', 'error',
-                                    logfile=logfile, logpath=log_path)
-                                break
-                            for future in done:
-                                datfile = future_to_file[future]
-                                try:
-                                    future.result()
-                                except Exception as exc:
-                                    log("HPI", f'Task for {datfile} generated an exception: {exc}',
-                                        'error', logfile=logfile, logpath=log_path)
-                    finally:
-                        # cancel_futures drops any not-yet-started tasks, but
-                        # leaves already-running workers alive; since a *new*
-                        # ProcessPoolExecutor is created fresh for every
-                        # subject/session in the outer loop, any orphaned
-                        # worker(s) from a timed-out task would otherwise keep
-                        # running alongside the next session's full
-                        # max_workers budget, silently violating the cap this
-                        # whole block exists to enforce. Forcibly terminate
-                        # any worker still alive at this point.
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        for proc in getattr(executor, '_processes', {}).values():
-                            if proc.is_alive():
-                                proc.terminate()
-                                proc.join(timeout=5)
-                                if proc.is_alive():
-                                    proc.kill()
+                    # Process files sequentially, one at a time, in the main
+                    # process. Each file fully preloads a MEG recording into
+                    # RAM (see apply_transform), so running them one at a
+                    # time keeps peak memory bounded to a single recording
+                    # regardless of how many files there are.
+                    for datfile in hedscan_files:
+                        try:
+                            process_func(datfile)
+                        except Exception as exc:
+                            log("HPI", f'Task for {datfile} generated an exception: {exc}',
+                                'error', logfile=logfile, logpath=log_path)
         count += 1
         print(f'Completed {count}/{subjects_to_process} subjects')
         pbar.update(1)
@@ -587,7 +531,6 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
 # Ensure VERBOSE is defined globally at the top of the script
 VERBOSE = False
 
-# Use concurrent.futures instead of multiprocessing
 if __name__ == '__main__':
     args = args_parser()
     configure_verbosity(args.verbose)
