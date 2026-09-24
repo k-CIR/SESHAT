@@ -50,8 +50,7 @@ from seshat.utils import (
     askForConfig,
     file_contains,
     noise_patterns,
-    proc_patterns,
-    opm_exceptions_patterns
+    proc_patterns
 )
 
 ###############################################################################
@@ -174,7 +173,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     gof_limit = config.get('gof_limit', 0.95)
     noise_reffile = config.get('noise_reffile')
     center_matching = config.get('center_matching', True)
-    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + hpinames + opm_exceptions_patterns + noise_patterns + proc_patterns
+    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
     overwrite = config.get('overwrite', False)
 
     if logfile is None:
@@ -188,7 +187,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
-    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns)]
+    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns + hpinames)]
 
     new_hedscan_files = []
     for file in hedscan_files:
