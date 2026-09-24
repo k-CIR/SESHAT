@@ -346,8 +346,8 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
     try:
         # Pre-flight bad-channel check so we can abort before the expensive fit.
-        raw_check = mne.io.read_raw_fif(datfile, preload=False, verbose='error')
-        bads = find_zero_location_channels(raw_check.info)
+        raw_out = mne.io.read_raw_fif(datfile, preload=False, verbose='error')
+        bads = find_zero_location_channels(raw_out.info)
         if len(bads) > 100:
             log("HPI", f"Found {len(bads)} bad channels. Check recording.", 'error',
                 logfile=logfile, logpath=log_path)
@@ -358,7 +358,9 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
         # Apply transform: load, resample, drop bads+zerochans, embed
         # digitisation and dev_head_t.  Returns the modified Raw in memory.
-        raw_out = apply_transform(datfile, fit, new_sfreq)
+        # Reuse the already-opened raw obbject instead of re-reading datfile
+        # from disk a second time (apply_transform preloads it in place).
+        raw_out = apply_transform(raw_out, fit, new_sfreq)
 
         # Optional: rename analog channels before saving.
         if rename_analog:
@@ -508,17 +510,72 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                                f"(HPI fit failed or no candidate files found)", 'warning',
                         logfile=logfile, logpath=log_path)
                 else:
-                    # Use ThreadPoolExecutor or ProcessPoolExecutor
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:
-                        # Submit all tasks and get future objects
-                        futures = [executor.submit(process_func, datfile) for datfile in hedscan_files]
+                    # Cap parallel workers to the number of CPUs actually
+                    # available to this process (and never more workers than
+                    # files). sched_getaffinity respects cgroup/container CPU
+                    # quotas and CPU-affinity restrictions; os.cpu_count()
+                    # reports the host's total core count regardless of any
+                    # such limits, which would let this still over-subscribe
+                    # workers on a constrained host. Each worker fully
+                    # preloads a MEG recording into RAM (see apply_transform),
+                    # so spawning more workers than are really available just
+                    # multiplies peak memory usage without adding throughput
+                    # and can exhaust RAM/swap the whole machine on large OPM
+                    # recordings.
+                    try:
+                        n_cpus = len(os.sched_getaffinity(0))
+                    except AttributeError:
+                        # sched_getaffinity is POSIX-only (not on macOS/Windows).
+                        n_cpus = os.cpu_count() or 1
+                    max_workers = max(1, min(len(hedscan_files), n_cpus))
+                    # Optional per-task timeout (seconds), configurable via
+                    # 'task_timeout' in the config, so a single stuck/thrashing
+                    # worker cannot block the whole pipeline forever. None (the
+                    # default) preserves the previous unbounded-wait behaviour.
+                    task_timeout = config.get('task_timeout', None)
 
-                        # Wait for all tasks to complete and handle any exceptions
-                        for future in concurrent.futures.as_completed(futures):
-                            try:
-                                future.result()  # This will raise an exception if the task failed
-                            except Exception as exc:
-                                log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
+                    executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
+                    try:
+                        future_to_file = {executor.submit(process_func, datfile): datfile
+                                           for datfile in hedscan_files}
+                        pending = set(future_to_file)
+                        while pending:
+                            done, pending = concurrent.futures.wait(
+                                pending, timeout=task_timeout,
+                                return_when=concurrent.futures.FIRST_COMPLETED)
+                            if not done:
+                                # Nothing finished within task_timeout: log and
+                                # stop waiting rather than block indefinitely.
+                                stuck = [future_to_file[f] for f in pending]
+                                log("HPI",
+                                    f'No task finished within {task_timeout}s; abandoning '
+                                    f'{len(stuck)} stuck task(s): {stuck}', 'error',
+                                    logfile=logfile, logpath=log_path)
+                                break
+                            for future in done:
+                                datfile = future_to_file[future]
+                                try:
+                                    future.result()
+                                except Exception as exc:
+                                    log("HPI", f'Task for {datfile} generated an exception: {exc}',
+                                        'error', logfile=logfile, logpath=log_path)
+                    finally:
+                        # cancel_futures drops any not-yet-started tasks, but
+                        # leaves already-running workers alive; since a *new*
+                        # ProcessPoolExecutor is created fresh for every
+                        # subject/session in the outer loop, any orphaned
+                        # worker(s) from a timed-out task would otherwise keep
+                        # running alongside the next session's full
+                        # max_workers budget, silently violating the cap this
+                        # whole block exists to enforce. Forcibly terminate
+                        # any worker still alive at this point.
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        for proc in getattr(executor, '_processes', {}).values():
+                            if proc.is_alive():
+                                proc.terminate()
+                                proc.join(timeout=5)
+                                if proc.is_alive():
+                                    proc.kill()
         count += 1
         print(f'Completed {count}/{subjects_to_process} subjects')
         pbar.update(1)
