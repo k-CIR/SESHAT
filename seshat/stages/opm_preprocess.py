@@ -8,14 +8,13 @@ This script performs HPI coregistration for OPM-MEG data by:
 2. Computing coordinate transformations between device and head space
 3. Applying transformations to MEG recordings for head localization
 
-The pipeline processes subjects and sessions automatically, using parallel
-processing for efficiency. It requires configuration files specifying
+The pipeline processes subjects and sessions automatically, one hedscan
+file at a time (sequentially). It requires configuration files specifying
 OPM parameters, HPI frequencies, and file patterns.
 
 Dependencies:
 - MNE-Python for MEG data processing
 - scipy for signal processing and spatial operations
-- concurrent.futures for parallel processing
 - PyYAML for configuration management
 
 Usage:
@@ -33,7 +32,6 @@ import matplotlib.pyplot as plt
 from typing import Union
 import mne
 
-import concurrent.futures
 from functools import partial
 from tqdm import tqdm
 
@@ -175,7 +173,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     gof_limit = config.get('gof_limit', 0.95)
     noise_reffile = config.get('noise_reffile')
     center_matching = config.get('center_matching', True)
-    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif']
+    exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
     overwrite = config.get('overwrite', False)
 
     if logfile is None:
@@ -189,7 +187,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
-    hedscan_files = [f for f in all_files if not file_contains(f, hpinames + noise_patterns + proc_patterns + exclude_patterns)]
+    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns + hpinames)]
 
     new_hedscan_files = []
     for file in hedscan_files:
@@ -346,8 +344,8 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
     try:
         # Pre-flight bad-channel check so we can abort before the expensive fit.
-        raw_check = mne.io.read_raw_fif(datfile, preload=False, verbose='error')
-        bads = find_zero_location_channels(raw_check.info)
+        raw_out = mne.io.read_raw_fif(datfile, preload=False, verbose='error')
+        bads = find_zero_location_channels(raw_out.info)
         if len(bads) > 100:
             log("HPI", f"Found {len(bads)} bad channels. Check recording.", 'error',
                 logfile=logfile, logpath=log_path)
@@ -358,7 +356,9 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
         # Apply transform: load, resample, drop bads+zerochans, embed
         # digitisation and dev_head_t.  Returns the modified Raw in memory.
-        raw_out = apply_transform(datfile, fit, new_sfreq)
+        # Reuse the already-opened raw obbject instead of re-reading datfile
+        # from disk a second time (apply_transform preloads it in place).
+        raw_out = apply_transform(raw_out, fit, new_sfreq)
 
         # Optional: rename analog channels before saving.
         if rename_analog:
@@ -508,17 +508,17 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                                f"(HPI fit failed or no candidate files found)", 'warning',
                         logfile=logfile, logpath=log_path)
                 else:
-                    # Use ThreadPoolExecutor or ProcessPoolExecutor
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=len(hedscan_files)*2) as executor:
-                        # Submit all tasks and get future objects
-                        futures = [executor.submit(process_func, datfile) for datfile in hedscan_files]
-
-                        # Wait for all tasks to complete and handle any exceptions
-                        for future in concurrent.futures.as_completed(futures):
-                            try:
-                                future.result()  # This will raise an exception if the task failed
-                            except Exception as exc:
-                                log("HPI", f'Task generated an exception: {exc}', 'error',logfile=logfile, logpath=log_path)
+                    # Process files sequentially, one at a time, in the main
+                    # process. Each file fully preloads a MEG recording into
+                    # RAM (see apply_transform), so running them one at a
+                    # time keeps peak memory bounded to a single recording
+                    # regardless of how many files there are.
+                    for datfile in hedscan_files:
+                        try:
+                            process_func(datfile)
+                        except Exception as exc:
+                            log("HPI", f'Task for {datfile} generated an exception: {exc}',
+                                'error', logfile=logfile, logpath=log_path)
         count += 1
         print(f'Completed {count}/{subjects_to_process} subjects')
         pbar.update(1)
@@ -530,7 +530,6 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
 # Ensure VERBOSE is defined globally at the top of the script
 VERBOSE = False
 
-# Use concurrent.futures instead of multiprocessing
 if __name__ == '__main__':
     args = args_parser()
     configure_verbosity(args.verbose)
