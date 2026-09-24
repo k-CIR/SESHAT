@@ -34,6 +34,140 @@ opm_exceptions_patterns = ['HPIbefore', 'HPIafter', 'HPImiddle',
                            'HPIpre', 'HPIpost']
 
 ###############################################################################
+# GUI progress protocol (structured stage transitions)
+###############################################################################
+
+# Ordered list of pipeline stages as executed by `seshat run`, independent of
+# whether each is enabled in a given config. Shared by cli.py (execution +
+# emission) and config.py (GUI icon rows) so the two never drift apart.
+PIPELINE_STAGES = [
+    ('copy_raw',       'Copy raw data'),
+    ('opm_preprocess', 'OPM preprocessing'),
+    ('sync',           'Sync to server'),
+    ('report',         'Generate report'),  # always runs unless --no-report
+]
+
+_PROGRESS_SENTINEL = '@@SESHAT-PROGRESS@@'
+
+
+def emit_stage_progress(stage: str, status: str) -> None:
+    """Emit a structured stage-transition event for the GUI, if enabled.
+
+    No-op unless SESHAT_PROGRESS_JSON=1 is set in the environment (set only
+    by seshat/config.py's subprocess launch), so plain CLI/cron usage of
+    `seshat run` is completely unaffected.
+
+    status : 'waiting' | 'running' | 'done' | 'error'
+
+    The event is printed with a *leading* newline. The GUI reads the
+    subprocess's stdout with readline(), which only splits on '\n'. Some
+    dependencies (tqdm, mne) write progress with bare '\r' and no
+    terminating '\n', so without the leading newline here their partial,
+    unterminated text could still be sitting at the front of stdout and
+    get concatenated onto the front of this line by the next readline()
+    call - shifting the sentinel away from column 0 and causing the GUI's
+    `line.startswith(_PROGRESS_SENTINEL)` check to silently fail. The
+    leading '\n' forces any such pending text out as its own line first,
+    guaranteeing this event arrives on a clean line.
+    """
+    if os.environ.get('SESHAT_PROGRESS_JSON') != '1':
+        return
+    print(f'\n{_PROGRESS_SENTINEL} {json.dumps({"event": "stage", "stage": stage, "status": status})}',
+          flush=True)
+
+
+def emit_task_progress(stage: str, current: int, total: int, label: str = None) -> None:
+    """Emit a structured within-stage task-progress event for the GUI.
+
+    Drives the GUI's numeric progress bar/label with an accurate,
+    stage-attributed count (e.g. files copied, hedscan files processed),
+    replacing the previous ambiguous 'N/M' stdout regex-scraping (which
+    could not distinguish a byte count from a file count from a subject
+    count, and mislabeled every one of them as a byte/MB fraction).
+
+    No-op unless SESHAT_PROGRESS_JSON=1 is set (see emit_stage_progress) —
+    plain CLI/cron usage of `seshat run` prints nothing extra.
+
+    stage : one of the PIPELINE_STAGES keys this event belongs to.
+    current, total : 1-based progress count and the (already-known) total
+        for this stage's unit of work (e.g. files, hedscan files).
+    label : optional short human-readable detail (e.g. a filename),
+        shown alongside the count in the GUI.
+
+    Printed with a leading newline - see emit_stage_progress for why.
+    """
+    if os.environ.get('SESHAT_PROGRESS_JSON') != '1':
+        return
+    payload = {"event": "task", "stage": stage, "current": current, "total": total}
+    if label is not None:
+        payload["label"] = label
+    print(f'\n{_PROGRESS_SENTINEL} {json.dumps(payload)}', flush=True)
+
+###############################################################################
+# End-of-run summary report (terminal + GUI console)
+###############################################################################
+#
+# StageSummary/PipelineSummary are the small, dependency-free data model each
+# stage (optionally) fills in while it runs. cli.py owns one PipelineSummary
+# per `seshat run` invocation and hands it to seshat.stages.report.
+# print_summary_report() at the end, which renders it as one human-friendly
+# box to stdout. Because the GUI (config.py) pipes the CLI subprocess's
+# stdout straight into its console pane (ANSI-aware via
+# apply_ansi_colors_to_tk), one rendering path serves both terminal and GUI.
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class StageSummary:
+    """Result of a single pipeline stage, for the end-of-run summary report.
+
+    key/label : identifies the stage; should match a PIPELINE_STAGES entry.
+    status    : 'success' | 'warning' | 'error' | 'skipped'.
+    duration  : wall-clock seconds spent in the stage (0 for skipped stages).
+    stats     : optional short counters, e.g. {'copied': 12, 'failed': 0}.
+    details   : optional short human-readable bullet lines, e.g.
+                ['12 new file(s) copied', '2 file(s) already present'].
+    error     : short error message, set when status == 'error'.
+    """
+    key: str
+    label: str
+    status: str = 'success'
+    duration: float = 0.0
+    stats: Dict[str, int] = field(default_factory=dict)
+    details: list = field(default_factory=list)
+    error: Optional[str] = None
+
+
+class PipelineSummary:
+    """Ordered collection of StageSummary entries for one pipeline run."""
+
+    def __init__(self):
+        self.stages: list = []
+        self.started_at = datetime.now()
+
+    def add(self, stage: StageSummary) -> None:
+        self.stages.append(stage)
+
+    def get(self, key: str) -> Optional[StageSummary]:
+        return next((s for s in self.stages if s.key == key), None)
+
+    @property
+    def total_duration(self) -> float:
+        return sum(s.duration for s in self.stages)
+
+    @property
+    def overall_status(self) -> str:
+        statuses = {s.status for s in self.stages}
+        if 'error' in statuses:
+            return 'error'
+        if 'warning' in statuses:
+            return 'warning'
+        if statuses and statuses == {'skipped'}:
+            return 'skipped'
+        return 'success'
+
+###############################################################################
 # Directory management and configuration handling
 ###############################################################################
 

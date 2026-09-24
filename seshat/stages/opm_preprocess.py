@@ -50,7 +50,8 @@ from seshat.utils import (
     askForConfig,
     file_contains,
     noise_patterns,
-    proc_patterns
+    proc_patterns,
+    emit_task_progress
 )
 
 ###############################################################################
@@ -150,6 +151,37 @@ def get_parameters(config:str):
     }
     return hpi_config
      
+def _list_pending_hedscan_files(all_files, exclude_patterns, hpinames, new_sfreq, overwrite):
+    """Cheaply list the hedscan files that would be processed for one
+    subject/session: name-pattern filtering plus a check of whether a
+    processed-output file already exists (via a FIF header read for
+    ``sfreq``, not a full data preload). No polhemus loading or HPI dipole
+    fitting happens here.
+
+    Extracted so the same filtering logic can be used both by
+    :func:`find_hpi_fit` (which does the expensive work afterwards) and by
+    an upfront, side-effect-free pre-scan over every subject/session used
+    only to compute an accurate total file count for GUI progress
+    reporting -- keeping the two from ever drifting apart.
+    """
+    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns + hpinames)]
+
+    if overwrite:
+        return hedscan_files
+
+    new_hedscan_files = []
+    for file in hedscan_files:
+        sfreq = load_datafile(file)['sfreq']
+
+        proc = 'proc-hpi'
+        if new_sfreq and not (int(new_sfreq) == int(sfreq)):
+            proc += f'+ds'
+        proc += f'_raw'
+        if not os.path.exists(file.replace('raw.fif', proc + '.fif')):
+            new_hedscan_files.append(file)
+    return new_hedscan_files
+
+
 def find_hpi_fit(config, subject, session, overwrite=False,
                  log_path: str = None, logfile: str = None):
     """
@@ -187,19 +219,9 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     # Check if all hedscan files have been processed
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
-    hedscan_files = [f for f in all_files if not file_contains(f, exclude_patterns + hpinames)]
+    hedscan_files = _list_pending_hedscan_files(
+        all_files, exclude_patterns, hpinames, new_sfreq, overwrite)
 
-    new_hedscan_files = []
-    for file in hedscan_files:
-        sfreq = load_datafile(file)['sfreq']
-
-        proc = 'proc-hpi'
-        if new_sfreq and not (int(new_sfreq) == int(sfreq)):
-            proc += f'+ds'
-        proc += f'_raw'
-        if not os.path.exists(file.replace('raw.fif', proc + '.fif')):
-            new_hedscan_files.append(file)
-    
     hpi_fit_parameters = {
         'hedscan_files': [],
         'hpi_dev': None,
@@ -214,8 +236,6 @@ def find_hpi_fit(config, subject, session, overwrite=False,
         'new_sfreq': None
     }
 
-    if not overwrite:
-        hedscan_files = new_hedscan_files
     if overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         # Stage 1: new polhemus/ subdir (JSON and FIF), subject + session must appear in filename.
@@ -417,7 +437,7 @@ def args_parser():
                         help='Enable verbose output')
     return parser.parse_args()
 
-def main(config: Union[str, dict]=None, log_file_path: str = None):
+def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None):
     """
     Main execution function for HPI coregistration pipeline.
     
@@ -427,7 +447,16 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                        When provided (called from cli.py), logging is already configured
                        and this path is used directly.  When None (standalone run), the
                        path is derived from opmMEGdir.
+        summary: Optional seshat.utils.PipelineSummary. When provided, a
+                 StageSummary('opm_preprocess', ...) entry is appended
+                 describing subjects/files processed and any sessions
+                 skipped or errored, for the end-of-run summary report
+                 (seshat.stages.report.print_summary_report).
     """
+    import time
+    _t0 = time.time()
+    skipped_sessions = 0
+    error_count = 0
 
     if config is None:
         # Parse command line arguments
@@ -470,6 +499,33 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                     if os.path.isdir(f'{opmMEGdir}/{subject}')])
     subjects_to_process = len(subjects)
     count = 0
+
+    # Cheap upfront pre-scan (glob + FIF header reads only, no polhemus
+    # loading or HPI dipole fitting -- see _list_pending_hedscan_files) to
+    # compute an accurate total hedscan-file count across *all*
+    # subjects/sessions, so GUI progress reflects genuine total work rather
+    # than resetting every subject/session. This is an upper-bound
+    # estimate: if a session's HPI fit later fails (bad polhemus, GOF too
+    # low, ...), its files are skipped and the running counter simply won't
+    # reach the full total -- the stage still correctly reaches 'done'.
+    _hpinames = config.get('hpinames')
+    _new_sfreq = config.get('downsample_freq', 1000)
+    _exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
+
+    sessions_by_subject = {}
+    total_hedscan_files = 0
+    for subject in subjects:
+        sessions = sorted([
+            session for session in glob('*', root_dir = f'{opmMEGdir}/{subject}')
+            if os.path.isdir(f'{opmMEGdir}/{subject}/{session}') and re.match(r'^\d{6}$', session)
+        ])
+        sessions_by_subject[subject] = sessions
+        for session in sessions:
+            all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
+            total_hedscan_files += len(_list_pending_hedscan_files(
+                all_files, _exclude_patterns, _hpinames, _new_sfreq, overwrite))
+    processed_hedscan_files = 0
+
     pbar = tqdm(total=subjects_to_process, 
                 desc=f"Processing files", 
                 unit=" file(s)",
@@ -478,10 +534,7 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                 bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
     
     for subject in subjects:
-        sessions = sorted([
-            session for session in glob('*', root_dir = f'{opmMEGdir}/{subject}')
-            if os.path.isdir(f'{opmMEGdir}/{subject}/{session}') and re.match(r'^\d{6}$', session)
-        ])
+        sessions = sessions_by_subject[subject]
         for session in sessions:
             hpi_fit_parameters = find_hpi_fit(config, subject, session, overwrite=overwrite,
                                               log_path=log_path, logfile=logfile)
@@ -498,12 +551,13 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                         rename_analog=rename_analog
                 )
                     pbar.update(1)
-                    print(f'{count}/{len(hedscan_files)} files to process')
                 except Exception as e:
+                    error_count += 1
                     log("HPI", f"Error occurred while processing: {e}", 'error', logfile=logfile, logpath=log_path)
                 
 
                 if not hedscan_files:
+                    skipped_sessions += 1
                     log("HPI", f"No hedscan files to process for {subject}/{session} "
                                f"(HPI fit failed or no candidate files found)", 'warning',
                         logfile=logfile, logpath=log_path)
@@ -517,14 +571,40 @@ def main(config: Union[str, dict]=None, log_file_path: str = None):
                         try:
                             process_func(datfile)
                         except Exception as exc:
+                            error_count += 1
                             log("HPI", f'Task for {datfile} generated an exception: {exc}',
                                 'error', logfile=logfile, logpath=log_path)
+                        finally:
+                            processed_hedscan_files += 1
+                            if total_hedscan_files:
+                                emit_task_progress(
+                                    'opm_preprocess', processed_hedscan_files, total_hedscan_files,
+                                    label=f'{subject}/{session}: {os.path.basename(datfile)}')
         count += 1
-        print(f'Completed {count}/{subjects_to_process} subjects')
+        log("HPI", f'Completed {count}/{subjects_to_process} subjects', 'info',
+            logfile=logfile, logpath=log_path)
         pbar.update(1)
     pbar.close()
 
     log("HPI", "OPM preprocessing completed successfully.", 'info',logfile=logfile, logpath=log_path)
+
+    if summary is not None:
+        from seshat.utils import StageSummary
+        status = 'error' if error_count else ('warning' if skipped_sessions else 'success')
+        details = [f'{count}/{subjects_to_process} subject(s) processed',
+                    f'{processed_hedscan_files}/{total_hedscan_files} hedscan file(s) processed']
+        if skipped_sessions:
+            details.append(f'{skipped_sessions} session(s) skipped (no HPI fit / no candidate files)')
+        if error_count:
+            details.append(f'{error_count} error(s) during processing')
+        summary.add(StageSummary('opm_preprocess', 'OPM preprocessing', status,
+                                  duration=time.time() - _t0,
+                                  stats={'subjects': subjects_to_process,
+                                         'files_processed': processed_hedscan_files,
+                                         'files_total': total_hedscan_files,
+                                         'skipped_sessions': skipped_sessions,
+                                         'errors': error_count},
+                                  details=details))
     return True
 
 # Ensure VERBOSE is defined globally at the top of the script

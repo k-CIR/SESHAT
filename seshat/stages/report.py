@@ -6,10 +6,116 @@ from os.path import join, isdir, dirname, basename
 from mne_bids import print_dir_tree
 import re
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
-from typing import Union
+from typing import Union, Optional, TextIO
 import yaml
 import subprocess
-from seshat.utils import askForConfig, log
+import sys
+from datetime import datetime
+from seshat.utils import askForConfig, log, PipelineSummary, StageSummary
+
+###############################################################################
+# End-of-run summary report (terminal + GUI console)
+###############################################################################
+
+# Status -> (glyph, ANSI color code). Colors reuse the same codes as
+# seshat.utils.ANSI_COLOR_MAP / the console log formatter, and the glyphs
+# mirror the GUI's STAGE_STATUS_ICONS (seshat/config.py) for consistency
+# between the RUN tab's status circles and this text summary.
+_SUMMARY_STATUS_STYLE = {
+    'success': ('\u25cf', '92'),  # ● bright green
+    'warning': ('\u25cf', '93'),  # ● bright yellow
+    'error':   ('\u25cf', '91'),  # ● bright red
+    'skipped': ('\u25cb', '90'),  # ○ gray
+}
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Render seconds as a short human string, e.g. '2m 04s', '45s'."""
+    if seconds is None or seconds <= 0:
+        return '-'
+    seconds = int(round(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f'{h}h {m:02d}m {s:02d}s'
+    if m:
+        return f'{m}m {s:02d}s'
+    return f'{s}s'
+
+
+def print_summary_report(summary: PipelineSummary, project: str = '',
+                          file: Optional[TextIO] = None) -> str:
+    """Print a nicely formatted, boxed end-of-run summary for a pipeline run.
+
+    One line per stage with a status glyph, elapsed time and short bullet
+    details (e.g. files copied, subjects processed), framed for readability.
+    Written to stdout by default, which is exactly what both the plain CLI
+    and the GUI (which pipes the CLI subprocess's stdout into its console
+    pane, see seshat/config.py's append_output/apply_ansi_colors_to_tk)
+    display — so this single function drives both terminal and GUI console.
+
+    Returns the plain-text (uncolored) rendering, e.g. for logging to file.
+    """
+    out = file or sys.stdout
+    use_color = getattr(out, 'isatty', lambda: False)() or os.environ.get('FORCE_COLOR', '0') == '1'
+
+    def colorize(code: str, text: str) -> str:
+        return f'\033[{code}m{text}\033[0m' if use_color else text
+
+    # --- Build plain-text rows first (fixed-width, uncolored) so column
+    # alignment cannot be thrown off by invisible ANSI escape sequences. ---
+    title = 'SESHAT Pipeline Summary' + (f' \u2014 {project}' if project else '')
+    subtitle = (f"{summary.started_at.strftime('%Y-%m-%d %H:%M:%S')}  "
+                f"\u2022  total time {_fmt_duration(summary.total_duration)}")
+
+    rows: list = []  # list of (plain_text, status_or_None)
+    rows.append((title, None))
+    rows.append((subtitle, None))
+    rows.append(('', None))  # blank separator before stage rows
+
+    for stage in summary.stages:
+        glyph, _code = _SUMMARY_STATUS_STYLE.get(stage.status, ('\u2022', '0'))
+        duration_str = '' if stage.status == 'skipped' else _fmt_duration(stage.duration)
+        head = f'{glyph} {stage.label:<22} {stage.status.upper():<8} {duration_str:>9}'
+        rows.append((head.rstrip(), stage.status))
+        for detail in stage.details:
+            rows.append((f'    - {detail}', stage.status))
+        if stage.status == 'error' and stage.error:
+            rows.append((f'    ! {stage.error}', stage.status))
+
+    rows.append(('', None))
+    overall = summary.overall_status
+    overall_glyph, _ = _SUMMARY_STATUS_STYLE.get(overall, ('\u2022', '0'))
+    rows.append((f'{overall_glyph} Overall: {overall.upper()}', overall))
+
+    # --- Frame as a box sized to the longest row. ---
+    width = max((len(text) for text, _ in rows), default=0)
+    width = max(48, min(width, 96))
+
+    border_top = '\u250c' + '\u2500' * (width + 2) + '\u2510'
+    border_mid = '\u251c' + '\u2500' * (width + 2) + '\u2524'
+    border_bot = '\u2514' + '\u2500' * (width + 2) + '\u2518'
+
+    plain_lines = [border_top]
+    rendered_lines = [border_top]
+    for i, (text, status) in enumerate(rows):
+        # A blank row (separator) becomes a mid-border instead of empty padding.
+        if text == '' and 0 < i < len(rows) - 1:
+            plain_lines.append(border_mid)
+            rendered_lines.append(border_mid)
+            continue
+        padded = f' {text:<{width}} '
+        plain_lines.append(f'\u2502{padded}\u2502')
+        if status:
+            _glyph, code = _SUMMARY_STATUS_STYLE.get(status, ('', '0'))
+            rendered_lines.append(f'\u2502{colorize(code, padded)}\u2502')
+        else:
+            rendered_lines.append(f'\u2502{padded}\u2502')
+    plain_lines.append(border_bot)
+    rendered_lines.append(border_bot)
+
+    print('\n'.join(rendered_lines), file=out, flush=True)
+    return '\n'.join(plain_lines)
 
 def nested_dir_tree(root_path, rel_path="", logpath=None, logfile=None, max_entries: int | None = None):
     """Return nested directory tree for local or SSH (user@host:/path) roots."""

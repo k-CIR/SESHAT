@@ -8,7 +8,7 @@ import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-from seshat.utils import apply_ansi_colors_to_tk
+from seshat.utils import apply_ansi_colors_to_tk, PIPELINE_STAGES, _PROGRESS_SENTINEL
 
 default_path = '/neuro/data/local'
 
@@ -17,6 +17,16 @@ RUN_LABELS = {
     'copy_raw':       'Copy raw data',
     'opm_preprocess': 'OPM preprocessing',
     'sync':           'Sync to server',
+}
+
+# Minimal circle status glyphs for pipeline stage rows in the RUN tab.
+# 'done'/'error' share the same filled-circle glyph and are distinguished by
+# color only (filled circle = terminal state).
+STAGE_STATUS_ICONS = {
+    'waiting': ('\u25cb', 'gray'),      # ○
+    'running': ('\u25d0', '#1a73e8'),   # ◐
+    'done':    ('\u25cf', '#188038'),   # ●
+    'error':   ('\u25cf', '#d93025'),   # ●
 }
 
 
@@ -203,6 +213,8 @@ class ConfigMainWindow:
         self.config_saved = bool(config_file)
         self.execute_btn = None
         self.abort_btn = None
+        self.stage_status_labels = {}
+        self._last_running_stage = None
 
         if self.config_file:
             self.config_data = self.load_config(self.config_file)
@@ -369,8 +381,25 @@ class ConfigMainWindow:
         widget = ttk.Checkbutton(frame, text=label, variable=var)
         widget.var = var
         var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
-        widget.pack(anchor='w')
+        widget.pack(side='left', anchor='w')
         self.widgets[key] = widget
+
+        status_label = ttk.Label(frame, text='', width=2, font=('TkDefaultFont', 11))
+        status_label.pack(side='left', padx=(6, 0))
+        self.stage_status_labels[key] = status_label
+
+    def create_stage_status_row(self, parent, key, label_text):
+        """Create a plain (non-checkbox) status row for pipeline stages that
+        have no corresponding RUN config entry (currently only 'report',
+        which always runs unless --no-report, never passed by the GUI)."""
+        frame = ttk.Frame(parent)
+        frame.pack(fill='x', padx=0, pady=1)
+
+        ttk.Label(frame, text=label_text).pack(side='left', anchor='w')
+
+        status_label = ttk.Label(frame, text='', width=2, font=('TkDefaultFont', 11))
+        status_label.pack(side='left', padx=(6, 0))
+        self.stage_status_labels[key] = status_label
 
     def create_project_tab(self):
         """Create the Project configuration tab"""
@@ -461,11 +490,14 @@ class ConfigMainWindow:
         run_settings_frame = ttk.LabelFrame(run_frame, text="Pipeline Steps")
         run_settings_frame.pack(fill='x', padx=5, pady=5)
 
-        skip_keys = {'Run BIDS conversion', 'Run Maxfilter'}
-        for key, value in self.config_data['RUN'].items():
-            if key in skip_keys:
-                continue
-            self.create_run_form_widget(run_settings_frame, key, value)
+        # Iterate the shared PIPELINE_STAGES registry (instead of just
+        # self.config_data['RUN'].items()) so 'report' also gets a status
+        # row, even though it isn't a user-toggleable RUN key.
+        for key, label_text in PIPELINE_STAGES:
+            if key in self.config_data['RUN']:
+                self.create_run_form_widget(run_settings_frame, key, self.config_data['RUN'][key])
+            else:
+                self.create_stage_status_row(run_settings_frame, key, label_text)
 
         execute_frame = ttk.Frame(run_frame)
         execute_frame.pack(fill='x', padx=5, pady=5)
@@ -792,6 +824,11 @@ class ConfigMainWindow:
         self.progress_bar['value'] = 0
         self.progress_label['text'] = "Starting..."
 
+        # Reset every stage icon to waiting at the start of each run.
+        self._last_running_stage = None
+        for key, _ in PIPELINE_STAGES:
+            self.set_stage_status(key, 'waiting')
+
         self.execute_btn.configure(state='disabled')
         self.abort_btn.configure(state='normal')
 
@@ -806,6 +843,7 @@ class ConfigMainWindow:
                 env = os.environ.copy()
                 env['FORCE_COLOR'] = '1'
                 env['PYTHONUNBUFFERED'] = '1'
+                env['SESHAT_PROGRESS_JSON'] = '1'
 
                 self.terminal_process = subprocess.Popen(
                     cmd,
@@ -820,6 +858,8 @@ class ConfigMainWindow:
 
                 for line in iter(self.terminal_process.stdout.readline, ''):
                     if line:
+                        if self.maybe_handle_progress_event(line):
+                            continue
                         cleaned_line = self.clean_terminal_output(line)
                         self.root.after(0, self.append_output, cleaned_line)
 
@@ -827,11 +867,18 @@ class ConfigMainWindow:
                 exit_code = self.terminal_process.returncode
                 self.terminal_process = None
 
+                if exit_code != 0:
+                    # Best-effort fallback: the process ended without a clean
+                    # 'error' event for whichever stage was mid-flight (e.g.
+                    # killed, or crashed before it could emit one).
+                    self.root.after(0, self._mark_stuck_stage_error)
+
                 self.root.after(0, self.append_output, f"\nProcess finished with exit code: {exit_code}\n")
                 self.root.after(0, self.reset_buttons)
 
             except Exception as e:
                 self.terminal_process = None
+                self.root.after(0, self._mark_stuck_stage_error)
                 self.root.after(0, self.append_output, f"Error running pipeline: {e}\n")
                 self.root.after(0, self.reset_buttons)
 
@@ -843,6 +890,7 @@ class ConfigMainWindow:
             try:
                 self.terminal_process.terminate()
                 self.append_output("\n*** Pipeline execution aborted by user ***\n")
+                self._mark_stuck_stage_error()
 
                 def force_kill():
                     if self.terminal_process and self.terminal_process.poll() is None:
@@ -885,6 +933,71 @@ class ConfigMainWindow:
         self.execute_btn.configure(state='normal')
         self.abort_btn.configure(state='disabled')
 
+    def set_stage_status(self, stage: str, status: str) -> None:
+        """Update the circle status icon for one pipeline stage row."""
+        label = self.stage_status_labels.get(stage)
+        if label is None:
+            return
+        if status == 'running':
+            self._last_running_stage = stage
+            # Reset the numeric bar for the new stage so a stale percentage
+            # left over from the previous stage (or a stray sync-fallback
+            # match) can't be mistaken for this stage's progress.
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode='determinate')
+            self.progress_bar['value'] = 0
+            stage_name = dict(PIPELINE_STAGES).get(stage, stage or '')
+            self.progress_label['text'] = f"{stage_name}: starting..."
+        elif self._last_running_stage == stage:
+            # Stage reached a terminal state (done/error) or was reset to
+            # waiting; it's no longer the "stuck" running stage.
+            self._last_running_stage = None
+        icon, color = STAGE_STATUS_ICONS.get(status, ('', 'black'))
+        label.configure(text=icon, foreground=color)
+
+    def _mark_stuck_stage_error(self):
+        """Best-effort fallback: if a stage never received an explicit
+        'done'/'error' event (process aborted, killed, crashed, or exited
+        non-zero mid-stage), make sure its icon doesn't stay stuck on
+        'running' forever."""
+        if self._last_running_stage:
+            self.set_stage_status(self._last_running_stage, 'error')
+
+    def maybe_handle_progress_event(self, line: str) -> bool:
+        """Parse one line of subprocess stdout for the structured progress
+        protocol. Returns True if the line was a protocol event (and should
+        not be shown in the terminal pane or fed to the legacy regex-based
+        progress parser)."""
+        if not line.startswith(_PROGRESS_SENTINEL):
+            return False
+        try:
+            payload = json.loads(line[len(_PROGRESS_SENTINEL):].strip())
+        except (ValueError, json.JSONDecodeError):
+            return False
+        if payload.get('event') == 'stage':
+            self.root.after(0, self.set_stage_status, payload['stage'], payload['status'])
+        elif payload.get('event') == 'task':
+            self.root.after(0, self.set_task_progress, payload.get('stage'),
+                             payload.get('current'), payload.get('total'), payload.get('label'))
+        return True
+
+    def set_task_progress(self, stage, current, total, label=None):
+        """Update the numeric progress bar/label from a structured 'task'
+        event (e.g. 'file 42 of 137' within the currently running stage),
+        replacing the previous regex-scraped byte/count fraction."""
+        if not total or current is None:
+            return
+        percentage = max(0.0, min(100.0, (current / total) * 100))
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode='determinate')
+        self.progress_bar['maximum'] = 100
+        self.progress_bar['value'] = percentage
+        stage_name = dict(PIPELINE_STAGES).get(stage, stage or '')
+        text = f"{stage_name}: {current}/{total} ({percentage:.0f}%)"
+        if label:
+            text += f" \u2014 {label}"
+        self.progress_label['text'] = text
+
     def append_output(self, text):
         """Append text to terminal output with ANSI color support (thread-safe)"""
         self.terminal_output.configure(state='normal')
@@ -895,22 +1008,31 @@ class ConfigMainWindow:
         self.root.update_idletasks()
 
     def update_progress_from_text(self, text):
-        """Extract progress information from terminal output and update progress bar"""
-        match = re.search(r'(\d+)/(\d+)', text)
-        if match:
-            current = int(match.group(1))
-            total = int(match.group(2))
-            if total > 0:
-                percentage = (current / total) * 100
-                self.progress_bar['value'] = percentage
-                self.progress_bar['maximum'] = 100
-                try:
-                    current_mb = current / (1024.0 * 1024.0)
-                    total_mb = total / (1024.0 * 1024.0)
-                    self.progress_label['text'] = f"{current_mb:.1f} MB / {total_mb:.1f} MB ({percentage:.1f}%)"
-                except Exception:
-                    self.progress_label['text'] = f"Progress: {current}/{total} ({percentage:.1f}%)"
-                return
+        """Extract progress information from terminal output and update progress bar.
+
+        Note: the previous bare 'N/M' regex fallback (matching any two
+        integers separated by a slash, anywhere in any log line) was
+        removed. It could not distinguish a byte count (copy_raw) from a
+        file count (copy_raw) from a subject count (opm_preprocess),
+        applied the same '/1024^2 -> MB' conversion to all of them
+        (nonsensical for small integer counts), and would false-positive on
+        any ordinary log message that happened to contain two numbers and a
+        slash. copy_raw and opm_preprocess now emit accurate, stage-
+        attributed 'task' protocol events instead (see
+        maybe_handle_progress_event/set_task_progress); this text-scraping
+        fallback remains only for stages not yet instrumented (e.g. sync's
+        rsync-style '--progress' percentage output).
+
+        These fallbacks only fire while 'sync' is the running stage
+        (tracked via self._last_running_stage, set by set_stage_status).
+        copy_raw and opm_preprocess have real structured 'task' events now,
+        so their own tqdm/mne text noise must never be allowed to touch the
+        bar here - a stray 'NN%'-looking or 'N it [...]' substring in an
+        unrelated log line would otherwise silently overwrite an accurate
+        percentage with a bogus one.
+        """
+        if self._last_running_stage != 'sync':
+            return
 
         match = re.search(r'(\d+)%', text)
         if match:
@@ -927,11 +1049,17 @@ class ConfigMainWindow:
                 self.progress_bar.start(10)
             return
 
-        if 'finished' in text.lower() or 'completed' in text.lower() or 'done' in text.lower():
-            self.progress_bar.stop()
-            self.progress_bar.configure(mode='determinate')
-            self.progress_bar['value'] = 100
-            self.progress_label['text'] = "Complete!"
+        # Note: the previous blanket 'finished'/'completed'/'done' substring
+        # match was removed. It fired on ANY line containing those words -
+        # including per-item log lines emitted well before the run (or even
+        # the current stage) actually finished, e.g. opm_preprocess.py's
+        # per-session "HPI fit complete" and per-subject "Completed N/M
+        # subjects" messages, and copy.py's end-of-stage (not end-of-run)
+        # "Copy completed" message - each of which would immediately and
+        # permanently snap the bar to 100%. True stage completion is now
+        # signalled exclusively via the structured 'done' stage event (see
+        # set_stage_status), which drives the per-stage status icon instead
+        # of this numeric bar.
 
     def show(self):
         """Show the window"""

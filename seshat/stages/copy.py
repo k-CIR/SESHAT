@@ -26,7 +26,8 @@ from seshat.utils import (
     proc_patterns,
     file_contains,
     askForConfig,
-    project_paths
+    project_paths,
+    emit_task_progress
 )
 
 global local_dir
@@ -540,21 +541,23 @@ def copy_files_to_raw(paths):
     new_file_count = 0
     existing_file_count = len([file for file in jobs if file[0]])
     failed_file_count = 0
-    size_cumsum = 0
 
-    # Pre-compute per-job sizes once to avoid re-stating every file on each loop iteration.
-    job_sizes = [estimate_job_duration([job])[1] for job in jobs_to_process]
+    total_jobs = len(jobs_to_process)
 
-    pbar = tqdm(total=len(jobs_to_process),
+    pbar = tqdm(total=total_jobs,
                 desc="Copy files",
                 unit=f' file(s)',
                 disable=not sys.stdout.isatty(),
                 ncols=80,
                 bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
-    for job, job_size in zip(jobs_to_process, job_sizes):
-        size_cumsum += job_size
-        print(f'{size_cumsum}/{total_size}')
+    for i, job in enumerate(jobs_to_process, start=1):
+        source = job[1]
+        # File-count-based progress (not byte-based): a GUI-facing count is
+        # far more legible than a byte fraction, and this mirrors the tqdm
+        # bar above, which is disabled when not attached to a tty (i.e.
+        # exactly when the GUI is the one launching this process).
+        emit_task_progress('copy_raw', i, total_jobs, label=basename(source))
 
         try:
             match, source, destination, message, existing_file, new_file, failed_file = process_file_worker(job, log_file_path)
@@ -599,7 +602,13 @@ def copy_files_to_raw(paths):
         'info',
         log_file_path)
 
-    return results
+    stats = {
+        'copied': new_file_count,
+        'existing': existing_file_count,
+        'failed': failed_file_count,
+        'total': len(jobs),
+    }
+    return results, stats
 
 def update_copy_report(results, paths):
     """
@@ -729,13 +738,19 @@ def args_parser():
     return args
 
 # Create local directories for each project
-def main(config: str=None, log_file_path: str = None):
+def main(config: str=None, log_file_path: str = None, summary=None):
     """
     Args:
         log_file_path: Full path to the project log file (e.g. '/project/logs/pipeline_log.log').
                        When provided (called from cli.py), this overrides the path derived from
                        project_paths() so all stages use a single central log file.
+        summary: Optional seshat.utils.PipelineSummary. When provided, a
+                 StageSummary('copy_raw', ...) entry is appended describing
+                 files copied/existing/failed, for the end-of-run summary
+                 report (seshat.stages.report.print_summary_report).
     """
+    import time
+    _t0 = time.time()
 
     if config is None:
         args = args_parser()
@@ -754,8 +769,19 @@ def main(config: str=None, log_file_path: str = None):
     copy_squid_databases(paths['calibration'], paths['crosstalk'])
 
     # Perform file copying
-    results = copy_files_to_raw(paths)
+    results, stats = copy_files_to_raw(paths)
     update_copy_report(results, paths)
+
+    if summary is not None:
+        from seshat.utils import StageSummary
+        status = 'error' if stats['failed'] else 'success'
+        details = [f"{stats['copied']} new file(s) copied",
+                   f"{stats['existing']} file(s) already present"]
+        if stats['failed']:
+            details.append(f"{stats['failed']} file(s) failed")
+        summary.add(StageSummary('copy_raw', 'Copy raw data', status,
+                                  duration=time.time() - _t0,
+                                  stats=stats, details=details))
     return True
 
 if __name__ == "__main__":
