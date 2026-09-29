@@ -21,23 +21,19 @@ RUN_LABELS = {
 
 # Minimal status glyphs for pipeline stage rows in the RUN tab.
 #
-# NOTE on font compatibility (see git history for the original bug report):
-# 'waiting' ('\u25cb' ○) and 'running' ('\u25cf' ●) are confirmed to render
-# on the affected Linux Tk setup. 'done'/'error'/'warning' below use
-# '\u2713'/'\u2715' (Dingbats block) and plain ASCII '!' respectively.
-# Dingbats coverage was NOT part of that original investigation (only the
-# Geometric Shapes ○/● glyphs were tested) — if '\u2713'/'\u2715' show up as
-# blank/tofu boxes on the same systems, swap them back to '\u25cf' (●,
-# distinguished by color only, as 'running' already is) which is proven safe.
-#
-# 'running' uses a "camcorder REC light" effect instead of a distinct glyph:
-# set_stage_status()/_blink_tick() toggle its '\u25cf' between visible and
-# blank every ~500ms while a stage is active.
+# Font compatibility notes (both bugs observed on Rocky Linux):
+#  - '\u25cb' (○) and '\u25cf' (●) render correctly there — confirmed safe.
+#  - '\u25d0' (◐) and '\u2713'/'\u2715' (✓/✕) render as blank/tofu boxes —
+#    they sit outside the small Geometric Shapes subset those Tk fonts
+#    actually cover. So no glyph here may be assumed safe unless it is one
+#    of the two already confirmed, or plain ASCII.
+#  - 'done' reuses '\u25cf' (●) like 'running' does, distinguished by color
+#    alone. 'error' uses ASCII 'X' rather than '\u2715' for the same reason.
 STAGE_STATUS_ICONS = {
     'waiting': ('\u25cb', 'gray'),      # ○ static — confirmed safe
     'running': ('\u25cf', '#d93025'),   # ● blinking red (REC light) — confirmed safe
-    'done':    ('\u2713', '#188038'),   # ✓ solid green — Dingbats, unverified on Linux
-    'error':   ('\u2715', '#d93025'),   # ✕ solid red — Dingbats, unverified on Linux
+    'done':    ('\u25cf', '#188038'),   # ● solid green — confirmed safe
+    'error':   ('\u0058', '#d93025'),   # X solid red — plain ASCII, always safe
     'warning': ('\u0021', 'orange'),    # ! solid orange — plain ASCII, always safe
 }
 
@@ -926,24 +922,37 @@ class ConfigMainWindow:
                 self.reset_buttons()
 
     def clean_terminal_output(self, text):
-        """Clean problematic Unicode characters from terminal output"""
-        unicode_replacements = {
-            '\u258f': '▏', '\u258e': '▎', '\u258d': '▍', '\u258c': '▌',
-            '\u258b': '▋', '\u258a': '▊', '\u2589': '▉', '\u2588': '█',
-            '\u2590': '▐', '\u2591': '░', '\u2592': '▒', '\u2593': '▓',
-            '\u25cf': '●', '\u25cb': '○', '\u25aa': '▪', '\u25ab': '▫',
-            '\u2502': '│', '\u2500': '─', '\u250c': '┌', '\u2510': '┐',
-            '\u2514': '└', '\u2518': '┘', '\u251c': '├', '\u2524': '┤',
-            '\u252c': '┬', '\u2534': '┴', '\u253c': '┼',
-        }
+        """Clean problematic Unicode characters from terminal output.
 
-        for unicode_char, replacement in unicode_replacements.items():
-            text = text.replace(unicode_char, replacement)
+        Only the characters we have actually confirmed render on the
+        affected Linux/Tk (and terminal) font stacks are preserved; anything
+        else outside printable ASCII becomes '?' so an unsupported glyph
+        degrades to a visible placeholder rather than a silent blank box.
 
+        Previously this ran a blanket `[^\\x20-\\x7E...] -> '?'` replace after
+        an identity `unicode_replacements` map (every value equalled its key,
+        i.e. a no-op), which destroyed the whole box-drawing frame of
+        seshat.stages.report.print_summary_report and every status glyph,
+        rendering the summary as a row of '?' on those systems.
+        """
+        # Box drawing (frame) + block elements (progress bar) + the two
+        # confirmed Geometric Shapes status glyphs. All verified to render
+        # on the affected Linux Tk setup.
+        safe_chars = (
+            '─│┌┐└┘├┤┬┴┼'   # box drawing, print_summary_report's frame
+            '█▉▊▋▌▍▎▏░▒▓▐'  # block elements, tqdm's progress bar
+            '●○'                    # confirmed status glyphs
+        )
         ansi_pattern = re.compile(r'(\033\[[0-9;]*m)')
         ansi_codes = ansi_pattern.findall(text)
         text_with_placeholders = ansi_pattern.sub('\x00ANSI\x00', text)
-        text_cleaned = re.sub(r'[^\x20-\x7E\n\t\r\x00]', '?', text_with_placeholders)
+        # Keep printable ASCII, the line/tab control characters, the ANSI
+        # placeholder, and the verified-safe glyph set above.
+        text_cleaned = re.sub(
+            r'[^\x20-\x7E\n\t\r\x00' + re.escape(safe_chars) + ']',
+            '?',
+            text_with_placeholders,
+        )
         for code in ansi_codes:
             text_cleaned = text_cleaned.replace('\x00ANSI\x00', code, 1)
 
