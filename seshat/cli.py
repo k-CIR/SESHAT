@@ -139,7 +139,7 @@ Examples:
 
     try:
         if args.command == 'gui':
-            from seshat.config import config_UI
+            from seshat.gui import config_UI
             config_UI(args.config)
 
         elif args.command == 'run':
