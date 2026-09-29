@@ -15,6 +15,23 @@ from seshat.utils import (log, configure_logging, PIPELINE_STAGES, emit_stage_pr
                           PipelineSummary, StageSummary)
 
 
+def _live_stage_status(summary, key, fallback_success):
+    """Map a completed stage's recorded StageSummary.status ('success' |
+    'warning' | 'error' | 'skipped') to the live progress-event status used
+    by emit_stage_progress() for the GUI's RUN-tab icon ('done' | 'warning' |
+    'error'). Stage modules (e.g. opm_preprocess.main) may add a 'warning'
+    StageSummary for non-fatal issues (skipped sessions, etc.) that a plain
+    success/fail boolean can't express, so this is the single place that
+    turns that richer status into the icon the GUI actually shows.
+
+    Falls back to a plain success/error boolean if no summary entry was
+    recorded for `key` (defensive only; every call site below adds one).
+    """
+    entry = summary.get(key) if summary is not None else None
+    status = entry.status if entry is not None else ('success' if fallback_success else 'error')
+    return {'error': 'error', 'warning': 'warning'}.get(status, 'done')
+
+
 def _stage_enabled(key, config, args):
     """Return whether a given PIPELINE_STAGES key will actually run for this
     invocation of `seshat run`, mirroring the conditions used at each stage's
@@ -176,7 +193,7 @@ Examples:
                         emit_stage_progress('copy_raw', 'error')
                         summary.add(StageSummary('copy_raw', 'Copy raw data', 'error', error=str(e)))
                         raise
-                    emit_stage_progress('copy_raw', 'done' if copy_success else 'error')
+                    emit_stage_progress('copy_raw', _live_stage_status(summary, 'copy_raw', copy_success))
                     pipeline_success.append(copy_success)
                 else:
                     summary.add(StageSummary('copy_raw', 'Copy raw data', 'skipped'))
@@ -191,7 +208,8 @@ Examples:
                         emit_stage_progress('opm_preprocess', 'error')
                         summary.add(StageSummary('opm_preprocess', 'OPM preprocessing', 'error', error=str(e)))
                         raise
-                    emit_stage_progress('opm_preprocess', 'done' if opm_preprocess_success else 'error')
+                    emit_stage_progress('opm_preprocess',
+                                        _live_stage_status(summary, 'opm_preprocess', opm_preprocess_success))
                     pipeline_success.append(opm_preprocess_success)
                 else:
                     summary.add(StageSummary('opm_preprocess', 'OPM preprocessing', 'skipped'))

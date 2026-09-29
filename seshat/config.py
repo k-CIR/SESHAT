@@ -19,15 +19,30 @@ RUN_LABELS = {
     'sync':           'Sync to server',
 }
 
-# Minimal circle status glyphs for pipeline stage rows in the RUN tab.
-# 'done'/'error' share the same filled-circle glyph and are distinguished by
-# color only (filled circle = terminal state).
+# Minimal status glyphs for pipeline stage rows in the RUN tab.
+#
+# NOTE on font compatibility (see git history for the original bug report):
+# 'waiting' ('\u25cb' ○) and 'running' ('\u25cf' ●) are confirmed to render
+# on the affected Linux Tk setup. 'done'/'error'/'warning' below use
+# '\u2713'/'\u2715' (Dingbats block) and plain ASCII '!' respectively.
+# Dingbats coverage was NOT part of that original investigation (only the
+# Geometric Shapes ○/● glyphs were tested) — if '\u2713'/'\u2715' show up as
+# blank/tofu boxes on the same systems, swap them back to '\u25cf' (●,
+# distinguished by color only, as 'running' already is) which is proven safe.
+#
+# 'running' uses a "camcorder REC light" effect instead of a distinct glyph:
+# set_stage_status()/_blink_tick() toggle its '\u25cf' between visible and
+# blank every ~500ms while a stage is active.
 STAGE_STATUS_ICONS = {
-    'waiting': ('\u25cb', 'gray'),      # ○
-    'running': ('\u25d0', '#1a73e8'),   # ◐
-    'done':    ('\u25cf', '#188038'),   # ●
-    'error':   ('\u25cf', '#d93025'),   # ●
+    'waiting': ('\u25cb', 'gray'),      # ○ static — confirmed safe
+    'running': ('\u25cf', '#d93025'),   # ● blinking red (REC light) — confirmed safe
+    'done':    ('\u2713', '#188038'),   # ✓ solid green — Dingbats, unverified on Linux
+    'error':   ('\u2715', '#d93025'),   # ✕ solid red — Dingbats, unverified on Linux
+    'warning': ('\u0021', 'orange'),    # ! solid orange — plain ASCII, always safe
 }
+
+# Blink period (ms) for the 'running' REC-light effect.
+_BLINK_INTERVAL_MS = 500
 
 
 def create_default_config():
@@ -215,6 +230,12 @@ class ConfigMainWindow:
         self.abort_btn = None
         self.stage_status_labels = {}
         self._last_running_stage = None
+        # 'running' REC-light blink state: which stage is currently blinking,
+        # the scheduled tk `after` job id (so it can be cancelled), and
+        # whether the glyph is currently in its visible ('on') phase.
+        self._blink_stage = None
+        self._blink_job = None
+        self._blink_on = True
 
         if self.config_file:
             self.config_data = self.load_config(self.config_file)
@@ -938,6 +959,12 @@ class ConfigMainWindow:
         label = self.stage_status_labels.get(stage)
         if label is None:
             return
+
+        # Any status change cancels a previous blink cycle; 'running' below
+        # starts a fresh one. This keeps at most one REC light blinking at a
+        # time and guarantees a stopped/superseded stage doesn't keep ticking.
+        self._stop_blink()
+
         if status == 'running':
             self._last_running_stage = stage
             # Reset the numeric bar for the new stage so a stale percentage
@@ -948,12 +975,48 @@ class ConfigMainWindow:
             self.progress_bar['value'] = 0
             stage_name = dict(PIPELINE_STAGES).get(stage, stage or '')
             self.progress_label['text'] = f"{stage_name}: starting..."
-        elif self._last_running_stage == stage:
+
+            icon, color = STAGE_STATUS_ICONS.get(status, ('', 'black'))
+            self._blink_stage = stage
+            self._blink_on = True
+            label.configure(text=icon, foreground=color)
+            self._blink_job = self.root.after(_BLINK_INTERVAL_MS, self._blink_tick, stage, label, icon, color)
+            return
+
+        if self._last_running_stage == stage:
             # Stage reached a terminal state (done/error) or was reset to
             # waiting; it's no longer the "stuck" running stage.
             self._last_running_stage = None
         icon, color = STAGE_STATUS_ICONS.get(status, ('', 'black'))
         label.configure(text=icon, foreground=color)
+
+    def _stop_blink(self):
+        """Cancel any pending REC-light blink tick. Safe to call when no
+        blink is active."""
+        if self._blink_job is not None:
+            try:
+                self.root.after_cancel(self._blink_job)
+            except (tk.TclError, ValueError):
+                pass
+            self._blink_job = None
+        self._blink_stage = None
+
+    def _blink_tick(self, stage, label, icon, color):
+        """Toggle a 'running' stage's icon between visible and blank every
+        _BLINK_INTERVAL_MS, mimicking a camcorder REC light. Stops itself if
+        the stage is no longer the active blink target (superseded by a new
+        status, or the window is closing)."""
+        if self._blink_stage != stage:
+            return
+        try:
+            if not label.winfo_exists():
+                return
+            self._blink_on = not self._blink_on
+            label.configure(text=icon if self._blink_on else '', foreground=color)
+            self._blink_job = self.root.after(_BLINK_INTERVAL_MS, self._blink_tick, stage, label, icon, color)
+        except tk.TclError:
+            # Widget/root destroyed mid-flight; nothing further to do.
+            self._blink_job = None
 
     def _mark_stuck_stage_error(self):
         """Best-effort fallback: if a stage never received an explicit

@@ -21,6 +21,15 @@ from seshat.utils import askForConfig, log, PipelineSummary, StageSummary
 # seshat.utils.ANSI_COLOR_MAP / the console log formatter, and the glyphs
 # mirror the GUI's STAGE_STATUS_ICONS (seshat/config.py) for consistency
 # between the RUN tab's status circles and this text summary.
+#
+# NOTE: the fallback glyph for an unrecognized status used to be '\u2022'
+# (BULLET); on some terminal/locale setups that gets replaced with a literal
+# '?' when stdout can't encode it, so it's now a plain ASCII '*' instead (see
+# print_summary_report's two `.get(..., ('*', '0'))` fallbacks below). The
+# subtitle separator and title dash were the same General Punctuation
+# category ('\u2022'/'\u2014') and hit unconditionally on every run, so
+# they've been swapped for plain ASCII '|'/'-' too rather than only fixing
+# the rarely-hit fallback case.
 _SUMMARY_STATUS_STYLE = {
     'success': ('\u25cf', '92'),  # ● bright green
     'warning': ('\u25cf', '93'),  # ● bright yellow
@@ -64,9 +73,9 @@ def print_summary_report(summary: PipelineSummary, project: str = '',
 
     # --- Build plain-text rows first (fixed-width, uncolored) so column
     # alignment cannot be thrown off by invisible ANSI escape sequences. ---
-    title = 'SESHAT Pipeline Summary' + (f' \u2014 {project}' if project else '')
+    title = 'SESHAT Pipeline Summary' + (f' - {project}' if project else '')
     subtitle = (f"{summary.started_at.strftime('%Y-%m-%d %H:%M:%S')}  "
-                f"\u2022  total time {_fmt_duration(summary.total_duration)}")
+                f"|  total time {_fmt_duration(summary.total_duration)}")
 
     rows: list = []  # list of (plain_text, status_or_None)
     rows.append((title, None))
@@ -74,7 +83,7 @@ def print_summary_report(summary: PipelineSummary, project: str = '',
     rows.append(('', None))  # blank separator before stage rows
 
     for stage in summary.stages:
-        glyph, _code = _SUMMARY_STATUS_STYLE.get(stage.status, ('\u2022', '0'))
+        glyph, _code = _SUMMARY_STATUS_STYLE.get(stage.status, ('*', '0'))
         duration_str = '' if stage.status == 'skipped' else _fmt_duration(stage.duration)
         head = f'{glyph} {stage.label:<22} {stage.status.upper():<8} {duration_str:>9}'
         rows.append((head.rstrip(), stage.status))
@@ -85,7 +94,7 @@ def print_summary_report(summary: PipelineSummary, project: str = '',
 
     rows.append(('', None))
     overall = summary.overall_status
-    overall_glyph, _ = _SUMMARY_STATUS_STYLE.get(overall, ('\u2022', '0'))
+    overall_glyph, _ = _SUMMARY_STATUS_STYLE.get(overall, ('*', '0'))
     rows.append((f'{overall_glyph} Overall: {overall.upper()}', overall))
 
     # --- Frame as a box sized to the longest row. ---
