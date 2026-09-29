@@ -65,7 +65,7 @@ OS=$(uname -s)
 echo "Detected platform: $OS"
 
 # Detect a dnf-based distro (Rocky/RHEL/Fedora/AlmaLinux/CentOS) for
-# distro-specific package hints (python3-tkinter, pipx, etc.).
+# distro-specific package hints (pipx, etc.).
 IS_DNF=false
 if command -v dnf &> /dev/null; then
     IS_DNF=true
@@ -92,11 +92,14 @@ else
     echo "  and then re-run this script."
 fi
 
-# --- Find a system Python (>=3.9) to back the tool install, preferring one
-#     that already has tkinter so 'seshat gui' works out of the box. ---
+# --- Find a system Python (>=3.9) to back the tool install. ---
+#
+# Unlike the old Tkinter-based GUI, the GUI toolkit (PySide6) is now an
+# ordinary pip-installable extra (see the '[gui]' extra appended to the
+# install target below), not a system package tied to a specific
+# interpreter - so there is no need to hunt for an interpreter that
+# already has a GUI toolkit built in. Any Python 3.9+ works equally well.
 find_system_python() {
-    local best_with_tk=""
-    local best_without_tk=""
     for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3 python; do
         if command -v "$candidate" &> /dev/null; then
             local version major minor
@@ -104,19 +107,11 @@ find_system_python() {
             major=${version%%.*}
             minor=${version##*.}
             if [ "$major" -eq 3 ] 2>/dev/null && [ "$minor" -ge 9 ] 2>/dev/null; then
-                if "$candidate" -c "import tkinter" 2>/dev/null; then
-                    [ -z "$best_with_tk" ] && best_with_tk="$candidate"
-                else
-                    [ -z "$best_without_tk" ] && best_without_tk="$candidate"
-                fi
+                echo "$candidate"
+                return
             fi
         fi
     done
-    if [ -n "$best_with_tk" ]; then
-        echo "$best_with_tk"
-    else
-        echo "$best_without_tk"
-    fi
 }
 
 SYSTEM_PYTHON=$(find_system_python || true)
@@ -132,21 +127,7 @@ if [ -z "$SYSTEM_PYTHON" ]; then
 fi
 
 echo "✓ Using Python: $SYSTEM_PYTHON ($($SYSTEM_PYTHON --version 2>&1))"
-
-if $SYSTEM_PYTHON -c "import tkinter" 2>/dev/null; then
-    echo "✓ tkinter available - GUI ('seshat gui') will work"
-else
-    echo "⚠ tkinter not found for $SYSTEM_PYTHON."
-    echo "  'seshat gui' will not work until tkinter is installed for this interpreter."
-    if [ "$IS_DNF" = true ]; then
-        echo "  Install it with: sudo dnf install python3-tkinter"
-    elif [ "$OS" = "Darwin" ]; then
-        echo "  Install it with: brew install python-tk"
-    else
-        echo "  Install it with: sudo apt install python3-tk"
-    fi
-    echo "  The command-line interface (seshat run, seshat copy, etc.) works regardless."
-fi
+echo "✓ GUI toolkit (PySide6) will be installed automatically as a pip extra - no OS package needed."
 
 # --- Choose installer: uv tool (preferred, fast, self-contained) or pipx ---
 INSTALLER=""
@@ -184,11 +165,14 @@ echo "Using installer: $INSTALLER"
 # --- Install / reinstall SESHAT as an isolated global tool ---
 echo "Installing SESHAT..."
 
+# Install with the 'gui' extra so PySide6 (used by 'seshat gui') is always
+# pulled in from PyPI alongside seshat - unlike the old Tkinter dependency,
+# this needs no separate OS package step.
 if [ "$INSTALLER" = "uv" ]; then
     UV_ARGS=(tool install --force --reinstall --python "$SYSTEM_PYTHON")
     [ "$EDITABLE" = true ] && UV_ARGS+=(--editable)
     [ "$INSTALL_OPM_UTILS" = true ] && UV_ARGS+=(--with-editable "$OPM_UTILS_DIR")
-    UV_ARGS+=("$SOURCE_DIR")
+    UV_ARGS+=("$SOURCE_DIR[gui]")
     uv "${UV_ARGS[@]}"
     uv tool update-shell || true
 else
@@ -204,7 +188,7 @@ else
     fi
     PIPX_ARGS=(install --force --python "$SYSTEM_PYTHON")
     [ "$EDITABLE" = true ] && PIPX_ARGS+=(--editable)
-    PIPX_ARGS+=("$SOURCE_DIR")
+    PIPX_ARGS+=("$SOURCE_DIR[gui]")
     pipx "${PIPX_ARGS[@]}"
     if [ "$INSTALL_OPM_UTILS" = true ]; then
         pipx inject seshat "$OPM_UTILS_DIR" --editable --force

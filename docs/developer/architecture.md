@@ -8,8 +8,8 @@ SESHAT implements a modular preprocessing pipeline for MEG/EEG datasets. The arc
 seshat/
 ├── __init__.py          # version + description
 ├── cli.py               # CLI entry point (seshat / natmeg commands)
-├── config.py            # config I/O, migration (no Tkinter dependency)
-├── gui.py               # Tkinter configuration/execution GUI
+├── config.py            # config I/O, migration (no GUI toolkit dependency)
+├── gui.py               # PySide6 configuration/execution GUI
 ├── utils.py             # logging, path helpers, shared utilities
 └── stages/
     ├── __init__.py

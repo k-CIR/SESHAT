@@ -20,8 +20,11 @@ from pathlib import Path
 import json
 import yaml
 
-# tkinter file dialog imports
-from tkinter import filedialog
+# PySide6 is imported lazily inside askdirectory()/askForConfig()/
+# apply_ansi_colors_to_qt() below, not here at module level, so importing
+# seshat.utils (and therefore seshat.cli and every stage module) never
+# requires a GUI toolkit unless one of those interactive/GUI code paths is
+# actually used.
 
 
 # Predefined patterns for filename parsing
@@ -111,9 +114,9 @@ def emit_task_progress(stage: str, current: int, total: int, label: str = None) 
 # stage (optionally) fills in while it runs. cli.py owns one PipelineSummary
 # per `seshat run` invocation and hands it to seshat.stages.report.
 # print_summary_report() at the end, which renders it as one human-friendly
-# box to stdout. Because the GUI (config.py) pipes the CLI subprocess's
+# box to stdout. Because the GUI (gui.py) pipes the CLI subprocess's
 # stdout straight into its console pane (ANSI-aware via
-# apply_ansi_colors_to_tk), one rendering path serves both terminal and GUI.
+# apply_ansi_colors_to_qt), one rendering path serves both terminal and GUI.
 
 from dataclasses import dataclass, field
 
@@ -172,11 +175,15 @@ class PipelineSummary:
 ###############################################################################
 
 def askdirectory(**kwargs):
-    """tkinter filedialog.askdirectory wrapper"""
-    
-    directory = filedialog.askdirectory(
-        title=kwargs.get('title', 'Select Directory'),
-        initialdir=kwargs.get('initialdir', '')
+    """PySide6 QFileDialog.getExistingDirectory wrapper"""
+    from PySide6.QtWidgets import QApplication, QFileDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    directory = QFileDialog.getExistingDirectory(
+        None,
+        kwargs.get('title', 'Select Directory'),
+        kwargs.get('initialdir', ''),
     )
 
     return directory
@@ -251,7 +258,7 @@ def askForConfig():
         str: Full path to selected configuration file
         
     Side Effects:
-        - Opens tkinter file dialog window
+        - Opens PySide6 file dialog window
         - Prints selected file path to console
         - Exits program with code 1 if no file selected
         
@@ -261,14 +268,15 @@ def askForConfig():
     Initial Directory:
         Defaults to '/neuro/data/local' for convenient navigation
     """
-    config_file = filedialog.askopenfilename(
-        title="Select Configuration File",
-        initialdir=default_output_path,
-        filetypes=[
-            ("YAML files", "*.yml *.yaml"),
-            ("JSON files", "*.json"),
-            ("All files", "*.*")
-        ]
+    from PySide6.QtWidgets import QApplication, QFileDialog
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    config_file, _ = QFileDialog.getOpenFileName(
+        None,
+        "Select Configuration File",
+        default_output_path,
+        "YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)",
     )
 
     if not config_file:
@@ -300,72 +308,73 @@ ANSI_COLOR_MAP = {
     '0': 'white',       # reset to default (white on black terminal)
 }
 
-def apply_ansi_colors_to_tk(text_widget, ansi_text):
+def apply_ansi_colors_to_qt(text_edit, ansi_text):
     """
-    Parse ANSI color codes from text and apply them to a Tkinter Text widget.
-    
-    This function strips ANSI escape codes and applies the corresponding colors
-    using Tkinter text tags, making terminal-colored output visible in GUI.
-    
+    Parse ANSI color codes from text and apply them to a PySide6 text widget.
+
+    This function strips ANSI escape codes and applies the corresponding
+    colors via QTextCharFormat, making terminal-colored output visible in
+    the Qt GUI's terminal output pane.
+
     Args:
-        text_widget: Tkinter Text widget to insert colored text into
-        ansi_text (str): Text containing ANSI color codes (e.g., from logger output)
-    
+        text_edit: A PySide6 QPlainTextEdit/QTextEdit to insert colored
+            text into. Must expose a `textCursor()`/`setTextCursor()` pair
+            (both do).
+        ansi_text (str): Text containing ANSI color codes (e.g., from
+            logger output)
+
     Example:
-        >>> import tkinter as tk
-        >>> root = tk.Tk()
-        >>> text = tk.Text(root)
-        >>> text.pack()
+        >>> from PySide6.QtWidgets import QPlainTextEdit
+        >>> text_edit = QPlainTextEdit()
         >>> colored_output = "\\033[31mError:\\033[0m Something went wrong"
-        >>> apply_ansi_colors_to_tk(text, colored_output)
-    
+        >>> apply_ansi_colors_to_qt(text_edit, colored_output)
+
     Note:
-        Works with the ANSI codes used by _ColoredFormatter in the logging system.
-        The text widget should be in 'normal' state for insertion.
+        Works with the ANSI codes used by _ColoredFormatter in the logging
+        system.
     """
+    from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor
+
     # Regex to find ANSI color codes: \033[<code>m
     ansi_regex = re.compile(r'\033\[(\d+)m')
-    
+
     matches = list(ansi_regex.finditer(ansi_text))
-    
+
+    cursor = text_edit.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+
     # If no ANSI codes found, just insert the text as-is with white color
     if not matches:
-        text_widget.insert('end', ansi_text)
+        cursor.insertText(ansi_text)
+        text_edit.setTextCursor(cursor)
         return
-    
+
     pos = 0
     current_color = 'white'
-    
+
     for match in matches:
         start, end = match.span()
         color_code = match.group(1)
-        
+
         # Insert text before this color code with current color
         if start > pos:
             chunk = ansi_text[pos:start]
-            # Use color value as tag name for reusability
-            tag_name = f'fg_{current_color.replace("#", "")}'
-            
-            # Configure tag if not already configured
-            if tag_name not in text_widget.tag_names():
-                text_widget.tag_config(tag_name, foreground=current_color)
-            
-            text_widget.insert('end', chunk, tag_name)
-        
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(current_color))
+            cursor.insertText(chunk, fmt)
+
         # Update current color based on the code
         current_color = ANSI_COLOR_MAP.get(color_code, current_color)
         pos = end
-    
+
     # Insert any remaining text after the last color code
     if pos < len(ansi_text):
         chunk = ansi_text[pos:]
-        tag_name = f'fg_{current_color.replace("#", "")}'
-        
-        # Configure tag if not already configured
-        if tag_name not in text_widget.tag_names():
-            text_widget.tag_config(tag_name, foreground=current_color)
-        
-        text_widget.insert('end', chunk, tag_name)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(current_color))
+        cursor.insertText(chunk, fmt)
+
+    text_edit.setTextCursor(cursor)
 
 ###############################################################################
 

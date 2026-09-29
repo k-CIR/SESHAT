@@ -41,13 +41,14 @@ bash install.sh --pipx       # force pipx as the installer
 - Python 3.9+ (the installer picks the newest suitable interpreter it finds)
 - Git
 - Rocky Linux / RHEL / Fedora, Debian/Ubuntu, or macOS
-- tkinter, for the GUI only (`seshat run`/`seshat copy`/etc. work without it):
-  - Rocky/RHEL/Fedora: `sudo dnf install python3-tkinter`
-  - Debian/Ubuntu: `sudo apt install python3-tk`
-  - macOS: `brew install python-tk`
 
-`install.sh` checks for tkinter automatically and prints the correct command
-for your distro if it's missing.
+The GUI (`seshat gui`) uses [PySide6](https://doc.qt.io/qtforpython/), which
+ships as a prebuilt pip wheel with Qt bundled inside it - unlike the
+previous Tkinter-based GUI, no separate OS package is required. `install.sh`
+installs it automatically via the `gui` extra. If installing manually
+instead of via `install.sh`, add it yourself: `pip install -e ".[gui]"` (see
+below). The command-line interface (`seshat run`/`seshat copy`/etc.) works
+without it either way.
 
 ## Manual / Development Installation
 
@@ -56,8 +57,8 @@ Instead of `install.sh`, you can install into your own environment:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-pip install -e opm_utility_scripts/   # required for the opm-preprocess stage
+pip install -e ".[gui]"                # [gui] pulls in PySide6 for 'seshat gui'
+pip install -e opm_utility_scripts/     # required for the opm-preprocess stage
 ```
 
 Optional notebook extras (`jupyter`, `ipython`, `seaborn`):

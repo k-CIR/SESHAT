@@ -4,11 +4,17 @@ import argparse
 import re
 import json
 import yaml
-import subprocess
-import threading
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-from seshat.utils import apply_ansi_colors_to_tk, PIPELINE_STAGES, _PROGRESS_SENTINEL
+
+from PySide6.QtCore import Qt, QTimer, QProcess, QProcessEnvironment
+from PySide6.QtGui import QIcon, QFont, QTextCursor
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTabWidget, QScrollArea, QLabel, QLineEdit, QCheckBox, QComboBox,
+    QGroupBox, QProgressBar, QPlainTextEdit, QPushButton, QFileDialog,
+    QMessageBox,
+)
+
+from seshat.utils import apply_ansi_colors_to_qt, PIPELINE_STAGES, _PROGRESS_SENTINEL
 from seshat.config import (
     create_default_config,
     merge_with_defaults,
@@ -19,12 +25,15 @@ from seshat.config import (
 
 # Minimal status glyphs for pipeline stage rows in the RUN tab.
 #
-# Font compatibility notes (both bugs observed on Rocky Linux):
+# Font compatibility notes (both bugs observed on Rocky Linux under Tk;
+# kept unchanged here pending re-verification under Qt on the same target
+# — Qt's own font shaping may render the wider glyph set fine, but do not
+# assume that without testing on the real Rocky Linux workstation):
 #  - '\u25cb' (○) and '\u25cf' (●) render correctly there — confirmed safe.
-#  - '\u25d0' (◐) and '\u2713'/'\u2715' (✓/✕) render as blank/tofu boxes —
-#    they sit outside the small Geometric Shapes subset those Tk fonts
-#    actually cover. So no glyph here may be assumed safe unless it is one
-#    of the two already confirmed, or plain ASCII.
+#  - '\u25d0' (◐) and '\u2713'/'\u2715' (✓/✕) render as blank/tofu boxes
+#    under Tk — they sit outside the small Geometric Shapes subset those
+#    fonts actually cover. No glyph here may be assumed safe unless it is
+#    one of the two already confirmed, or plain ASCII.
 #  - 'done' reuses '\u25cf' (●) like 'running' does, distinguished by color
 #    alone. 'error' uses ASCII 'X' rather than '\u2715' for the same reason.
 STAGE_STATUS_ICONS = {
@@ -39,14 +48,16 @@ STAGE_STATUS_ICONS = {
 _BLINK_INTERVAL_MS = 500
 
 
-class ConfigMainWindow:
-    """Tkinter main window for SESHAT configuration editor"""
+class ConfigMainWindow(QMainWindow):
+    """PySide6 main window for SESHAT configuration editor"""
 
     def __init__(self, config_file=None):
-        self.root = tk.Tk()
-        self.root.title("SESHAT - Scripts for Extraction, Synchronisation, HPI + Analog alignment and Transfer")
-        self.root.geometry("900x800")
-        self.logo_image = None
+        super().__init__()
+        self.setWindowTitle(
+            "SESHAT - Scripts for Extraction, Synchronisation, HPI + Analog alignment and Transfer"
+        )
+        self.resize(900, 800)
+        self.logo_pixmap = None
 
         self._setup_branding_assets()
 
@@ -57,18 +68,24 @@ class ConfigMainWindow:
         self.programmatic_update = False
         self._last_project_name = ''
         self._last_root_path = ''
-        self.terminal_process = None
+        self.terminal_process = None  # QProcess instance while a run is active
+        self._stdout_buffer = ''
         self.config_saved = bool(config_file)
         self.execute_btn = None
         self.abort_btn = None
         self.stage_status_labels = {}
         self._last_running_stage = None
-        # 'running' REC-light blink state: which stage is currently blinking,
-        # the scheduled tk `after` job id (so it can be cancelled), and
-        # whether the glyph is currently in its visible ('on') phase.
+
+        # 'running' REC-light blink state: which stage/label/icon/color are
+        # currently blinking, and a repeating QTimer driving the toggle.
         self._blink_stage = None
-        self._blink_job = None
+        self._blink_label = None
+        self._blink_icon = ''
+        self._blink_color = 'black'
         self._blink_on = True
+        self._blink_timer = QTimer(self)
+        self._blink_timer.setInterval(_BLINK_INTERVAL_MS)
+        self._blink_timer.timeout.connect(self._blink_tick)
 
         if self.config_file:
             self.config_data = self.load_config(self.config_file)
@@ -91,25 +108,28 @@ class ConfigMainWindow:
 
         for candidate in (svg_logo_path, png_fallback_path):
             if os.path.exists(candidate):
-                try:
-                    self.logo_image = tk.PhotoImage(file=candidate)
-                    self.root.iconphoto(True, self.logo_image)
+                icon = QIcon(candidate)
+                if not icon.isNull():
+                    self.setWindowIcon(icon)
+                    self.logo_pixmap = icon.pixmap(96, 96)
                     self.logo_path = candidate
                     break
-                except tk.TclError:
-                    self.logo_image = None
 
     def init_ui(self):
         """Initialize the user interface"""
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill='both', expand=True, padx=2, pady=5)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(2, 5, 2, 5)
 
-        if self.logo_image is not None:
-            logo_label = ttk.Label(main_frame, image=self.logo_image)
-            logo_label.pack(anchor='center', pady=(2, 8))
+        if self.logo_pixmap is not None:
+            logo_label = QLabel()
+            logo_label.setPixmap(self.logo_pixmap)
+            logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            main_layout.addWidget(logo_label)
 
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(fill='both', expand=True)
+        self.notebook = QTabWidget()
+        main_layout.addWidget(self.notebook, 1)
 
         self.create_project_tab()
         self.create_opm_tab()
@@ -117,157 +137,224 @@ class ConfigMainWindow:
         # self.create_bids_tab()
         self.create_run_tab()
 
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill='x', padx=(4, 4), pady=(10, 0))
+        button_frame = QWidget()
+        button_layout = QHBoxLayout(button_frame)
+        button_layout.setContentsMargins(4, 10, 4, 0)
+        button_layout.addStretch(1)
 
-        ttk.Button(button_frame, text="Cancel", command=self.root.quit).pack(side='right', padx=(5, 0))
-        ttk.Button(button_frame, text="Save", command=self.save_config).pack(side='right', padx=(5, 0))
-        ttk.Button(button_frame, text="Save As...", command=self.save_as_config).pack(side='right', padx=(5, 0))
-        ttk.Button(button_frame, text="Open", command=self.open_config).pack(side='right', padx=(5, 0))
+        # Original Tk code packed Cancel/Save/Save As/Open with side='right'
+        # in that order, which visually renders left-to-right as:
+        # Open, Save As..., Save, Cancel. Reproduce that order here.
+        open_btn = QPushButton("Open")
+        open_btn.clicked.connect(self.open_config)
+        save_as_btn = QPushButton("Save As...")
+        save_as_btn.clicked.connect(self.save_as_config)
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.save_config)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.quit)
 
-        self.status_label = ttk.Label(main_frame, text=f"Config file: {self.config_file if self.config_file else 'None'}")
-        self.status_label.pack(anchor='w', pady=(5, 0))
+        for btn in (open_btn, save_as_btn, save_btn, cancel_btn):
+            button_layout.addWidget(btn)
+
+        main_layout.addWidget(button_frame)
+
+        self.status_label = QLabel(f"Config file: {self.config_file if self.config_file else 'None'}")
+        main_layout.addWidget(self.status_label)
 
         if self.config_saved:
             self.mark_config_saved()
         else:
             self.mark_config_changed()
 
-    def create_scrollable_frame(self, parent):
-        """Create a scrollable frame"""
-        canvas = tk.Canvas(parent, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+    def create_scrollable_frame(self, parent_widget):
+        """Create a scrollable area inside `parent_widget` (a bare QWidget
+        tab page with no layout yet) and return the QVBoxLayout that child
+        rows should be added to via addWidget(). Caller must add a trailing
+        addStretch(1) once all rows are added, to keep rows top-aligned."""
+        outer_layout = QVBoxLayout(parent_widget)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
 
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        outer_layout.addWidget(scroll)
 
-        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(1)
+        scroll.setWidget(content)
 
-        def on_canvas_configure(event):
-            canvas.itemconfig(canvas_window, width=event.width)
-        canvas.bind('<Configure>', on_canvas_configure)
+        return content_layout
 
-        canvas.pack(side="left", fill="both", expand=True, padx=0, pady=0)
-        scrollbar.pack(side="right", fill="y")
+    @staticmethod
+    def _get_widget_value(widget):
+        """Read the current value out of a form widget, mirroring what
+        Tk's `widget.var.get()` used to return."""
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, QComboBox):
+            return widget.currentText()
+        if isinstance(widget, QLineEdit):
+            return widget.text()
+        return None
 
-        return scrollable_frame
+    @staticmethod
+    def _set_widget_value(widget, value):
+        """Write a value into a form widget, mirroring what Tk's
+        `widget.var.set(value)` used to do. Note: like Tk's StringVar/
+        BooleanVar, this fires the widget's change signal synchronously;
+        callers relying on that during programmatic updates must guard
+        with self.programmatic_update the same way the original code did."""
+        if isinstance(widget, QCheckBox):
+            widget.setChecked(bool(value))
+        elif isinstance(widget, QComboBox):
+            widget.setCurrentText(str(value))
+        elif isinstance(widget, QLineEdit):
+            widget.setText(str(value))
 
-    def create_form_widget(self, parent, key, value, help_text=None):
+    def create_form_widget(self, layout, key, value, help_text=None):
         """Create a form widget based on the value type"""
-        frame = ttk.Frame(parent)
-        frame.pack(fill='x', padx=2, pady=1)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(2, 1, 2, 1)
 
-        label = ttk.Label(frame, text=f"{key}:", anchor='e', width=25)
-        label.pack(side='left', padx=(2, 2))
+        label = QLabel(f"{key}:")
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setFixedWidth(170)
+        row_layout.addWidget(label)
 
         if isinstance(value, bool):
-            var = tk.BooleanVar(value=value)
-            widget = ttk.Checkbutton(frame, variable=var)
-            widget.var = var
-            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+            widget = QCheckBox()
+            widget.setChecked(value)
+            widget.stateChanged.connect(lambda _state, k=key, w=widget: (
+                self.update_config_value(k, w.isChecked()), self.mark_config_changed()))
         elif isinstance(value, list):
-            var = tk.StringVar(value=', '.join(str(v) for v in value))
-            widget = ttk.Entry(frame, textvariable=var, width=50)
-            widget.var = var
-            var.trace_add('write', lambda *args, k=key: [self.update_config_list(k, var.get()), self.mark_config_changed()])
+            widget = QLineEdit(', '.join(str(v) for v in value))
+            widget.textChanged.connect(lambda text, k=key: (
+                self.update_config_list(k, text), self.mark_config_changed()))
         elif key == 'trans_option':
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Combobox(frame, textvariable=var, values=['continuous', 'initial'], width=47)
-            widget.var = var
-            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+            widget = QComboBox()
+            widget.setEditable(True)
+            widget.addItems(['continuous', 'initial'])
+            widget.setCurrentText(str(value))
+            widget.currentTextChanged.connect(lambda text, k=key: (
+                self.update_config_value(k, text), self.mark_config_changed()))
         elif key == 'maxfilter_version':
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Combobox(frame, textvariable=var,
-                                  values=['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'], width=47)
-            widget.var = var
-            var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+            widget = QComboBox()
+            widget.setEditable(True)
+            widget.addItems(['/neuro/bin/util/maxfilter', '/neuro/bin/util/mfilter'])
+            widget.setCurrentText(str(value))
+            widget.currentTextChanged.connect(lambda text, k=key: (
+                self.update_config_value(k, text), self.mark_config_changed()))
         else:
-            var = tk.StringVar(value=str(value))
-            widget = ttk.Entry(frame, textvariable=var, width=50)
-            widget.var = var
+            widget = QLineEdit(str(value))
             if key == 'Name':
-                def update_name_and_paths(*args):
-                    self.update_config_value(key, var.get())
+                def update_name_and_paths(text):
+                    self.update_config_value(key, text)
                     self.mark_config_changed()
                     self.update_project_paths()
-                var.trace_add('write', update_name_and_paths)
+                widget.textChanged.connect(update_name_and_paths)
             elif key == 'Root':
-                def update_root_and_paths(*args):
-                    self.update_config_value(key, var.get())
+                def update_root_and_paths(text):
+                    self.update_config_value(key, text)
                     self.mark_config_changed()
                     self.update_project_paths()
-                var.trace_add('write', update_root_and_paths)
+                widget.textChanged.connect(update_root_and_paths)
             elif key in ['Raw', 'BIDS', 'Calibration', 'Crosstalk']:
-                # Single consolidated callback guarded by programmatic_update to
-                # avoid spurious updates when update_project_paths sets these vars.
-                def make_path_callback(field_key, field_var):
-                    def cb(*args):
+                # Single consolidated callback guarded by programmatic_update
+                # to avoid spurious updates when update_project_paths sets
+                # these widgets.
+                def make_path_callback(field_key):
+                    def cb(text):
                         if self.programmatic_update:
                             return
-                        self.update_config_value(field_key, field_var.get())
+                        self.update_config_value(field_key, text)
                         self.mark_config_changed()
                         self.mark_manual_edit(field_key)
                     return cb
-                var.trace_add('write', make_path_callback(key, var))
+                widget.textChanged.connect(make_path_callback(key))
             else:
-                var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
+                widget.textChanged.connect(lambda text, k=key: (
+                    self.update_config_value(k, text), self.mark_config_changed()))
 
-        widget.pack(side='right', fill='x', expand=True)
+        row_layout.addWidget(widget, 1)
         self.widgets[key] = widget
+        layout.addWidget(row)
 
         if help_text:
-            help_frame = ttk.Frame(parent)
-            help_frame.pack(fill='x', padx=(170, 2), pady=(0, 2))
-            help_label = ttk.Label(help_frame, text=help_text, foreground='gray', font=('TkDefaultFont', 8))
-            help_label.pack(anchor='w')
+            help_row = QWidget()
+            help_layout = QHBoxLayout(help_row)
+            help_layout.setContentsMargins(170, 0, 2, 2)
+            help_label = QLabel(help_text)
+            help_label.setStyleSheet("color: gray;")
+            help_font = QFont()
+            help_font.setPointSize(8)
+            help_label.setFont(help_font)
+            help_layout.addWidget(help_label)
+            layout.addWidget(help_row)
 
-    def create_run_form_widget(self, parent, key, value):
+    def create_run_form_widget(self, layout, key, value):
         """Create a form widget for RUN items using human-readable labels"""
-        frame = ttk.Frame(parent)
-        frame.pack(fill='x', padx=0, pady=1)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 1, 0, 1)
 
         label = RUN_LABELS.get(key, key)
-        var = tk.BooleanVar(value=value)
-        widget = ttk.Checkbutton(frame, text=label, variable=var)
-        widget.var = var
-        var.trace_add('write', lambda *args, k=key: [self.update_config_value(k, var.get()), self.mark_config_changed()])
-        widget.pack(side='left', anchor='w')
+        widget = QCheckBox(label)
+        widget.setChecked(bool(value))
+        widget.stateChanged.connect(lambda _state, k=key, w=widget: (
+            self.update_config_value(k, w.isChecked()), self.mark_config_changed()))
+        row_layout.addWidget(widget)
         self.widgets[key] = widget
 
-        status_label = ttk.Label(frame, text='', width=2, font=('TkDefaultFont', 11))
-        status_label.pack(side='left', padx=(6, 0))
+        status_label = QLabel('')
+        status_label.setFixedWidth(20)
+        status_font = QFont('Monospace')
+        status_font.setPointSize(11)
+        status_label.setFont(status_font)
+        row_layout.addWidget(status_label)
+        row_layout.addStretch(1)
         self.stage_status_labels[key] = status_label
 
-    def create_stage_status_row(self, parent, key, label_text):
+        layout.addWidget(row)
+
+    def create_stage_status_row(self, layout, key, label_text):
         """Create a plain (non-checkbox) status row for pipeline stages that
         have no corresponding RUN config entry (currently only 'report',
         which always runs unless --no-report, never passed by the GUI)."""
-        frame = ttk.Frame(parent)
-        frame.pack(fill='x', padx=0, pady=1)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 1, 0, 1)
 
-        ttk.Label(frame, text=label_text).pack(side='left', anchor='w')
+        row_layout.addWidget(QLabel(label_text))
 
-        status_label = ttk.Label(frame, text='', width=2, font=('TkDefaultFont', 11))
-        status_label.pack(side='left', padx=(6, 0))
+        status_label = QLabel('')
+        status_label.setFixedWidth(20)
+        status_font = QFont('Monospace')
+        status_font.setPointSize(11)
+        status_label.setFont(status_font)
+        row_layout.addWidget(status_label)
+        row_layout.addStretch(1)
         self.stage_status_labels[key] = status_label
+
+        layout.addWidget(row)
 
     def create_project_tab(self):
         """Create the Project configuration tab"""
-        project_frame = ttk.Frame(self.notebook)
-        self.notebook.add(project_frame, text="Project")
+        project_tab = QWidget()
+        self.notebook.addTab(project_tab, "Project")
+        project_tab_layout = QVBoxLayout(project_tab)
+        project_tab_layout.setContentsMargins(2, 2, 2, 2)
 
-        project_notebook = ttk.Notebook(project_frame)
-        project_notebook.pack(fill='both', expand=True, padx=2, pady=2)
+        project_notebook = QTabWidget()
+        project_tab_layout.addWidget(project_notebook)
 
-        standard_frame = ttk.Frame(project_notebook)
-        project_notebook.add(standard_frame, text="Standard Settings")
-        standard_scrollable = self.create_scrollable_frame(standard_frame)
+        standard_tab = QWidget()
+        project_notebook.addTab(standard_tab, "Standard Settings")
+        standard_scrollable = self.create_scrollable_frame(standard_tab)
 
-        # Phase 2.5: updated to new key names
         standard_keys = ['Name', 'cir_id', 'Description', 'Tasks', 'sinuhe_raw', 'kaptah_raw', 'stimulus', 'Polhemus']
         standard_help = {
             'Name':        'Name of project',
@@ -285,12 +372,12 @@ class ConfigMainWindow:
                 value = self.config_data['Project'][key]
                 help_text = standard_help.get(key)
                 self.create_form_widget(standard_scrollable, key, value, help_text)
+        standard_scrollable.addStretch(1)
 
-        advanced_frame = ttk.Frame(project_notebook)
-        project_notebook.add(advanced_frame, text="Advanced Settings")
-        advanced_scrollable = self.create_scrollable_frame(advanced_frame)
+        advanced_tab = QWidget()
+        project_notebook.addTab(advanced_tab, "Advanced Settings")
+        advanced_scrollable = self.create_scrollable_frame(advanced_tab)
 
-        # Phase 2.5: updated to new key name 'logfile'
         advanced_keys = [
             'InstitutionName', 'InstitutionAddress', 'InstitutionDepartmentName',
             'Root', 'Raw', 'BIDS', 'Calibration', 'Crosstalk', 'logfile'
@@ -312,12 +399,13 @@ class ConfigMainWindow:
                 value = self.config_data['Project'][key]
                 help_text = advanced_help.get(key)
                 self.create_form_widget(advanced_scrollable, key, value, help_text)
+        advanced_scrollable.addStretch(1)
 
     def create_opm_tab(self):
         """Create the OPM configuration tab"""
-        opm_frame = ttk.Frame(self.notebook)
-        self.notebook.add(opm_frame, text="OPM")
-        opm_scrollable = self.create_scrollable_frame(opm_frame)
+        opm_tab = QWidget()
+        self.notebook.addTab(opm_tab, "OPM")
+        opm_scrollable = self.create_scrollable_frame(opm_tab)
 
         opm_help = {
             'rename_analog_channels': 'Rename analog channels using a mapping file',
@@ -335,61 +423,76 @@ class ConfigMainWindow:
         for key, value in self.config_data['OPM'].items():
             help_text = opm_help.get(key)
             self.create_form_widget(opm_scrollable, key, value, help_text)
+        opm_scrollable.addStretch(1)
 
     def create_run_tab(self):
         """Create the RUN configuration tab"""
-        run_frame = ttk.Frame(self.notebook)
-        self.notebook.add(run_frame, text="RUN")
+        run_tab = QWidget()
+        self.notebook.addTab(run_tab, "RUN")
+        run_layout = QVBoxLayout(run_tab)
 
-        run_settings_frame = ttk.LabelFrame(run_frame, text="Pipeline Steps")
-        run_settings_frame.pack(fill='x', padx=5, pady=5)
+        run_settings_group = QGroupBox("Pipeline Steps")
+        run_settings_layout = QVBoxLayout(run_settings_group)
+        run_layout.addWidget(run_settings_group)
 
         # Iterate the shared PIPELINE_STAGES registry (instead of just
         # self.config_data['RUN'].items()) so 'report' also gets a status
         # row, even though it isn't a user-toggleable RUN key.
         for key, label_text in PIPELINE_STAGES:
             if key in self.config_data['RUN']:
-                self.create_run_form_widget(run_settings_frame, key, self.config_data['RUN'][key])
+                self.create_run_form_widget(run_settings_layout, key, self.config_data['RUN'][key])
             else:
-                self.create_stage_status_row(run_settings_frame, key, label_text)
+                self.create_stage_status_row(run_settings_layout, key, label_text)
 
-        execute_frame = ttk.Frame(run_frame)
-        execute_frame.pack(fill='x', padx=5, pady=5)
+        execute_frame = QWidget()
+        execute_layout = QHBoxLayout(execute_frame)
+        execute_layout.setContentsMargins(0, 0, 0, 0)
+        run_layout.addWidget(execute_frame)
 
-        self.execute_btn = ttk.Button(
-            execute_frame,
-            text="Save to Execute" if not self.config_saved else "Execute Pipeline",
-            command=self.execute_pipeline,
+        self.execute_btn = QPushButton(
+            "Execute Pipeline" if self.config_saved else "Save to Execute"
         )
-        self.execute_btn.pack(side='left', anchor='w')
-        self.execute_btn.configure(state='disabled' if not self.config_saved else 'normal')
+        self.execute_btn.clicked.connect(self.execute_pipeline)
+        self.execute_btn.setEnabled(self.config_saved)
+        execute_layout.addWidget(self.execute_btn)
 
-        self.abort_btn = ttk.Button(execute_frame, text="Abort", command=self.abort_pipeline, state='disabled')
-        self.abort_btn.pack(side='left', padx=(10, 0), anchor='w')
+        self.abort_btn = QPushButton("Abort")
+        self.abort_btn.clicked.connect(self.abort_pipeline)
+        self.abort_btn.setEnabled(False)
+        execute_layout.addWidget(self.abort_btn)
+        execute_layout.addStretch(1)
 
-        progress_frame = ttk.Frame(run_frame)
-        progress_frame.pack(fill='x', padx=5, pady=(5, 0))
+        progress_frame = QWidget()
+        progress_layout = QVBoxLayout(progress_frame)
+        progress_layout.setContentsMargins(0, 5, 0, 0)
+        run_layout.addWidget(progress_frame)
 
-        self.progress_label = ttk.Label(progress_frame, text="Ready", font=('TkDefaultFont', 9))
-        self.progress_label.pack(anchor='w', pady=(0, 2))
+        self.progress_label = QLabel("Ready")
+        progress_font = QFont()
+        progress_font.setPointSize(9)
+        self.progress_label.setFont(progress_font)
+        progress_layout.addWidget(self.progress_label)
 
-        self.progress_bar = ttk.Progressbar(progress_frame, mode='determinate', length=300)
-        self.progress_bar.pack(fill='x', pady=(0, 5))
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        progress_layout.addWidget(self.progress_bar)
 
-        terminal_frame = ttk.LabelFrame(run_frame, text="Terminal Output")
-        terminal_frame.pack(fill='both', expand=True, padx=5, pady=5)
+        terminal_group = QGroupBox("Terminal Output")
+        terminal_layout = QVBoxLayout(terminal_group)
+        run_layout.addWidget(terminal_group, 1)
 
-        self.terminal_output = scrolledtext.ScrolledText(
-            terminal_frame, height=15, state='disabled',
-            bg='black', fg='white', insertbackground='green',
-            selectbackground='gray30', selectforeground='white',
-            font=('Courier', 10),
+        self.terminal_output = QPlainTextEdit()
+        self.terminal_output.setReadOnly(True)
+        self.terminal_output.setStyleSheet(
+            "background-color: black; color: white; selection-background-color: #4d4d4d;"
         )
-        self.terminal_output.pack(fill='both', expand=True, padx=5, pady=5)
+        terminal_font = QFont('Courier')
+        terminal_font.setPointSize(10)
+        self.terminal_output.setFont(terminal_font)
+        terminal_layout.addWidget(self.terminal_output)
 
-        self.terminal_output.configure(state='normal')
-        self.terminal_output.insert('end', "Terminal output will appear here...\n")
-        self.terminal_output.configure(state='disabled')
+        self.terminal_output.setPlainText("Terminal output will appear here...\n")
 
     def update_config_value(self, key, value):
         """Update configuration value"""
@@ -483,12 +586,12 @@ class ConfigMainWindow:
                 self.config_data['Project'][field] = new_path
 
                 if field in self.widgets:
-                    self.widgets[field].var.set(new_path)
+                    self._set_widget_value(self.widgets[field], new_path)
 
             if self.config_data['Project'].get('Root', '') != root_path:
                 self.config_data['Project']['Root'] = root_path
                 if 'Root' in self.widgets:
-                    self.widgets['Root'].var.set(root_path)
+                    self._set_widget_value(self.widgets['Root'], root_path)
 
             self._last_project_name = display_project
             self._last_root_path = root_path
@@ -528,17 +631,19 @@ class ConfigMainWindow:
         """Mark configuration as changed and update UI accordingly"""
         self.config_saved = False
         if self.execute_btn:
-            self.execute_btn.configure(text="Save to Execute", state='disabled')
+            self.execute_btn.setText("Save to Execute")
+            self.execute_btn.setEnabled(False)
         if self.abort_btn:
-            self.abort_btn.configure(state='disabled')
+            self.abort_btn.setEnabled(False)
 
     def mark_config_saved(self):
         """Mark configuration as saved and update UI accordingly"""
         self.config_saved = True
         if self.execute_btn:
-            self.execute_btn.configure(text="Execute Pipeline", state='normal')
+            self.execute_btn.setText("Execute Pipeline")
+            self.execute_btn.setEnabled(True)
         if self.abort_btn:
-            self.abort_btn.configure(state='disabled')
+            self.abort_btn.setEnabled(False)
 
     def load_config(self, config_file=None):
         """Load configuration from file"""
@@ -570,7 +675,7 @@ class ConfigMainWindow:
             return config if config else create_default_config()
 
         except Exception as e:
-            messagebox.showerror("Error", f"Error loading config: {e}")
+            QMessageBox.critical(self, "Error", f"Error loading config: {e}")
             return create_default_config()
 
     def save_config(self):
@@ -580,13 +685,15 @@ class ConfigMainWindow:
             return
 
         if os.path.exists(self.config_file):
-            response = messagebox.askyesno(
+            response = QMessageBox.question(
+                self,
                 "Overwrite File?",
                 f"The file '{os.path.basename(self.config_file)}' already exists.\n\n"
                 f"Do you want to overwrite it?",
-                icon='warning',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if not response:
+            if response != QMessageBox.StandardButton.Yes:
                 return
 
         try:
@@ -597,18 +704,19 @@ class ConfigMainWindow:
                 with open(self.config_file, 'w') as file:
                     json.dump(self.config_data, file, indent=4)
 
-            self.status_label.configure(text=f"Config saved to: {self.config_file}")
+            self.status_label.setText(f"Config saved to: {self.config_file}")
             self.mark_config_saved()
 
         except Exception as e:
-            messagebox.showerror("Error", f"Error saving config: {e}")
+            QMessageBox.critical(self, "Error", f"Error saving config: {e}")
 
     def save_as_config(self):
         """Save configuration as new file"""
-        filename = filedialog.asksaveasfilename(
-            initialdir=default_path,
-            title="Save Configuration File",
-            filetypes=[("YAML files", "*.yml *.yaml"), ("JSON files", "*.json"), ("All files", "*.*")],
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Configuration File",
+            default_path,
+            "YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)",
         )
 
         if filename:
@@ -619,15 +727,11 @@ class ConfigMainWindow:
 
     def open_config(self):
         """Open configuration file"""
-        filename = filedialog.askopenfilename(
-            initialdir=default_path,
-            title="Open Configuration File",
-            filetypes=[
-                ("Config files", "*.yml *.yaml *.json"),
-                ("YAML files", "*.yml *.yaml"),
-                ("JSON files", "*.json"),
-                ("All files", "*.*"),
-            ],
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Configuration File",
+            default_path,
+            "Config files (*.yml *.yaml *.json);;YAML files (*.yml *.yaml);;JSON files (*.json);;All files (*.*)",
         )
 
         if filename:
@@ -638,11 +742,11 @@ class ConfigMainWindow:
                     self.config_file = filename
                     self.manual_edits.clear()
                     self.detect_manual_edits()
-                    self.status_label.configure(text=f"Config loaded from: {filename}")
+                    self.status_label.setText(f"Config loaded from: {filename}")
                     self.update_all_widgets()
                     self.mark_config_saved()
             except Exception as e:
-                messagebox.showerror("Error", f"Error opening config: {e}")
+                QMessageBox.critical(self, "Error", f"Error opening config: {e}")
 
     def update_all_widgets(self):
         """Update all widgets with current config values"""
@@ -660,83 +764,103 @@ class ConfigMainWindow:
                                 break
 
             if value is not None:
-                if hasattr(widget, 'var'):
-                    if isinstance(value, list):
-                        widget.var.set(', '.join(str(v) for v in value))
-                    else:
-                        widget.var.set(str(value) if not isinstance(value, bool) else value)
+                if isinstance(value, list):
+                    self._set_widget_value(widget, ', '.join(str(v) for v in value))
+                else:
+                    self._set_widget_value(widget, value)
 
     def execute_pipeline(self):
         """Execute the pipeline"""
-        self.terminal_output.configure(state='normal')
-        self.terminal_output.delete(1.0, 'end')
-        self.terminal_output.insert('end', "Executing pipeline...\n")
-        self.terminal_output.configure(state='disabled')
+        self.terminal_output.setPlainText("Executing pipeline...\n")
 
-        self.progress_bar.stop()
-        self.progress_bar.configure(mode='determinate')
-        self.progress_bar['value'] = 0
-        self.progress_label['text'] = "Starting..."
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_label.setText("Starting...")
 
         # Reset every stage icon to waiting at the start of each run.
         self._last_running_stage = None
         for key, _ in PIPELINE_STAGES:
             self.set_stage_status(key, 'waiting')
 
-        self.execute_btn.configure(state='disabled')
-        self.abort_btn.configure(state='normal')
+        self.execute_btn.setEnabled(False)
+        self.abort_btn.setEnabled(True)
 
-        # Phase 1.5: use 'python -m seshat.cli run' so we always use the same
+        # Use 'python -m seshat.cli run' so we always use the same
         # interpreter as the GUI, regardless of whether 'seshat' is on PATH.
-        cmd = [sys.executable, '-m', 'seshat.cli', 'run']
+        args = ['-m', 'seshat.cli', 'run']
         if self.config_file:
-            cmd += ['--config', self.config_file]
+            args += ['--config', self.config_file]
 
-        def run_pipeline():
-            try:
-                env = os.environ.copy()
-                env['FORCE_COLOR'] = '1'
-                env['PYTHONUNBUFFERED'] = '1'
-                env['SESHAT_PROGRESS_JSON'] = '1'
+        self._stdout_buffer = ''
 
-                self.terminal_process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                    encoding='utf-8',
-                    errors='replace',
-                    env=env,
-                )
+        process = QProcess(self)
+        process.setProgram(sys.executable)
+        process.setArguments(args)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
 
-                for line in iter(self.terminal_process.stdout.readline, ''):
-                    if line:
-                        if self.maybe_handle_progress_event(line):
-                            continue
-                        cleaned_line = self.clean_terminal_output(line)
-                        self.root.after(0, self.append_output, cleaned_line)
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert('FORCE_COLOR', '1')
+        env.insert('PYTHONUNBUFFERED', '1')
+        env.insert('SESHAT_PROGRESS_JSON', '1')
+        process.setProcessEnvironment(env)
 
-                self.terminal_process.wait()
-                exit_code = self.terminal_process.returncode
-                self.terminal_process = None
+        process.readyReadStandardOutput.connect(self._handle_process_output)
+        process.finished.connect(self._handle_process_finished)
+        process.errorOccurred.connect(self._handle_process_error)
 
-                if exit_code != 0:
-                    # Best-effort fallback: the process ended without a clean
-                    # 'error' event for whichever stage was mid-flight (e.g.
-                    # killed, or crashed before it could emit one).
-                    self.root.after(0, self._mark_stuck_stage_error)
+        self.terminal_process = process
+        process.start()
 
-                self.root.after(0, self.append_output, f"\nProcess finished with exit code: {exit_code}\n")
-                self.root.after(0, self.reset_buttons)
+    def _handle_process_output(self):
+        """Read available subprocess output, split into complete lines, and
+        dispatch each to the progress-event parser or the terminal pane.
+        Runs directly on the GUI thread (QProcess signals), so no manual
+        thread + after(0, ...) marshaling is needed here, unlike the old
+        subprocess.Popen + threading.Thread implementation."""
+        if self.terminal_process is None:
+            return
+        data = bytes(self.terminal_process.readAllStandardOutput()).decode('utf-8', errors='replace')
+        self._stdout_buffer += data
+        while '\n' in self._stdout_buffer:
+            line, self._stdout_buffer = self._stdout_buffer.split('\n', 1)
+            line += '\n'
+            if self.maybe_handle_progress_event(line):
+                continue
+            cleaned_line = self.clean_terminal_output(line)
+            self.append_output(cleaned_line)
 
-            except Exception as e:
-                self.terminal_process = None
-                self.root.after(0, self._mark_stuck_stage_error)
-                self.root.after(0, self.append_output, f"Error running pipeline: {e}\n")
-                self.root.after(0, self.reset_buttons)
+    def _handle_process_finished(self, exit_code, exit_status):
+        """Handle subprocess completion (mirrors the old run_pipeline()
+        thread's post-loop wait()+returncode handling)."""
+        if self._stdout_buffer:
+            if not self.maybe_handle_progress_event(self._stdout_buffer):
+                self.append_output(self.clean_terminal_output(self._stdout_buffer))
+            self._stdout_buffer = ''
 
-        threading.Thread(target=run_pipeline, daemon=True).start()
+        self.terminal_process = None
+
+        if exit_code != 0:
+            # Best-effort fallback: the process ended without a clean
+            # 'error' event for whichever stage was mid-flight (e.g. killed,
+            # or crashed before it could emit one).
+            self._mark_stuck_stage_error()
+
+        self.append_output(f"\nProcess finished with exit code: {exit_code}\n")
+        self.reset_buttons()
+
+    def _handle_process_error(self, error):
+        """Handle QProcess errors. Only QProcess.ProcessError.FailedToStart
+        is handled here: that is the one error case where 'finished' is
+        never subsequently emitted. Every other error (e.g. Crashed) is
+        followed by a 'finished' signal, which already performs the same
+        cleanup via _handle_process_finished - handling it twice here too
+        would double-append output and double-reset buttons."""
+        if error != QProcess.ProcessError.FailedToStart:
+            return
+        self._mark_stuck_stage_error()
+        self.append_output("Error running pipeline: process failed to start\n")
+        self.terminal_process = None
+        self.reset_buttons()
 
     def abort_pipeline(self):
         """Abort the running pipeline"""
@@ -746,17 +870,20 @@ class ConfigMainWindow:
                 self.append_output("\n*** Pipeline execution aborted by user ***\n")
                 self._mark_stuck_stage_error()
 
-                def force_kill():
-                    if self.terminal_process and self.terminal_process.poll() is None:
-                        self.terminal_process.kill()
-                        self.append_output("*** Process forcefully terminated ***\n")
-
-                self.root.after(1000, force_kill)
+                QTimer.singleShot(1000, self._force_kill_if_still_running)
 
             except Exception as e:
                 self.append_output(f"Error aborting process: {e}\n")
             finally:
                 self.reset_buttons()
+
+    def _force_kill_if_still_running(self):
+        """Follow-up to terminate(): force-kill the subprocess if it hasn't
+        exited after the grace period."""
+        if self.terminal_process is not None and \
+                self.terminal_process.state() != QProcess.ProcessState.NotRunning:
+            self.terminal_process.kill()
+            self.append_output("*** Process forcefully terminated ***\n")
 
     def clean_terminal_output(self, text):
         """Clean problematic Unicode characters from terminal output.
@@ -765,12 +892,10 @@ class ConfigMainWindow:
         affected Linux/Tk (and terminal) font stacks are preserved; anything
         else outside printable ASCII becomes '?' so an unsupported glyph
         degrades to a visible placeholder rather than a silent blank box.
-
-        Previously this ran a blanket `[^\\x20-\\x7E...] -> '?'` replace after
-        an identity `unicode_replacements` map (every value equalled its key,
-        i.e. a no-op), which destroyed the whole box-drawing frame of
-        seshat.stages.report.print_summary_report and every status glyph,
-        rendering the summary as a row of '?' on those systems.
+        Kept unchanged for the PySide6 GUI pending re-verification of
+        whether Qt's own font handling still needs this filtering (see
+        STAGE_STATUS_ICONS comment above) - do not relax without testing on
+        the real Rocky Linux target.
         """
         # Box drawing (frame) + block elements (progress bar) + the two
         # confirmed Geometric Shapes status glyphs. All verified to render
@@ -797,8 +922,8 @@ class ConfigMainWindow:
 
     def reset_buttons(self):
         """Reset button states after pipeline execution"""
-        self.execute_btn.configure(state='normal')
-        self.abort_btn.configure(state='disabled')
+        self.execute_btn.setEnabled(True)
+        self.abort_btn.setEnabled(False)
 
     def set_stage_status(self, stage: str, status: str) -> None:
         """Update the circle status icon for one pipeline stage row."""
@@ -816,17 +941,20 @@ class ConfigMainWindow:
             # Reset the numeric bar for the new stage so a stale percentage
             # left over from the previous stage (or a stray sync-fallback
             # match) can't be mistaken for this stage's progress.
-            self.progress_bar.stop()
-            self.progress_bar.configure(mode='determinate')
-            self.progress_bar['value'] = 0
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
             stage_name = dict(PIPELINE_STAGES).get(stage, stage or '')
-            self.progress_label['text'] = f"{stage_name}: starting..."
+            self.progress_label.setText(f"{stage_name}: starting...")
 
             icon, color = STAGE_STATUS_ICONS.get(status, ('', 'black'))
             self._blink_stage = stage
+            self._blink_label = label
+            self._blink_icon = icon
+            self._blink_color = color
             self._blink_on = True
-            label.configure(text=icon, foreground=color)
-            self._blink_job = self.root.after(_BLINK_INTERVAL_MS, self._blink_tick, stage, label, icon, color)
+            label.setText(icon)
+            label.setStyleSheet(f"color: {color};")
+            self._blink_timer.start()
             return
 
         if self._last_running_stage == stage:
@@ -834,35 +962,27 @@ class ConfigMainWindow:
             # waiting; it's no longer the "stuck" running stage.
             self._last_running_stage = None
         icon, color = STAGE_STATUS_ICONS.get(status, ('', 'black'))
-        label.configure(text=icon, foreground=color)
+        label.setText(icon)
+        label.setStyleSheet(f"color: {color};")
 
     def _stop_blink(self):
         """Cancel any pending REC-light blink tick. Safe to call when no
         blink is active."""
-        if self._blink_job is not None:
-            try:
-                self.root.after_cancel(self._blink_job)
-            except (tk.TclError, ValueError):
-                pass
-            self._blink_job = None
+        if self._blink_timer.isActive():
+            self._blink_timer.stop()
         self._blink_stage = None
+        self._blink_label = None
 
-    def _blink_tick(self, stage, label, icon, color):
+    def _blink_tick(self):
         """Toggle a 'running' stage's icon between visible and blank every
-        _BLINK_INTERVAL_MS, mimicking a camcorder REC light. Stops itself if
-        the stage is no longer the active blink target (superseded by a new
-        status, or the window is closing)."""
-        if self._blink_stage != stage:
+        _BLINK_INTERVAL_MS, mimicking a camcorder REC light. No-ops if the
+        blink target was cleared (superseded by a new status) since the
+        last tick was scheduled."""
+        if self._blink_stage is None or self._blink_label is None:
             return
-        try:
-            if not label.winfo_exists():
-                return
-            self._blink_on = not self._blink_on
-            label.configure(text=icon if self._blink_on else '', foreground=color)
-            self._blink_job = self.root.after(_BLINK_INTERVAL_MS, self._blink_tick, stage, label, icon, color)
-        except tk.TclError:
-            # Widget/root destroyed mid-flight; nothing further to do.
-            self._blink_job = None
+        self._blink_on = not self._blink_on
+        self._blink_label.setText(self._blink_icon if self._blink_on else '')
+        self._blink_label.setStyleSheet(f"color: {self._blink_color};")
 
     def _mark_stuck_stage_error(self):
         """Best-effort fallback: if a stage never received an explicit
@@ -884,10 +1004,10 @@ class ConfigMainWindow:
         except (ValueError, json.JSONDecodeError):
             return False
         if payload.get('event') == 'stage':
-            self.root.after(0, self.set_stage_status, payload['stage'], payload['status'])
+            self.set_stage_status(payload['stage'], payload['status'])
         elif payload.get('event') == 'task':
-            self.root.after(0, self.set_task_progress, payload.get('stage'),
-                             payload.get('current'), payload.get('total'), payload.get('label'))
+            self.set_task_progress(payload.get('stage'), payload.get('current'),
+                                    payload.get('total'), payload.get('label'))
         return True
 
     def set_task_progress(self, stage, current, total, label=None):
@@ -897,24 +1017,19 @@ class ConfigMainWindow:
         if not total or current is None:
             return
         percentage = max(0.0, min(100.0, (current / total) * 100))
-        self.progress_bar.stop()
-        self.progress_bar.configure(mode='determinate')
-        self.progress_bar['maximum'] = 100
-        self.progress_bar['value'] = percentage
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(int(percentage))
         stage_name = dict(PIPELINE_STAGES).get(stage, stage or '')
         text = f"{stage_name}: {current}/{total} ({percentage:.0f}%)"
         if label:
             text += f" \u2014 {label}"
-        self.progress_label['text'] = text
+        self.progress_label.setText(text)
 
     def append_output(self, text):
-        """Append text to terminal output with ANSI color support (thread-safe)"""
-        self.terminal_output.configure(state='normal')
-        apply_ansi_colors_to_tk(self.terminal_output, text)
-        self.terminal_output.see('end')
-        self.terminal_output.configure(state='disabled')
+        """Append text to terminal output with ANSI color support"""
+        apply_ansi_colors_to_qt(self.terminal_output, text)
+        self.terminal_output.ensureCursorVisible()
         self.update_progress_from_text(text)
-        self.root.update_idletasks()
 
     def update_progress_from_text(self, text):
         """Extract progress information from terminal output and update progress bar.
@@ -946,16 +1061,17 @@ class ConfigMainWindow:
         match = re.search(r'(\d+)%', text)
         if match:
             percentage = int(match.group(1))
-            self.progress_bar['value'] = percentage
-            self.progress_bar['maximum'] = 100
-            self.progress_label['text'] = f"Progress: {percentage}%"
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percentage)
+            self.progress_label.setText(f"Progress: {percentage}%")
             return
 
         match = re.search(r'(\d+)it \[[\d:]+<[\d:]+', text)
         if match:
-            if self.progress_bar['mode'] != 'indeterminate':
-                self.progress_bar.configure(mode='indeterminate')
-                self.progress_bar.start(10)
+            if self.progress_bar.minimum() == 0 and self.progress_bar.maximum() == 100:
+                # Switch to Qt's indeterminate/"busy" mode (0,0 range),
+                # equivalent to ttk.Progressbar(mode='indeterminate').
+                self.progress_bar.setRange(0, 0)
             return
 
         # Note: the previous blanket 'finished'/'completed'/'done' substring
@@ -971,17 +1087,23 @@ class ConfigMainWindow:
         # of this numeric bar.
 
     def show(self):
-        """Show the window"""
-        self.root.mainloop()
+        """Show the window and run the Qt event loop until it is closed."""
+        super().show()
+        app = QApplication.instance()
+        if app is not None:
+            app.exec()
 
     def quit(self):
         """Quit the application"""
-        self.root.quit()
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
 
 def args_parser():
     parser = argparse.ArgumentParser(
-        description='Configuration script for SESHAT pipeline (Tkinter version).',
+        description='Configuration script for SESHAT pipeline (PySide6 version).',
         add_help=True,
     )
     parser.add_argument('-c', '--config', type=str, help='Path to the configuration file', default=None)
@@ -990,6 +1112,7 @@ def args_parser():
 
 def config_UI(config_file: str = None):
     """Launch the configuration GUI and return the configuration"""
+    app = QApplication.instance() or QApplication(sys.argv)
     window = ConfigMainWindow(config_file=config_file)
     window.show()
     return window.config_data
@@ -999,6 +1122,7 @@ def main(config_file: str = None):
     """Main entry point"""
     args = args_parser()
     config_file = args.config or config_file
+    app = QApplication.instance() or QApplication(sys.argv)
     window = ConfigMainWindow(config_file=config_file)
     window.show()
 
