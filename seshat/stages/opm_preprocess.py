@@ -43,7 +43,7 @@ from opm_utility_scripts import load_datafile, load_polhemus, select_best_hpi_fi
 from opm_utility_scripts.io import write_bw_marker_file
 from opm_utility_scripts.analog.mapping import generate_analog_channel_mapping
 from opm_utility_scripts.analog.rename import rename_channels
-from opm_utility_scripts.hpi._core import apply_transform, save_raw
+from opm_utility_scripts.hpi._core import apply_transform, save_raw, write_settings_json
 
 from seshat.utils import (
     log, configure_logging,
@@ -206,7 +206,8 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     noise_reffile = config.get('noise_reffile')
     center_matching = config.get('center_matching', True)
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
-    overwrite = config.get('overwrite', False)
+    # Either an explicit caller request or the configuration enables overwrite.
+    _overwrite = overwrite or config.get('overwrite', False)
 
     if logfile is None:
         logfile = config.get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
@@ -220,7 +221,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     all_files = sorted(glob(f'{opmMEGdir}/{subject}/{session}/hedscan/*.fif'))
 
     hedscan_files = _list_pending_hedscan_files(
-        all_files, exclude_patterns, hpinames, new_sfreq, overwrite)
+        all_files, exclude_patterns, hpinames, new_sfreq, _overwrite)
 
     hpi_fit_parameters = {
         'hedscan_files': [],
@@ -236,7 +237,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
         'new_sfreq': None
     }
 
-    if overwrite or hedscan_files:
+    if _overwrite or hedscan_files:
         log("HPI", f"Processing {subject}/{session}", 'info',logfile=logfile, logpath=log_path)
         # Stage 1: new polhemus/ subdir (JSON and FIF), subject + session must appear in filename.
         polhemus_dir = f"{opmMEGdir}/{subject}/{session}/polhemus"
@@ -297,7 +298,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
                                                        reffile=noise_reffile,
                                                        center_matching=center_matching)
             gofs = fit['hpi_gofs']
-            high_gofs = gofs[gofs > 0.9]
+            high_gofs = gofs[gofs >= gof_limit]
             mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)
             verbose_print(f"Best HPI file: {best_hpi_path} (mean GOF {mean_gof:.3f})")
             if mean_gof < MIN_GOF:
@@ -325,6 +326,11 @@ def find_hpi_fit(config, subject, session, overwrite=False,
             hpi_fit_parameters['new_sfreq']  = new_sfreq
             hpi_fit_parameters['logfile']    = logfile
             hpi_fit_parameters['log_path']   = log_path
+            hpi_fit_parameters['overwrite']  = _overwrite   # propagate to per-file stage
+            hpi_fit_parameters['gof_limit']   = gof_limit   # for consistent reporting
+            hpi_fit_parameters['hpifile']     = best_hpi_path
+            hpi_fit_parameters['polfile']     = pf
+            hpi_fit_parameters['noise_reffile'] = noise_reffile
         except Exception as e:
             log("HPI", f"Error building HPI parameter dict: {e}", 'error', logfile=logfile, logpath=log_path)
     else:
@@ -345,6 +351,9 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
     logfile    = hpi_fit_parameters['logfile']
     log_path   = hpi_fit_parameters['log_path']
     overwrite  = hpi_fit_parameters.get('overwrite', False)
+    gof_limit  = hpi_fit_parameters.get('gof_limit', 0.95)
+    hpifile    = hpi_fit_parameters.get('hpifile')
+    polfile    = hpi_fit_parameters.get('polfile')
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
@@ -390,6 +399,15 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         # Save to disk.
         saved_path = save_raw(raw_out, datfile, suffix)
 
+        # Save settings provenance beside each transformed data output.
+        settings_path = os.path.join(
+            os.path.dirname(saved_path),
+            'hpi_' + os.path.splitext(os.path.basename(saved_path))[0] + '.json')
+        write_settings_json(
+            settings_path, fit, hpifile=hpifile, polfile=polfile,
+            reffile=hpi_fit_parameters.get('noise_reffile'),
+            datafile=datfile, output_file=saved_path)
+
         # Fit quality report.
         hpi_dev    = fit['hpi_dev']
         hpi_gofs   = fit['hpi_gofs']
@@ -399,7 +417,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
 
         msg_coils = ''
         for idx, value in enumerate(hpi_gofs):
-            status = 'ok' if value > 0.9 else 'not ok'
+            status = 'ok' if value >= gof_limit else 'not ok'
             msg_coils += f"Coil: {hpi_names[idx][-3:]}, GOF: {value:.3f}, Status: {status}\n"
 
         verbose_print(f'''---------------------------------------------
