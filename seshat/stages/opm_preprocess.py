@@ -30,6 +30,7 @@ import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Union
+import subprocess
 import mne
 
 from functools import partial
@@ -275,6 +276,39 @@ def _settings_sidecar_path(output_file: str, settings_json: Union[str, None] = N
     return os.path.join(directory, basename)
 
 
+def _get_git_metadata(repo_root: str):
+    """Best-effort git metadata for sidecar provenance; returns {} on failure."""
+    if not repo_root or not os.path.isdir(repo_root):
+        return {}
+
+    def _git(args):
+        try:
+            out = subprocess.check_output(
+                ['git', '-C', repo_root, *args], stderr=subprocess.DEVNULL, text=True
+            ).strip()
+            return out or None
+        except Exception:
+            return None
+
+    commit = _git(['rev-parse', 'HEAD'])
+    if commit is None:
+        return {}
+
+    tag = _git(['describe', '--tags', '--exact-match'])
+    describe = _git(['describe', '--tags', '--always', '--dirty'])
+    branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'])
+    is_dirty = _git(['status', '--porcelain'])
+
+    return {
+        'commit': commit,
+        'tag': tag,
+        'describe': describe,
+        'branch': branch,
+        'is_dirty': bool(is_dirty),
+        'repo_root': repo_root,
+    }
+
+
 def find_hpi_fit(config, subject, session, overwrite=False,
                  log_path: str = None, logfile: str = None):
     """
@@ -301,6 +335,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     optimization = config.get('optimization', OPTIMIZATION)
     localization_grid = config.get('localization_grid', LOCALIZATION_GRID)
     settings_json = config.get('settings_json', '')
+    git_metadata = config.get('git_metadata')
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
     # Either an explicit caller request or the configuration enables overwrite.
     _overwrite = overwrite or config.get('overwrite', False)
@@ -430,6 +465,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
             hpi_fit_parameters['polfile']     = pf
             hpi_fit_parameters['noise_reffile'] = noise_reffile
             hpi_fit_parameters['settings_json'] = settings_json
+            hpi_fit_parameters['git_metadata'] = git_metadata
         except Exception as e:
             log("HPI", f"Error building HPI parameter dict: {e}", 'error', logfile=logfile, logpath=log_path)
     else:
@@ -454,6 +490,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
     hpifile    = hpi_fit_parameters.get('hpifile')
     polfile    = hpi_fit_parameters.get('polfile')
     settings_json = hpi_fit_parameters.get('settings_json', '')
+    git_metadata = hpi_fit_parameters.get('git_metadata')
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
@@ -476,7 +513,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
             write_settings_json(
                 sidecar_path, fit, hpifile=hpifile, polfile=polfile,
                 reffile=hpi_fit_parameters.get('noise_reffile'),
-                datafile=datfile, output_file=outpath)
+                datafile=datfile, output_file=outpath, git_metadata=git_metadata)
         except Exception as sidecar_err:
             log("HPI", f"Could not write settings sidecar for skipped file {savename}: {sidecar_err}",
                 'warning', logfile=logfile, logpath=log_path)
@@ -519,7 +556,7 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         write_settings_json(
             settings_path, fit, hpifile=hpifile, polfile=polfile,
             reffile=hpi_fit_parameters.get('noise_reffile'),
-            datafile=datfile, output_file=saved_path)
+            datafile=datfile, output_file=saved_path, git_metadata=git_metadata)
 
         # Fit quality report.
         hpi_dev    = fit['hpi_dev']
@@ -609,6 +646,10 @@ def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None)
         config = get_parameters(config_file)
     elif isinstance(config, dict):
         config = get_parameters(config)
+
+    # Capture git provenance once per run when executed from a checkout.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    config['git_metadata'] = _get_git_metadata(repo_root)
 
     opmMEGdir = config.get('opmMEG')
     overwrite = config.get('overwrite', False)
