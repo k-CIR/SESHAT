@@ -310,9 +310,9 @@ def _get_git_metadata(repo_root: str):
 
 
 def _get_embedded_git_metadata():
-    """Load install-time embedded git metadata when available."""
+    """Load install-time embedded git metadata from opm_utility_scripts."""
     try:
-        from seshat import _build_info as build_info
+        from opm_utility_scripts import _build_info as build_info
         metadata = getattr(build_info, 'GIT_METADATA', None)
         if isinstance(metadata, dict) and metadata.get('commit'):
             return metadata
@@ -322,9 +322,15 @@ def _get_embedded_git_metadata():
 
 
 def _resolve_git_metadata(extra_candidates=None):
-    """Resolve git metadata from checkout roots, then embedded build info."""
+    """Resolve metadata from opm_utility_scripts roots, then embedded build info."""
+    try:
+        import opm_utility_scripts as _opm_utils
+        opm_utils_root = os.path.abspath(os.path.dirname(_opm_utils.__file__))
+    except Exception:
+        opm_utils_root = None
+
     candidates = [
-        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
+        opm_utils_root,
         os.getcwd(),
     ]
     if extra_candidates:

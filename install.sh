@@ -129,33 +129,38 @@ fi
 echo "✓ Using Python: $SYSTEM_PYTHON ($($SYSTEM_PYTHON --version 2>&1))"
 echo "✓ GUI toolkit (PySide6) will be installed automatically as a pip extra - no OS package needed."
 
-# --- Embed git metadata into package at install time ---
+# --- Embed git metadata into opm_utility_scripts at install time ---
 # This allows runtime provenance in non-editable installs, where the
 # installed package path usually has no .git directory.
-BUILD_INFO_PY="$SOURCE_DIR/seshat/_build_info.py"
+BUILD_INFO_PY="$OPM_UTILS_DIR/_build_info.py"
+BUILD_INFO_REPO_DIR="$OPM_UTILS_DIR"
 GIT_COMMIT=""
 GIT_TAG=""
 GIT_DESCRIBE=""
 GIT_COMMIT_TIMESTAMP=""
+GIT_REMOTE_REPO=""
 GIT_BRANCH=""
 GIT_DIRTY="false"
-if command -v git &> /dev/null && git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    GIT_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || true)"
-    GIT_TAG="$(git -C "$SOURCE_DIR" describe --tags --exact-match 2>/dev/null || true)"
-    GIT_DESCRIBE="$(git -C "$SOURCE_DIR" describe --tags --always --dirty 2>/dev/null || true)"
-    GIT_COMMIT_TIMESTAMP="$(git -C "$SOURCE_DIR" show -s --format=%cI HEAD 2>/dev/null || true)"
-    GIT_BRANCH="$(git -C "$SOURCE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-    if [[ -n "$(git -C "$SOURCE_DIR" status --porcelain 2>/dev/null)" ]]; then
+if [ -d "$BUILD_INFO_REPO_DIR" ] && command -v git &> /dev/null && \
+   git -C "$BUILD_INFO_REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    GIT_COMMIT="$(git -C "$BUILD_INFO_REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+    GIT_TAG="$(git -C "$BUILD_INFO_REPO_DIR" describe --tags --exact-match 2>/dev/null || true)"
+    GIT_DESCRIBE="$(git -C "$BUILD_INFO_REPO_DIR" describe --tags --always --dirty 2>/dev/null || true)"
+    GIT_COMMIT_TIMESTAMP="$(git -C "$BUILD_INFO_REPO_DIR" show -s --format=%cI HEAD 2>/dev/null || true)"
+    GIT_REMOTE_REPO="$(git -C "$BUILD_INFO_REPO_DIR" config --get remote.origin.url 2>/dev/null || true)"
+    GIT_BRANCH="$(git -C "$BUILD_INFO_REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ -n "$(git -C "$BUILD_INFO_REPO_DIR" status --porcelain 2>/dev/null)" ]]; then
         GIT_DIRTY="true"
     fi
 fi
 
-export BUILD_INFO_PY SOURCE_DIR GIT_COMMIT GIT_TAG GIT_DESCRIBE GIT_COMMIT_TIMESTAMP GIT_BRANCH GIT_DIRTY
+if [ -d "$OPM_UTILS_DIR" ]; then
+export BUILD_INFO_PY BUILD_INFO_REPO_DIR GIT_COMMIT GIT_TAG GIT_DESCRIBE GIT_COMMIT_TIMESTAMP GIT_REMOTE_REPO GIT_BRANCH GIT_DIRTY
 "$SYSTEM_PYTHON" - <<'PY'
 import os
 
 path = os.environ["BUILD_INFO_PY"]
-repo_root = os.environ["SOURCE_DIR"]
+repo_root = os.environ["BUILD_INFO_REPO_DIR"]
 
 def norm(value: str):
     value = (value or "").strip()
@@ -166,6 +171,7 @@ metadata = {
     "tag": norm(os.environ.get("GIT_TAG")),
     "describe": norm(os.environ.get("GIT_DESCRIBE")),
     "commit_timestamp": norm(os.environ.get("GIT_COMMIT_TIMESTAMP")),
+    "remote_repo": norm(os.environ.get("GIT_REMOTE_REPO")),
     "branch": norm(os.environ.get("GIT_BRANCH")),
     "is_dirty": (os.environ.get("GIT_DIRTY", "false").lower() == "true"),
     "repo_root": repo_root,
@@ -181,6 +187,9 @@ content = (
 with open(path, "w", encoding="utf-8") as f:
     f.write(content)
 PY
+else
+    echo "⚠ Could not embed opm_utility_scripts git metadata: $OPM_UTILS_DIR does not exist."
+fi
 
 # --- Choose installer: uv tool (preferred, fast, self-contained) or pipx ---
 INSTALLER=""

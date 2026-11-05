@@ -473,6 +473,7 @@ class ConfigMainWindow(QMainWindow):
         provenance_content_layout.addWidget(refresh_row)
 
         for key, label_text in [
+            ('remote_repo', 'Remote repo'),
             ('describe', 'Describe'),
             ('commit', 'Commit'),
             ('tag', 'Tag'),
@@ -532,6 +533,7 @@ class ConfigMainWindow(QMainWindow):
         tag = _git(['describe', '--tags', '--exact-match'])
         describe = _git(['describe', '--tags', '--always', '--dirty'])
         commit_timestamp = _git(['show', '-s', '--format=%cI', 'HEAD'])
+        remote_repo = _git(['config', '--get', 'remote.origin.url'])
         branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'])
         dirty = bool(_git(['status', '--porcelain']))
         return {
@@ -539,16 +541,17 @@ class ConfigMainWindow(QMainWindow):
             'tag': tag,
             'describe': describe,
             'commit_timestamp': commit_timestamp,
+            'remote_repo': remote_repo,
             'branch': branch,
             'is_dirty': dirty,
             'repo_root': repo_root,
         }
 
     def _collect_opm_provenance(self):
-        """Load provenance from embedded install metadata, else live git."""
+        """Load provenance from opm_utility_scripts metadata, else live git."""
         metadata = {}
         try:
-            from seshat import _build_info as build_info
+            from opm_utility_scripts import _build_info as build_info
             embedded = getattr(build_info, 'GIT_METADATA', None)
             if isinstance(embedded, dict) and embedded.get('commit'):
                 metadata = dict(embedded)
@@ -558,10 +561,14 @@ class ConfigMainWindow(QMainWindow):
         if metadata.get('commit'):
             return metadata
 
-        candidates = [
-            os.path.abspath(os.path.join(os.path.dirname(__file__), '..')),
-            os.getcwd(),
-        ]
+        candidates = []
+        try:
+            import opm_utility_scripts as opm_utils
+            candidates.append(os.path.abspath(os.path.dirname(opm_utils.__file__)))
+        except Exception:
+            pass
+        candidates.append(os.getcwd())
+
         for repo_root in candidates:
             live = self._git_probe(repo_root)
             if live.get('commit'):
@@ -590,11 +597,13 @@ class ConfigMainWindow(QMainWindow):
         commit = metadata.get('commit')
         commit_short = commit[:12] if isinstance(commit, str) and commit else 'Not available'
         tag = metadata.get('tag') or 'Not available'
+        remote_repo = metadata.get('remote_repo') or 'Not available'
         timestamp = self._format_timestamp_human(metadata.get('commit_timestamp'))
 
         self._opm_provenance_labels['describe'].setText(describe)
         self._opm_provenance_labels['commit'].setText(commit_short)
         self._opm_provenance_labels['tag'].setText(tag)
+        self._opm_provenance_labels['remote_repo'].setText(remote_repo)
         self._opm_provenance_labels['timestamp'].setText(timestamp)
 
         if isinstance(commit, str) and commit:
