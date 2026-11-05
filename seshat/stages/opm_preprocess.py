@@ -66,9 +66,29 @@ from seshat.utils import (
               device-to-head transform fit (default: True). False
               reproduces the legacy pipeline's uncentred matching;
               intended for regression testing, not routine use.
+- OPTIMIZATION: Optimization method for the device-to-head transform fit.
+              Options:
+              - 'none': No optimization; use the initial fit only (default)
+              - 'rigid': Rigid-body optimization to refine the fit
+- LOCALIZATION_GRID: Search grid for dipole localization. Options:
+              - 'fine': Fine grid (default)
+              - 'medium': Medium grid
+              - 'coarse': Coarse grid 
+              - 'mne_stock': Matches MNE 1.12.1 guesses: minimum integration-point radius, 10 mm spacing, 5 mm clearance, zero exclusion; same localizer
+- HPI_FREQUENCY: Frequency of the HPI coils (default: 33.0 Hz)
+- DOWNSAMPLE_FREQ: Target sampling frequency for downsampling (default: 1000 Hz)
+- OVERWRITE: Whether to overwrite existing processed files (default: False)
+
 """
 GOF_LIMIT = 0.95
 CENTER_MATCHING = True
+OPTIMIZATION = 'none'  # 'none' or 'rigid'
+LOCALIZATION_GRID = 'fine'
+HPI_FREQUENCY = 33.0
+DOWNSAMPLE_FREQ = 1000
+OVERWRITE = False
+DEFAULT_LOGFILE = 'pipeline_log.log'
+
 
 ###############################################################################
 # Utility Functions
@@ -119,6 +139,8 @@ def get_parameters(config:str):
             - noise_reffile: Path to a reference recording used for
               background-power-based noisy-channel detection (a 10s window
               starting 10s after its start is used). None to disable.
+            - optimization: Transform-refinement mode ('none' or 'rigid')
+            - localization_grid: Dipole-localization grid
             - downsample_freq: Target sampling frequency (default: 1000 Hz)
             - overwrite: Whether to overwrite existing files
             - plot: Whether to generate visualization plots
@@ -134,20 +156,84 @@ def get_parameters(config:str):
         else:
             raise ValueError("Unsupported configuration file format. Use .json or .yml/.yaml")
     
+    if not isinstance(config, dict):
+        raise ValueError('Configuration must be a dict or path to .json/.yml/.yaml file')
+
+    # Support both full pipeline config (Project/OPM) and already-normalized
+    # stage config dictionaries.
+    if 'Project' in config or 'OPM' in config:
+        project_cfg = config.get('Project', {})
+        opm_cfg = config.get('OPM', {})
+        stage_cfg = {}
+    else:
+        project_cfg = {}
+        opm_cfg = {}
+        stage_cfg = config
+
+    tasks = stage_cfg.get('tasks', project_cfg.get('Tasks', []))
+    if isinstance(tasks, str):
+        tasks = [tasks]
+    elif tasks is None:
+        tasks = []
+
+    hpinames = stage_cfg.get('hpinames', opm_cfg.get('hpi_names', []))
+    if isinstance(hpinames, str):
+        hpinames = [hpinames] if hpinames else []
+    elif hpinames is None:
+        hpinames = []
+
+    hpifreq_raw = stage_cfg.get('hpifreq', opm_cfg.get('frequency', HPI_FREQUENCY))
+    try:
+        hpifreq = float(hpifreq_raw)
+    except (TypeError, ValueError):
+        hpifreq = HPI_FREQUENCY
+
+    downsample_raw = stage_cfg.get('downsample_freq', opm_cfg.get('downsample_to_hz', DOWNSAMPLE_FREQ))
+    try:
+        downsample_freq = int(downsample_raw)
+    except (TypeError, ValueError):
+        downsample_freq = DOWNSAMPLE_FREQ
+
+    gof_raw = stage_cfg.get('gof_limit', opm_cfg.get('gof_limit', GOF_LIMIT))
+    try:
+        gof_limit = float(gof_raw)
+    except (TypeError, ValueError):
+        gof_limit = GOF_LIMIT
+
+    optimization = stage_cfg.get('optimization', opm_cfg.get('optimization', OPTIMIZATION))
+    if optimization not in ('none', 'rigid'):
+        optimization = OPTIMIZATION
+
+    localization_grid = stage_cfg.get('localization_grid',
+                                      opm_cfg.get('localization_grid',
+                                                  opm_cfg.get('localization-grid', LOCALIZATION_GRID)))
+    if localization_grid not in ('coarse', 'medium', 'fine', 'mne_stock'):
+        localization_grid = LOCALIZATION_GRID
+
+    settings_json = stage_cfg.get('settings_json', opm_cfg.get('settings_json', ''))
+    if settings_json is None:
+        settings_json = ''
+    if not isinstance(settings_json, str):
+        settings_json = str(settings_json)
+    settings_json = settings_json.strip()
+
     hpi_config = {
-        'tasks': config.get('Project', {}).get('Tasks', []),
-        'rename_analog_channels': config.get('OPM', {}).get('rename_analog_channels', False),
-        'polhemus_file': config.get('OPM', {}).get('polhemus', ''),
-        'opmMEG': config.get('Project', {}).get('Raw', ''),  # Use Raw directory path
-        'hpinames': config.get('OPM', {}).get('hpi_names', ''),
-        'hpifreq': float(config.get('OPM', {}).get('frequency', 33.0)),
-        'gof_limit': GOF_LIMIT,
-        'noise_reffile': config.get('OPM', {}).get('noise_reffile', '') or None,
-        'center_matching': CENTER_MATCHING,
-        'downsample_freq': int(config.get('OPM', {}).get('downsample_to_hz', 1000)),
-        'overwrite': config.get('OPM', {}).get('overwrite', False),
-        'plot': config.get('OPM', {}).get('plot', False),
-        'logfile': config.get('Project', {}).get('logfile', 'pipeline_log.log')
+        'tasks': tasks,
+        'rename_analog_channels': bool(stage_cfg.get('rename_analog_channels', opm_cfg.get('rename_analog_channels', False))),
+        'polhemus_file': stage_cfg.get('polhemus_file', opm_cfg.get('polhemus', '')),
+        'opmMEG': stage_cfg.get('opmMEG', project_cfg.get('Raw', '')),  # Use Raw directory path
+        'hpinames': hpinames,
+        'hpifreq': hpifreq,
+        'gof_limit': gof_limit,
+        'noise_reffile': stage_cfg.get('noise_reffile', opm_cfg.get('noise_reffile', '')) or None,
+        'center_matching': bool(stage_cfg.get('center_matching', opm_cfg.get('center_matching', CENTER_MATCHING))),
+        'optimization': optimization,
+        'localization_grid': localization_grid,
+        'settings_json': settings_json,
+        'downsample_freq': downsample_freq,
+        'overwrite': bool(stage_cfg.get('overwrite', opm_cfg.get('overwrite', OVERWRITE))),
+        'plot': bool(stage_cfg.get('plot', opm_cfg.get('plot', False))),
+        'logfile': stage_cfg.get('logfile', project_cfg.get('logfile', DEFAULT_LOGFILE))
     }
     return hpi_config
      
@@ -182,6 +268,13 @@ def _list_pending_hedscan_files(all_files, exclude_patterns, hpinames, new_sfreq
     return new_hedscan_files
 
 
+def _settings_sidecar_path(output_file: str, settings_json: Union[str, None] = None) -> str:
+    """Name a settings sidecar from the transformed output file path."""
+    directory = settings_json or os.path.dirname(output_file)
+    basename = 'hpi_' + os.path.splitext(os.path.basename(output_file))[0] + '.json'
+    return os.path.join(directory, basename)
+
+
 def find_hpi_fit(config, subject, session, overwrite=False,
                  log_path: str = None, logfile: str = None):
     """
@@ -199,18 +292,21 @@ def find_hpi_fit(config, subject, session, overwrite=False,
     
     opmMEGdir = config.get('opmMEG')
     hpinames = config.get('hpinames')
-    hpifreq = config.get('hpifreq', 33.0)
-    new_sfreq = config.get('downsample_freq', 1000)
+    hpifreq = config.get('hpifreq', HPI_FREQUENCY)
+    new_sfreq = config.get('downsample_freq', DOWNSAMPLE_FREQ)
     hpinames=config.get('hpinames')
-    gof_limit = config.get('gof_limit', 0.95)
+    gof_limit = config.get('gof_limit', GOF_LIMIT)
     noise_reffile = config.get('noise_reffile')
-    center_matching = config.get('center_matching', True)
+    center_matching = config.get('center_matching', CENTER_MATCHING)
+    optimization = config.get('optimization', OPTIMIZATION)
+    localization_grid = config.get('localization_grid', LOCALIZATION_GRID)
+    settings_json = config.get('settings_json', '')
     exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
     # Either an explicit caller request or the configuration enables overwrite.
     _overwrite = overwrite or config.get('overwrite', False)
 
     if logfile is None:
-        logfile = config.get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
+        logfile = config.get('logfile', DEFAULT_LOGFILE) or DEFAULT_LOGFILE
     if log_path is None:
         log_path = opmMEGdir.replace('raw', 'logs')
         if not os.path.exists(log_path):
@@ -296,7 +392,9 @@ def find_hpi_fit(config, subject, session, overwrite=False,
             best_hpi_path, fit = select_best_hpi_file(hpi_files, pol, hpifreq,
                                                        gof_limit=gof_limit,
                                                        reffile=noise_reffile,
-                                                       center_matching=center_matching)
+                                                       center_matching=center_matching,
+                                                       optim=optimization,
+                                                       localization_grid=localization_grid)
             gofs = fit['hpi_gofs']
             high_gofs = gofs[gofs >= gof_limit]
             mean_gof = np.mean(high_gofs) if len(high_gofs) else np.mean(gofs)
@@ -331,6 +429,7 @@ def find_hpi_fit(config, subject, session, overwrite=False,
             hpi_fit_parameters['hpifile']     = best_hpi_path
             hpi_fit_parameters['polfile']     = pf
             hpi_fit_parameters['noise_reffile'] = noise_reffile
+            hpi_fit_parameters['settings_json'] = settings_json
         except Exception as e:
             log("HPI", f"Error building HPI parameter dict: {e}", 'error', logfile=logfile, logpath=log_path)
     else:
@@ -351,9 +450,10 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
     logfile    = hpi_fit_parameters['logfile']
     log_path   = hpi_fit_parameters['log_path']
     overwrite  = hpi_fit_parameters.get('overwrite', False)
-    gof_limit  = hpi_fit_parameters.get('gof_limit', 0.95)
+    gof_limit  = hpi_fit_parameters.get('gof_limit', GOF_LIMIT)
     hpifile    = hpi_fit_parameters.get('hpifile')
     polfile    = hpi_fit_parameters.get('polfile')
+    settings_json = hpi_fit_parameters.get('settings_json', '')
 
     configure_logging(log_dir=log_path, log_file=logfile)
 
@@ -368,6 +468,18 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
     outpath  = os.path.join(path, savename)
 
     if not overwrite and os.path.exists(outpath):
+        try:
+            sidecar_path = _settings_sidecar_path(outpath, settings_json)
+            sidecar_dir = os.path.dirname(sidecar_path)
+            if sidecar_dir and not os.path.exists(sidecar_dir):
+                os.makedirs(sidecar_dir, exist_ok=True)
+            write_settings_json(
+                sidecar_path, fit, hpifile=hpifile, polfile=polfile,
+                reffile=hpi_fit_parameters.get('noise_reffile'),
+                datafile=datfile, output_file=outpath)
+        except Exception as sidecar_err:
+            log("HPI", f"Could not write settings sidecar for skipped file {savename}: {sidecar_err}",
+                'warning', logfile=logfile, logpath=log_path)
         verbose_print(f"Skipping {savename} (already exists)")
         return
 
@@ -400,9 +512,10 @@ def process_single_file(datfile, hpi_fit_parameters: dict, plotResult, log_path,
         saved_path = save_raw(raw_out, datfile, suffix)
 
         # Save settings provenance beside each transformed data output.
-        settings_path = os.path.join(
-            os.path.dirname(saved_path),
-            'hpi_' + os.path.splitext(os.path.basename(saved_path))[0] + '.json')
+        settings_path = _settings_sidecar_path(saved_path, settings_json)
+        settings_dir = os.path.dirname(settings_path)
+        if settings_dir and not os.path.exists(settings_dir):
+            os.makedirs(settings_dir, exist_ok=True)
         write_settings_json(
             settings_path, fit, hpifile=hpifile, polfile=polfile,
             reffile=hpi_fit_parameters.get('noise_reffile'),
@@ -494,6 +607,8 @@ def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None)
     elif isinstance(config, str):
         config_file = config
         config = get_parameters(config_file)
+    elif isinstance(config, dict):
+        config = get_parameters(config)
 
     opmMEGdir = config.get('opmMEG')
     overwrite = config.get('overwrite', False)
@@ -506,7 +621,7 @@ def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None)
         logfile = os.path.basename(log_file_path)
     else:
         # Standalone invocation — derive log dir from opmMEGdir.
-        logfile = config.get('logfile', 'pipeline_log.log') or 'pipeline_log.log'
+        logfile = config.get('logfile', DEFAULT_LOGFILE) or DEFAULT_LOGFILE
         log_path = opmMEGdir.replace('raw', 'logs')
         if not os.path.exists(log_path):
             os.makedirs(log_path)
@@ -526,8 +641,8 @@ def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None)
     # estimate: if a session's HPI fit later fails (bad polhemus, GOF too
     # low, ...), its files are skipped and the running counter simply won't
     # reach the full total -- the stage still correctly reaches 'done'.
-    _hpinames = config.get('hpinames')
-    _new_sfreq = config.get('downsample_freq', 1000)
+    _hpinames = config.get('hpinames', [])
+    _new_sfreq = config.get('downsample_freq', DOWNSAMPLE_FREQ)
     _exclude_patterns = [r'-\d+\.fif', '_trans', 'avg.fif'] + noise_patterns + proc_patterns
 
     sessions_by_subject = {}

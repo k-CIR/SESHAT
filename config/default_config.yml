@@ -31,8 +31,11 @@ OPM:
   - HPIbefore
   - HPIafter
   frequency: 33
+  optimization: none
+  localization_grid: fine
   downsample_to_hz: 1000
   noise_reffile: ''
+  settings_json: ''
   overwrite: false
   plot: false
 MaxFilter:

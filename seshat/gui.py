@@ -248,6 +248,20 @@ class ConfigMainWindow(QMainWindow):
             widget.setCurrentText(str(value))
             widget.currentTextChanged.connect(lambda text, k=key: (
                 self.update_config_value(k, text), self.mark_config_changed()))
+        elif key == 'optimization':
+            widget = QComboBox()
+            widget.setEditable(False)
+            widget.addItems(['none', 'rigid'])
+            widget.setCurrentText(str(value) if str(value) in ['none', 'rigid'] else 'none')
+            widget.currentTextChanged.connect(lambda text, k=key: (
+                self.update_config_value(k, text), self.mark_config_changed()))
+        elif key == 'localization_grid':
+            widget = QComboBox()
+            widget.setEditable(False)
+            widget.addItems(['fine', 'medium', 'coarse', 'mne_stock'])
+            widget.setCurrentText(str(value) if str(value) in ['fine', 'medium', 'coarse', 'mne_stock'] else 'fine')
+            widget.currentTextChanged.connect(lambda text, k=key: (
+                self.update_config_value(k, text), self.mark_config_changed()))
         else:
             widget = QLineEdit(str(value))
             if key == 'Name':
@@ -412,10 +426,13 @@ class ConfigMainWindow(QMainWindow):
             'polhemus':       'Name(s) of fif-file(s) with Polhemus coregistration data',
             'hpi_names':      'Comma-separated list of names of HPI recording',
             'frequency':      'Frequency of the HPI in Hz',
+            'optimization':   "Refine HPI→Polhemus transform: 'none' or 'rigid'",
+            'localization_grid': "Dipole localization grid: 'fine', 'medium', 'coarse', 'mne_stock'",
             'gof_limit':      'Minimum dipole GOF for an HPI coil to be included in the device-to-head transform fit',
             'center_matching': 'Centroid-centre HPI/Polhemus point clouds before nearest-neighbour matching (uncheck to reproduce legacy uncentred matching; regression-testing only)',
             'downsample_to_hz': 'Downsample OPM data to this frequency',
             'noise_reffile':  'Path to a reference recording (e.g. empty room/resting state) for channel noise detection; a 10s window starting 10s after its start is used',
+            'settings_json':  'Settings sidecar directory (empty = beside each processed output file)',
             'overwrite':      'Overwrite existing OPM data files',
             'plot':           'Store a plot of the OPM data after processing',
         }
