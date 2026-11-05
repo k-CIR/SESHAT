@@ -4,6 +4,8 @@ import argparse
 import re
 import json
 import yaml
+import subprocess
+from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, QProcess, QProcessEnvironment
 from PySide6.QtGui import QIcon, QFont, QTextCursor
@@ -75,6 +77,9 @@ class ConfigMainWindow(QMainWindow):
         self.abort_btn = None
         self.stage_status_labels = {}
         self._last_running_stage = None
+        self._opm_provenance_labels = {}
+        self._opm_provenance_toggle_button = None
+        self._opm_provenance_content = None
 
         # 'running' REC-light blink state: which stage/label/icon/color are
         # currently blinking, and a repeating QTimer driving the toggle.
@@ -440,7 +445,162 @@ class ConfigMainWindow(QMainWindow):
         for key, value in self.config_data['OPM'].items():
             help_text = opm_help.get(key)
             self.create_form_widget(opm_scrollable, key, value, help_text)
+
+        provenance_panel = QWidget()
+        provenance_layout = QVBoxLayout(provenance_panel)
+        provenance_layout.setContentsMargins(0, 0, 0, 0)
+        provenance_layout.setSpacing(4)
+
+        toggle_button = QPushButton('▶ Code Provenance')
+        toggle_button.setCheckable(True)
+        toggle_button.setChecked(False)
+        toggle_button.clicked.connect(self._toggle_opm_provenance)
+        provenance_layout.addWidget(toggle_button)
+        self._opm_provenance_toggle_button = toggle_button
+
+        provenance_content = QWidget()
+        provenance_content_layout = QVBoxLayout(provenance_content)
+        provenance_content_layout.setContentsMargins(10, 0, 0, 0)
+        provenance_content_layout.setSpacing(4)
+
+        refresh_row = QWidget()
+        refresh_row_layout = QHBoxLayout(refresh_row)
+        refresh_row_layout.setContentsMargins(0, 0, 0, 0)
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self.refresh_opm_provenance)
+        refresh_row_layout.addWidget(refresh_button)
+        refresh_row_layout.addStretch(1)
+        provenance_content_layout.addWidget(refresh_row)
+
+        for key, label_text in [
+            ('describe', 'Describe'),
+            ('commit', 'Commit'),
+            ('tag', 'Tag'),
+            ('timestamp', 'Timestamp'),
+        ]:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            label = QLabel(f"{label_text}:")
+            label.setFixedWidth(110)
+            value = QLabel('Not available')
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row_layout.addWidget(label)
+            row_layout.addWidget(value, 1)
+            provenance_content_layout.addWidget(row)
+            self._opm_provenance_labels[key] = value
+
+        provenance_layout.addWidget(provenance_content)
+        provenance_content.setVisible(False)
+        self._opm_provenance_content = provenance_content
+
+        opm_scrollable.addWidget(provenance_panel)
+        self.refresh_opm_provenance()
         opm_scrollable.addStretch(1)
+
+    def _toggle_opm_provenance(self):
+        """Expand/collapse OPM provenance panel with arrow indicator."""
+        expanded = bool(self._opm_provenance_toggle_button and self._opm_provenance_toggle_button.isChecked())
+        if self._opm_provenance_content is not None:
+            self._opm_provenance_content.setVisible(expanded)
+        if self._opm_provenance_toggle_button is not None:
+            self._opm_provenance_toggle_button.setText(
+                ('▼ Code Provenance' if expanded else '▶ Code Provenance')
+            )
+
+    @staticmethod
+    def _git_probe(repo_root: str):
+        """Return git metadata for a candidate repository root, or {}."""
+        if not repo_root or not os.path.isdir(repo_root):
+            return {}
+
+        def _git(args):
+            try:
+                out = subprocess.check_output(
+                    ['git', '-C', repo_root, *args],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+                return out or None
+            except Exception:
+                return None
+
+        commit = _git(['rev-parse', 'HEAD'])
+        if not commit:
+            return {}
+
+        tag = _git(['describe', '--tags', '--exact-match'])
+        describe = _git(['describe', '--tags', '--always', '--dirty'])
+        commit_timestamp = _git(['show', '-s', '--format=%cI', 'HEAD'])
+        branch = _git(['rev-parse', '--abbrev-ref', 'HEAD'])
+        dirty = bool(_git(['status', '--porcelain']))
+        return {
+            'commit': commit,
+            'tag': tag,
+            'describe': describe,
+            'commit_timestamp': commit_timestamp,
+            'branch': branch,
+            'is_dirty': dirty,
+            'repo_root': repo_root,
+        }
+
+    def _collect_opm_provenance(self):
+        """Load provenance from embedded install metadata, else live git."""
+        metadata = {}
+        try:
+            from seshat import _build_info as build_info
+            embedded = getattr(build_info, 'GIT_METADATA', None)
+            if isinstance(embedded, dict) and embedded.get('commit'):
+                metadata = dict(embedded)
+        except Exception:
+            pass
+
+        if metadata.get('commit'):
+            return metadata
+
+        candidates = [
+            os.path.abspath(os.path.join(os.path.dirname(__file__), '..')),
+            os.getcwd(),
+        ]
+        for repo_root in candidates:
+            live = self._git_probe(repo_root)
+            if live.get('commit'):
+                return live
+
+        return {}
+
+    @staticmethod
+    def _format_timestamp_human(value):
+        """Format ISO-8601 timestamps as readable local datetime text."""
+        if not value or not isinstance(value, str):
+            return 'Not available'
+        try:
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return dt.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
+        except Exception:
+            return value
+
+    def refresh_opm_provenance(self):
+        """Refresh OPM code provenance labels."""
+        if not self._opm_provenance_labels:
+            return
+
+        metadata = self._collect_opm_provenance()
+        describe = metadata.get('describe') or 'Not available'
+        commit = metadata.get('commit')
+        commit_short = commit[:12] if isinstance(commit, str) and commit else 'Not available'
+        tag = metadata.get('tag') or 'Not available'
+        timestamp = self._format_timestamp_human(metadata.get('commit_timestamp'))
+
+        self._opm_provenance_labels['describe'].setText(describe)
+        self._opm_provenance_labels['commit'].setText(commit_short)
+        self._opm_provenance_labels['tag'].setText(tag)
+        self._opm_provenance_labels['timestamp'].setText(timestamp)
+
+        if isinstance(commit, str) and commit:
+            self._opm_provenance_labels['commit'].setToolTip(commit)
+        else:
+            self._opm_provenance_labels['commit'].setToolTip('')
 
     def create_run_tab(self):
         """Create the RUN configuration tab"""

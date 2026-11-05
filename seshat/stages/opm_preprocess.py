@@ -309,6 +309,42 @@ def _get_git_metadata(repo_root: str):
     }
 
 
+def _get_embedded_git_metadata():
+    """Load install-time embedded git metadata when available."""
+    try:
+        from seshat import _build_info as build_info
+        metadata = getattr(build_info, 'GIT_METADATA', None)
+        if isinstance(metadata, dict) and metadata.get('commit'):
+            return metadata
+    except Exception:
+        pass
+    return {}
+
+
+def _resolve_git_metadata(extra_candidates=None):
+    """Resolve git metadata from checkout roots, then embedded build info."""
+    candidates = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
+        os.getcwd(),
+    ]
+    if extra_candidates:
+        candidates.extend(extra_candidates)
+
+    seen = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        root = os.path.abspath(os.path.expanduser(str(candidate)))
+        if root in seen:
+            continue
+        seen.add(root)
+        metadata = _get_git_metadata(root)
+        if metadata.get('commit'):
+            return metadata
+
+    return _get_embedded_git_metadata()
+
+
 def find_hpi_fit(config, subject, session, overwrite=False,
                  log_path: str = None, logfile: str = None):
     """
@@ -647,11 +683,11 @@ def main(config: Union[str, dict]=None, log_file_path: str = None, summary=None)
     elif isinstance(config, dict):
         config = get_parameters(config)
 
-    # Capture git provenance once per run when executed from a checkout.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    config['git_metadata'] = _get_git_metadata(repo_root)
-
     opmMEGdir = config.get('opmMEG')
+    # Capture git provenance once per run. This supports both editable
+    # checkouts and non-editable tool installs by probing several roots.
+    config['git_metadata'] = _resolve_git_metadata(extra_candidates=[opmMEGdir])
+
     overwrite = config.get('overwrite', False)
     plotResult = config.get('plot', False)
     rename_analog = config.get('rename_analog_channels', False)
