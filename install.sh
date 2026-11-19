@@ -229,7 +229,11 @@ echo "Installing SESHAT..."
 
 # Install with the 'gui' extra so PySide6 (used by 'seshat gui') is always
 # pulled in from PyPI alongside seshat - unlike the old Tkinter dependency,
-# this needs no separate OS package step.
+# this needs no separate OS package step. This is done only inside the
+# isolated uv/pipx tool environment created below (not into any existing
+# conda/dev environment), so pip's bundled Qt libraries never coexist in
+# the same process as a conda-provided Qt build - see the comment on the
+# 'gui' extra in pyproject.toml for why that combination crashes.
 if [ "$INSTALLER" = "uv" ]; then
     UV_ARGS=(tool install --force --reinstall --python "$SYSTEM_PYTHON")
     [ "$EDITABLE" = true ] && UV_ARGS+=(--editable)

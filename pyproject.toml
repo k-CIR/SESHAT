@@ -30,6 +30,18 @@ gui = [
     # (askdirectory/askForConfig) use PySide6. Unlike Tkinter, Qt ships as a
     # prebuilt pip wheel, so no OS-level package install is needed:
     #   pip install seshat[gui]
+    #
+    # IMPORTANT: do not make this a core/unconditional dependency. pip's
+    # PySide6 wheel bundles its own private copy of the Qt libraries. In a
+    # conda/mamba environment that already provides Qt as a conda package
+    # (e.g. conda-forge's qtbase, often pulled in transitively by mne/PyQt6),
+    # having both a conda Qt build and pip's bundled Qt build loaded in the
+    # same process crashes with "Cannot mix incompatible Qt library (X)
+    # with this library (Y). Aborted (core dumped)". Keeping this as an
+    # opt-in extra means a plain `pip install -e .` into an existing
+    # conda dev environment never risks pulling in a conflicting Qt copy;
+    # install.sh installs this extra only into its own isolated uv/pipx
+    # tool environment, which doesn't share site-packages with conda.
     "pyside6>=6.6",
 ]
 notebook = [
