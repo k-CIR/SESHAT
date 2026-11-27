@@ -2,6 +2,7 @@
 neuro
 data
 depricated
+local
 
 # Ignore config files
 *projects_to_sync*
@@ -11,6 +12,8 @@ depricated
 
 # Ignore test files
 *test*
+!tests/
+!tests/test_hpi_*.py
 *tmp*
 .venv
 venv

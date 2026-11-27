@@ -56,16 +56,23 @@ def test_stage_source_compiles():
         ast.parse((root / relative).read_text())
 
 
-def test_hpi_only_does_not_leak_rng_or_warning_filters(monkeypatch):
+@pytest.mark.parametrize('grid', ['medium', 'mne_stock'])
+def test_hpi_only_does_not_leak_rng_or_warning_filters(monkeypatch, grid):
     import mne
     raw = mne.io.RawArray(np.zeros((1, 100)), mne.create_info(['mag'], 1000, 'mag'),
                           verbose=False)
     amp = {'raw_orig': raw, 'coil_amplitudes': {}, 'hpi_indices': np.arange(3)}
-    monkeypatch.setattr(check, 'compute_chpi_opm_locs', lambda *args: {
-        'rrs': [np.zeros((3, 3))], 'gofs': [np.ones(3)]})
+    grids = []
+
+    def fake_localizer(*args, localization_grid):
+        grids.append(localization_grid)
+        return {'rrs': [np.zeros((3, 3))], 'gofs': [np.ones(3)]}
+
+    monkeypatch.setattr(check, 'compute_chpi_opm_locs', fake_localizer)
     filters = list(warnings.filters)
     rng = np.random.get_state()
-    check._resolve_hpi_only(amp)
+    check._resolve_hpi_only(amp, localization_grid=grid)
+    assert grids == [grid]
     assert warnings.filters == filters
     after = np.random.get_state()
     np.testing.assert_array_equal(after[1], rng[1])
